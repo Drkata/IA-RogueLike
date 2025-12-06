@@ -1,0 +1,176 @@
+import * as THREE from 'three';
+import { Projectile } from './Projectile.js';
+import { Pathfinder } from '../systems/Pathfinder.js';
+
+export class EnemyAI {
+    constructor(enemy, levelManager, entityManager, level) {
+        this.enemy = enemy;
+        this.levelManager = levelManager;
+        this.entityManager = entityManager;
+        this.level = level;
+
+        this.pathfinder = new Pathfinder(levelManager);
+        this.path = [];
+        this.lastPathTime = 0;
+
+        this.speed = Math.min(8.0, 4.0 + (level * 0.2));
+        this.damage = 5 + (level * 1.125); // Halved damage
+        // High projectile speed for better accuracy
+        this.projectileSpeed = 10.0 * (1 + level * 0.15);
+        this.attackCooldown = Math.max(1.0, 4.0 - (level * 0.10));
+        this.attackRange = 12.5;
+        this.lastAttackTime = 0;
+
+        this.radius = 0.3;
+    }
+
+    update(dt, player, position) {
+        const dist = position.distanceTo(player.position);
+        let nextPosition = null;
+
+        // Movement Logic
+        // Simple Chase Behavior:
+        // - If far (> 10m): Move towards player
+        // - If close (<= 10m): Stop and shoot
+        const stopDistance = 10;
+
+        if (dist > stopDistance) {
+            const now = performance.now() / 1000;
+
+            // Recalculate path periodically
+            if (now - this.lastPathTime > 0.5) {
+                this.lastPathTime = now;
+                this.path = this.pathfinder.findPath(position, player.position);
+            }
+
+            if (this.path && this.path.length > 1) {
+                // Move towards next waypoint
+                const nextWaypoint = new THREE.Vector3(this.path[1].x, 0.8, this.path[1].z);
+                const moveDir = new THREE.Vector3().subVectors(nextWaypoint, position);
+                moveDir.y = 0;
+                moveDir.normalize();
+
+                // Separation Force (Avoid crowding)
+                if (this.entityManager) {
+                    const separation = new THREE.Vector3();
+                    let count = 0;
+                    const entities = this.entityManager.entities;
+
+                    for (const other of entities) {
+                        if (other !== this.enemy && other.entityType === 'enemy' && !other.isDead) {
+                            const dist = position.distanceTo(other.position);
+                            if (dist < 1.5) { // Check neighbors within 1.5m
+                                const push = new THREE.Vector3().subVectors(position, other.position);
+                                push.y = 0;
+                                push.normalize().divideScalar(dist); // Weight by distance
+                                separation.add(push);
+                                count++;
+                            }
+                        }
+                    }
+
+                    if (count > 0) {
+                        separation.divideScalar(count).normalize();
+                        // Blend path direction (70%) with separation (30%)
+                        moveDir.add(separation.multiplyScalar(0.8)).normalize();
+                    }
+                }
+
+                // Calculate next position
+                const moveDist = this.speed * dt;
+                const nextPos = position.clone().add(moveDir.clone().multiplyScalar(moveDist));
+                nextPos.y = 0.8;
+
+                // Try to move directly
+                if (this.canMoveTo(nextPos)) {
+                    nextPosition = nextPos;
+                } else {
+                    // Wall Sliding: Try X only
+                    const nextPosX = position.clone();
+                    nextPosX.x += moveDir.x * moveDist;
+                    if (this.canMoveTo(nextPosX)) {
+                        nextPosition = nextPosX;
+                    } else {
+                        // Wall Sliding: Try Z only
+                        const nextPosZ = position.clone();
+                        nextPosZ.z += moveDir.z * moveDist;
+                        if (this.canMoveTo(nextPosZ)) {
+                            nextPosition = nextPosZ;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Attack Logic
+        // Runs even if moving, allowing "Run and Gun" behavior
+        if (dist < this.attackRange) {
+            // Force LOS if very close (< 5 units) or check raycast with 0 radius (center-line)
+            const hasLOS = dist < 5.0 || this.pathfinder.hasLineOfSight(position, player.position, 0);
+
+            if (hasLOS) {
+                const now = performance.now() / 1000;
+                // Constant cooldown, no distance scaling for consistent threat
+                if (now - this.lastAttackTime > this.attackCooldown) {
+                    this.lastAttackTime = now;
+                    this.shoot(player, position);
+                }
+            }
+        }
+
+        return nextPosition;
+    }
+
+    shoot(player, position) {
+        if (!this.entityManager) return;
+
+        const dir = new THREE.Vector3().subVectors(player.position, position).normalize();
+
+        // Spawn projectile slightly in front of enemy to avoid clipping
+        const spawnPos = position.clone().add(dir.clone().multiplyScalar(0.5));
+
+        const projectile = new Projectile(
+            spawnPos,
+            dir,
+            this.projectileSpeed,
+            this.damage,
+            this.levelManager,
+            0, false, 0, 0, 0, 1.0,
+            "Minion", this.enemy.id,
+            100 // Default Range
+        );
+        this.entityManager.add(projectile);
+    }
+
+    canMoveTo(pos) {
+        // Wall Collision
+        const checkRadius = 0.6;
+        const checks = [
+            { x: pos.x + checkRadius, z: pos.z },
+            { x: pos.x - checkRadius, z: pos.z },
+            { x: pos.x, z: pos.z + checkRadius },
+            { x: pos.x, z: pos.z - checkRadius }
+        ];
+
+        for (const p of checks) {
+            if (this.levelManager.isWall(p.x, p.z)) return false;
+        }
+
+        if (this.levelManager.isDecoration(pos.x, pos.z)) return false;
+
+        // Entity Collision
+        if (this.entityManager) {
+            const entities = this.entityManager.entities;
+            for (const other of entities) {
+                if (other !== this.enemy && other.entityType === 'enemy' && !other.isDead) {
+                    const distToOther = pos.distanceTo(other.position);
+                    if (distToOther < this.radius + other.radius) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+}

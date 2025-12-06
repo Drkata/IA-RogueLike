@@ -1,0 +1,18 @@
+{
+  "name": "stellar-protostar",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^7.2.4"
+  },
+  "dependencies": {
+    "three": "^0.181.2",
+    "socket.io-client": "^4.8.1"
+  }
+}

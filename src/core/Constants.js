@@ -1,0 +1,9 @@
+export const CONSTANTS = {
+    FOV: 75,
+    PLAYER_SPEED: 10,
+    PLAYER_SENSITIVITY: 0.002,
+    GRAVITY: 30,
+    JUMP_FORCE: 12,
+    WALL_HEIGHT: 3,
+    CELL_SIZE: 2
+};

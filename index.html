@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Dungeon Crawler FPS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="src/ui/hud.css">
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    #hud {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: white;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 24px;
+      text-shadow: 2px 2px 0 #000;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      pointer-events: none;
+    }
+
+    #minimap {
+      border: 2px solid #fff;
+      background-color: rgba(0, 0, 0, 0.5);
+      margin-bottom: 10px;
+    }
+
+    #crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 20px;
+      height: 20px;
+      color: #0f0;
+      font-size: 20px;
+      text-align: center;
+      line-height: 20px;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+
+    #upgrade-menu {
+      /* Handled in hud.css */
+    }
+
+    /* Force cursor to be visible when menu is shown */
+    body:has(#upgrade-menu[style*="display: flex"]) {
+      cursor: default !important;
+    }
+
+    /* Hide crosshair when menu is shown */
+    body:has(#upgrade-menu[style*="display: flex"]) #crosshair {
+      display: none;
+    }
+
+    /* Mobile Responsive Styles (Base for both Portrait and Landscape) */
+    @media (max-width: 1024px) and (hover: none),
+    (max-width: 768px) {
+
+      /* Minimap Scaling */
+      #minimap {
+        width: 100px !important;
+        height: 100px !important;
+        border-width: 1px !important;
+      }
+
+      /* Upgrade Menu Common */
+      #upgrade-menu {
+        padding: 5px;
+        max-height: 85vh;
+        font-size: 11px;
+      }
+
+      .upgrade-card {
+        padding: 4px;
+        border-width: 1px;
+      }
+
+      .upgrade-card h3 {
+        font-size: 12px;
+        margin-bottom: 2px;
+      }
+
+      .upgrade-card button {
+        padding: 4px;
+        font-size: 12px;
+      }
+
+      /* Boss Health Bar */
+      #boss-health-container {
+        width: 70% !important;
+        top: 5px !important;
+      }
+
+      #boss-health-container h2 {
+        font-size: 14px !important;
+      }
+
+      #boss-health-container>div {
+        height: 10px !important;
+        border-width: 1px !important;
+      }
+
+      /* HUD */
+      #hud {
+        font-size: 12px;
+        top: 5px;
+        left: 5px;
+        gap: 2px;
+      }
+
+      /* Stats Container */
+      #stats-container {
+        gap: 2px !important;
+        margin-bottom: 5px !important;
+      }
+
+      #stats-container h3 {
+        font-size: 11px !important;
+        margin-bottom: 1px !important;
+      }
+
+      #stats-container div {
+        font-size: 10px !important;
+      }
+
+      #stats-container h2 {
+        font-size: 12px !important;
+      }
+
+      #upgrade-points {
+        font-size: 1.1em !important;
+      }
+
+      /* In-Game Stats Display */
+      #stats-display {
+        transform: scale(0.5);
+        transform-origin: top right;
+        top: 2px !important;
+        right: 2px !important;
+      }
+
+      #next-level-btn {
+        font-size: 12px !important;
+        padding: 5px 10px !important;
+      }
+    }
+
+    /* Portrait Specific (Single Column) */
+    @media (max-width: 768px) and (orientation: portrait) {
+      #upgrade-menu {
+        width: 90vw;
+      }
+
+      .upgrade-grid {
+        grid-template-columns: 1fr;
+        gap: 5px;
+      }
+
+      #stats-container>div:nth-child(2) {
+        flex-direction: column;
+      }
+    }
+
+    /* Landscape Specific (Multi Column) */
+    @media (max-height: 600px) {
+      #upgrade-menu {
+        width: 90vw;
+        /* Wide menu */
+        max-width: none;
+      }
+
+      .upgrade-grid {
+        grid-template-columns: repeat(3, 1fr);
+        /* 3 Columns to save vertical space */
+        gap: 5px;
+      }
+
+      /* Ensure panels are side-by-side in landscape if space permits */
+      #stats-container>div:nth-child(2) {
+        flex-direction: row !important;
+      }
+
+      /* Make stats display even smaller in landscape height */
+      #stats-display {
+        transform: scale(0.45);
+        max-height: 80vh;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app"></div>
+  <div id="app"></div>
+  <!-- HUD Container for dynamic UI -->
+  <div id="hud-container"></div>
+
+  <div id="boss-health-container"
+    style="display: none; position: absolute; top: 20px; left: 50%; transform: translateX(-50%); width: 600px; text-align: center; z-index: 50;">
+    <h2 style="color: red; margin: 0; text-shadow: 2px 2px 0 #000; font-family: 'Courier New', Courier, monospace;">BOSS
+      SENTINEL</h2>
+    <div
+      style="width: 100%; height: 30px; background: #333; border: 2px solid #fff; margin-top: 5px; position: relative;">
+      <div id="boss-health-bar" style="width: 100%; height: 100%; background: red; transition: width 0.2s;"></div>
+      <div id="boss-health-text"
+        style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-weight: bold; font-family: 'Courier New', Courier, monospace; text-shadow: 1px 1px 2px black; pointer-events: none;">
+      </div>
+    </div>
+  </div>
+
+  <div id="upgrade-menu" style="display: none;">
+    <!-- Header moved to dynamic JS -->
+    <!-- <h2>Level Complete!</h2> -->
+    <!-- <p>Points Remaining: <span id="upgrade-points">3</span></p> -->
+
+    <div id="upgrade-content-wrapper">
+      <div class="upgrade-grid">
+        <!-- Generated by JS -->
+      </div>
+
+      <button id="next-level-btn" disabled>Next Level</button>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+
+</html>

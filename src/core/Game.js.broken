@@ -1,0 +1,933 @@
+import * as THREE from 'three';
+import { Input } from './Input.js';
+import { CONSTANTS } from './Constants.js';
+import { Player } from '../entities/Player.js';
+import { LevelManager } from '../systems/LevelManager.js';
+import { EntityManager } from '../systems/EntityManager.js';
+import { Enemy } from '../entities/Enemy.js';
+import { BossSentinel } from '../entities/BossSentinel.js';
+import { Minimap } from '../systems/Minimap.js';
+import { HUDManager } from '../ui/HUDManager.js';
+
+export class Game {
+    constructor() {
+        this.scene = new THREE.Scene();
+        this.camera = new THREE.PerspectiveCamera(CONSTANTS.FOV, window.innerWidth / window.innerHeight, 0.1, 1000);
+        this.scene.add(this.camera);
+        this.renderer = new THREE.WebGLRenderer({ antialias: false });
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.getElementById('app').appendChild(this.renderer.domElement);
+
+        window.game = this; // Expose for UI callbacks
+
+        this.input = new Input();
+        this.clock = new THREE.Clock();
+
+        // Game State
+        this.isRunning = false;
+        this.isPaused = false;
+        this.menuShown = false; // FIX: Initialize to prevent instant level skip
+        this.isMidLevelUpgrade = false;
+
+        // Basic lighting
+        this.ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        this.scene.add(this.ambientLight);
+
+        this.levelManager = new LevelManager(this.scene);
+        this.entityManager = new EntityManager(this.scene);
+        this.hudManager = new HUDManager();
+
+        this.currentLevel = 1;
+        this.upgradePoints = 0;
+
+        this.init();
+
+        // Resize handler
+        window.addEventListener('resize', () => this.onResize());
+
+        // Define Upgrade List
+        this.upgradeList = [
+            { id: 'damage', source: 'weapon' },
+            { id: 'fireRate', source: 'weapon' },
+            { id: 'arc', source: 'weapon' }, // Replaces accuracy
+            { id: 'reload', source: 'weapon' },
+            { id: 'ammo', source: 'weapon' },
+            { id: 'range', source: 'weapon' },
+            { id: 'projectileSpeed', source: 'weapon' },
+            { id: 'bulletCount', source: 'weapon' },
+            { id: 'piercing', source: 'weapon' },
+            { id: 'critChance', source: 'weapon' },
+            { id: 'critDamage', source: 'weapon' },
+            { id: 'maxHealth', source: 'player' },
+            { id: 'armor', source: 'player' },
+            { id: 'vampirism', source: 'player' },
+            { id: 'regen', source: 'player' },
+            { id: 'speed', source: 'player' },
+            { id: 'knockback', source: 'weapon' },
+            { id: 'explosion', source: 'weapon' }
+        ];
+    }
+
+    async init() {
+        this.startNewLevel();
+
+        // Cheat / Dev Tool: Press 'P' to skip to Boss
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'KeyP') {
+                console.log("CHEAT: Skipping to Boss Level");
+                this.currentLevel = 9; // Will become 10 after menu
+                // Pass points directly to showUpgradeMenu to avoid overwrite
+                this.showUpgradeMenu(27);
+            }
+        });
+    }
+
+    onResize() {
+        this.camera.aspect = window.innerWidth / window.innerHeight;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    gameOver() {
+        this.isRunning = false;
+        this.isPaused = true;
+
+        // Show Cursor
+        document.exitPointerLock();
+        document.body.style.cursor = 'default';
+
+        // Calculate Stats
+        const stats = this.player.sessionStats;
+        const timeSurvived = (Date.now() - stats.startTime) / 1000; // Seconds
+        const accuracy = stats.shotsFired > 0 ? (stats.shotsHit / stats.shotsFired) * 100 : 0;
+
+        // High Score Logic
+        const highScore = localStorage.getItem('fps_highscore') || 0;
+        const isNewRecord = this.currentLevel > highScore;
+        if (isNewRecord) {
+            localStorage.setItem('fps_highscore', this.currentLevel);
+        }
+
+        // Create UI Overlay
+        const overlay = document.createElement('div');
+        overlay.id = 'game-over-screen';
+        overlay.style.position = 'absolute';
+        overlay.style.top = '0';
+        overlay.style.left = '0';
+        overlay.style.width = '100%';
+        overlay.style.height = '100%';
+        overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.9)';
+        overlay.style.display = 'flex';
+        overlay.style.flexDirection = 'column';
+        overlay.style.justifyContent = 'center';
+        overlay.style.alignItems = 'center';
+        overlay.style.color = 'white';
+        overlay.style.zIndex = '2000';
+        overlay.style.fontFamily = 'monospace';
+
+        overlay.innerHTML = `
+            <h1 style="font-size: 4em; color: red; margin-bottom: 20px; text-shadow: 0 0 20px red;">GAME OVER</h1>
+            
+            <div style="background: #111; padding: 30px; border: 2px solid #444; border-radius: 10px; min-width: 400px;">
+                <h2 style="color: #ffff00; text-align: center; border-bottom: 1px solid #444; padding-bottom: 10px;">SESSION REPORT</h2>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 20px 0; font-size: 1.2em;">
+                    <div style="color: #aaa;">Level Reached:</div>
+                    <div style="text-align: right; color: #fff;">${this.currentLevel} ${isNewRecord ? '<span style="color: #ffff00; font-size: 0.8em;">(NEW RECORD!)</span>' : ''}</div>
+                    
+                    <div style="color: #aaa;">Time Survived:</div>
+                    <div style="text-align: right; color: #fff;">${Math.floor(timeSurvived / 60)}m ${Math.floor(timeSurvived % 60)}s</div>
+                    
+                    <div style="color: #aaa;">Enemies Killed:</div>
+                    <div style="text-align: right; color: #ff8888;">${stats.kills}</div>
+                    
+                    <div style="color: #aaa;">Damage Dealt:</div>
+                    <div style="text-align: right; color: #ff8888;">${Math.round(stats.damageDealt).toLocaleString()}</div>
+                    
+                    <div style="color: #aaa;">Accuracy:</div>
+                    <div style="text-align: right; color: ${accuracy > 50 ? '#88ff88' : '#ff8888'};">${accuracy.toFixed(1)}%</div>
+
+                    <div style="color: #aaa;">Critical Hits:</div>
+                    <div style="text-align: right; color: #ff00ff;">${stats.critCount} <span style="font-size: 0.8em; color: #aaa;">(${stats.shotsHit > 0 ? Math.round((stats.critCount / stats.shotsHit) * 100) : 0}%)</span></div>
+
+                    <div style="color: #aaa;">Max Damage Hit:</div>
+                    <div style="text-align: right; color: #ffff00;">${Math.round(stats.maxDamageHit)}</div>
+
+                    <div style="color: #aaa;">Damage Taken:</div>
+                    <div style="text-align: right; color: #ff4444;">${Math.round(stats.damageTaken)}</div>
+
+                    <div style="color: #aaa;">Healing Done:</div>
+                    <div style="text-align: right; color: #44ff44;">${Math.round(stats.healingDone)}</div>
+                </div>
+
+                <div style="text-align: center; margin-top: 20px; font-size: 0.9em; color: #666;">
+                    Best Level: ${Math.max(highScore, this.currentLevel)}
+                </div>
+            </div>
+
+            <button id="restart-btn" style="
+                margin-top: 40px;
+                padding: 15px 40px;
+                font-size: 1.5em;
+                background: #ff0000;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                cursor: pointer;
+                font-weight: bold;
+                box-shadow: 0 0 15px #ff0000;
+                transition: transform 0.1s;
+            ">TRY AGAIN</button>
+        `;
+
+        document.body.appendChild(overlay);
+
+        document.getElementById('restart-btn').onclick = () => {
+            document.body.removeChild(overlay);
+            this.resetGame();
+        };
+    }
+
+    resetGame() {
+        console.log("Resetting Game...");
+
+        // Hide Boss Health Bar
+        const bossHealth = document.getElementById('boss-health-container');
+        if (bossHealth) bossHealth.style.display = 'none';
+
+        // Unpause the game
+        this.isPaused = false;
+        this.isRunning = true;
+
+        this.currentLevel = 1;
+        this.upgradePoints = 0;
+        if (this.player) {
+            this.player.reset();
+        }
+        this.startNewLevel();
+    }
+
+    startNewLevel() {
+        console.log(`Starting Level ${this.currentLevel} `);
+
+        // Reset menu flag for this level
+        this.menuShown = false;
+
+        // Safety: Hide Boss Health Bar (it will be shown by Boss if spawned)
+        const bossHealth = document.getElementById('boss-health-container');
+        if (bossHealth) bossHealth.style.display = 'none';
+
+        // Clear old entities
+        this.entityManager.clear();
+
+        // Dynamic Map Size - Increased by 20%
+        // Base 36x36 (was 30), +1.3 per level, Cap at 72x72 (was 60)
+        const mapSize = Math.min(72, 36 + Math.floor(this.currentLevel * 1.3));
+
+        // Generate Level with Theme
+        const startPos = this.levelManager.generateLevel(mapSize, mapSize, this.currentLevel);
+
+        // Update Ambient Light based on Theme
+        const theme = this.levelManager.themeManager.getTheme(this.currentLevel);
+        if (theme) {
+            if (theme.ambientLight) {
+                this.ambientLight.color.setHex(theme.ambientLight);
+            }
+            // Update Fog
+            if (theme.fogColor) {
+                this.scene.fog = new THREE.FogExp2(theme.fogColor, theme.fogDensity || 0.02);
+                this.renderer.setClearColor(theme.fogColor); // Match background to fog
+            } else {
+                this.scene.fog = null;
+                this.renderer.setClearColor(0x000000);
+            }
+        }
+
+        // Player Setup
+        if (!this.player) {
+            this.player = new Player(this.camera, this.input, this.levelManager, this.entityManager, this.hudManager);
+        } else {
+            // Update references for existing player
+            this.player.levelManager = this.levelManager;
+            this.player.entityManager = this.entityManager;
+        }
+
+        this.player.position.set(
+            startPos.x * CONSTANTS.CELL_SIZE + CONSTANTS.CELL_SIZE / 2,
+            1.6,
+            startPos.z * CONSTANTS.CELL_SIZE + CONSTANTS.CELL_SIZE / 2
+        );
+        this.camera.position.copy(this.player.position);
+
+        // Minimap
+        this.minimap = new Minimap(this.levelManager, this.player);
+        this.hudManager.attachMinimap(this.minimap.canvas);
+
+        // Store previous round health before resetting
+        this.previousRoundHealth = this.player ? this.player.health : null;
+
+        // Restore health from previous round (or default to full)
+        this.player.health = (this.previousRoundHealth !== null && this.previousRoundHealth !== undefined) ? this.previousRoundHealth : 100;
+        this.player.updateHUD();
+
+        // Auto-reload weapon instantly if not full ammo
+        if (this.player.weapon && this.player.weapon.currentAmmo < this.player.weapon.maxAmmo) {
+            this.player.weapon.currentAmmo = this.player.weapon.maxAmmo;
+            // Reset reload state
+            this.player.weapon.isReloading = false;
+            this.player.weapon.reloadTimer = 0;
+        }
+
+        this.hudManager.updateLevel(this.currentLevel);
+
+        // Reset menu flag for new level
+        this.menuShown = false;
+
+        const dist = this.player.position.distanceTo(entity.position);
+        if (dist < minDist) {
+            minDist = dist;
+            nearestEnemy = entity;
+        }
+    }
+}
+
+if (nearestEnemy) {
+    // Calculate look direction
+    const dx = nearestEnemy.position.x - this.player.position.x;
+    const dz = nearestEnemy.position.z - this.player.position.z;
+    const dy = (nearestEnemy.position.y - 0.5) - this.player.position.y;
+
+    // Update Player's internal rotation state
+    // Yaw: Math.atan2(-dx, -dz) aligns with Player.js forward vector (0, 0, -1)
+    this.player.yaw = Math.atan2(-dx, -dz);
+
+    // Pitch: Standard calculation
+    const dist2D = Math.sqrt(dx * dx + dz * dz);
+    this.player.pitch = -Math.atan2(dy, dist2D);
+
+    // Force immediate camera update
+    this.player.camera.rotation.set(this.player.pitch, this.player.yaw, 0, 'YXZ');
+}
+        }
+
+if (!this.isRunning) {
+    this.start();
+    this.isRunning = true;
+}
+    }
+
+spawnBoss() {
+    const spawnPoint = this.levelManager.levelData.bossSpawn;
+    if (spawnPoint) {
+        const position = new THREE.Vector3(
+            spawnPoint.x * CONSTANTS.CELL_SIZE + CONSTANTS.CELL_SIZE / 2,
+            0,
+            spawnPoint.z * CONSTANTS.CELL_SIZE + CONSTANTS.CELL_SIZE / 2
+        );
+
+        const boss = new BossSentinel(position, this.levelManager, this.entityManager, this.currentLevel);
+        this.entityManager.add(boss);
+        console.log("BOSS SPAWNED");
+    }
+}
+
+spawnEnemies(count) {
+    const minDistance = 30;
+    const minEnemyDistance = 2;
+    const safeWallDistance = 3.0;
+
+    let spawned = 0;
+    let totalAttempts = 0;
+    const maxTotalAttempts = count * 100; // Safety limit
+
+    while (spawned < count && totalAttempts < maxTotalAttempts) {
+        totalAttempts++;
+
+        // Get random empty position from the entire map
+        const gridPos = this.levelManager.getRandomEmptyPosition();
+        if (!gridPos) {
+            continue;
+        }
+
+        const position = new THREE.Vector3(
+            gridPos.x * CONSTANTS.CELL_SIZE + CONSTANTS.CELL_SIZE / 2,
+            0,
+            gridPos.z * CONSTANTS.CELL_SIZE + CONSTANTS.CELL_SIZE / 2
+        );
+
+        let valid = true;
+
+        // Check 8 points around enemy for wall proximity
+        const checkRadius = safeWallDistance;
+        const checkPoints = [
+            { x: position.x + checkRadius, z: position.z },
+            { x: position.x - checkRadius, z: position.z },
+            { x: position.x, z: position.z + checkRadius },
+            { x: position.x, z: position.z - checkRadius },
+            { x: position.x + checkRadius * 0.7, z: position.z + checkRadius * 0.7 },
+            { x: position.x - checkRadius * 0.7, z: position.z + checkRadius * 0.7 },
+            { x: position.x + checkRadius * 0.7, z: position.z - checkRadius * 0.7 },
+            { x: position.x - checkRadius * 0.7, z: position.z - checkRadius * 0.7 }
+        ];
+
+        for (const point of checkPoints) {
+            if (this.levelManager.isWall(point.x, point.z)) {
+                valid = false;
+                break;
+            }
+        }
+
+        if (!valid) continue;
+
+        // Check distance from player
+        if (position.distanceTo(this.player.position) < minDistance) {
+            continue;
+        }
+
+        // Check if position overlaps with decorations
+        const gridX = Math.floor(position.x / CONSTANTS.CELL_SIZE);
+        const gridZ = Math.floor(position.z / CONSTANTS.CELL_SIZE);
+
+        let onDecoration = false;
+        if (this.levelManager.decorationPositions) {
+            for (const deco of this.levelManager.decorationPositions) {
+                if (deco.x === gridX && deco.z === gridZ) {
+                    onDecoration = true;
+                    break;
+                }
+            }
+        }
+
+        if (onDecoration) continue;
+
+        // Check Safe Room
+        if (this.levelManager.levelData && this.levelManager.levelData.safeRoom) {
+            const sr = this.levelManager.levelData.safeRoom;
+            const cellSize = CONSTANTS.CELL_SIZE;
+
+            const gridX = Math.floor(position.x / cellSize);
+            const gridZ = Math.floor(position.z / cellSize);
+
+            if (gridX >= sr.x - 1 && gridX <= sr.x + sr.w + 1 &&
+                gridZ >= sr.z - 1 && gridZ <= sr.z + sr.h + 1) {
+                continue;
+            }
+        }
+
+        // Check distance from other enemies
+        let tooClose = false;
+        for (const entity of this.entityManager.entities) {
+            if (entity.constructor.name === 'Enemy') {
+                if (position.distanceTo(entity.position) < minEnemyDistance) {
+                    tooClose = true;
+                    break;
+                }
+            }
+        }
+
+        if (tooClose) continue;
+
+        // Valid position found, spawn enemy
+        const enemy = new Enemy(position, this.levelManager, this.entityManager, this.currentLevel);
+        this.entityManager.add(enemy);
+        spawned++;
+    }
+
+    if (spawned < count) {
+        console.warn(`Only spawned ${spawned}/${count} enemies after ${totalAttempts} attempts`);
+    }
+}
+
+start() {
+    this.renderer.setAnimationLoop(() => this.update());
+}
+
+update() {
+    const dt = this.clock.getDelta();
+
+    // Don't update game if paused (upgrade menu open)
+    if (this.isPaused) {
+        this.renderer.render(this.scene, this.camera);
+        return;
+    }
+
+    if (this.player) this.player.update(dt);
+    this.entityManager.update(dt, this.player);
+
+    if (this.minimap) {
+        const enemies = this.entityManager.entities.filter(e => e.constructor.name === 'Enemy');
+        this.minimap.update(enemies);
+    }
+
+    // Update HUD
+    const enemyCount = this.entityManager.getEnemyCount();
+    this.hudManager.updateEnemies(enemyCount);
+    this.hudManager.updateLevel(this.currentLevel);
+
+    // Check Level Complete
+    if (this.currentLevel % 10 === 0) {
+        // Boss Level: Complete when boss is dead (0 enemies)
+        if (enemyCount === 0 && this.isRunning && !this.menuShown) {
+            this.menuShown = true;
+            this.showUpgradeMenu(5); // 5 points for killing boss
+        }
+    } else {
+        // Normal Level
+        if (enemyCount === 0 && this.isRunning && !this.menuShown) {
+            this.menuShown = true;
+            this.showUpgradeMenu();
+        }
+    }
+
+    this.renderer.render(this.scene, this.camera);
+}
+
+showUpgradeMenu(points = 3, isMidLevel = false) {
+    // Check if any upgrades are available
+    let availableUpgrades = false;
+    for (const item of this.upgradeList) {
+        const sourceObj = item.source === 'weapon' ? this.player.weapon : this.player;
+        if (sourceObj.stats[item.id] < sourceObj.MAX_LEVEL) {
+            availableUpgrades = true;
+            break;
+        }
+    }
+
+    if (!availableUpgrades) {
+        console.log("All upgrades maxed! Skipping menu.");
+        if (!isMidLevel) {
+            this.currentLevel++;
+            this.startNewLevel();
+        }
+        return;
+    }
+
+    this.isRunning = false;
+    this.isPaused = true; // Pause game updates
+    this.menuShown = true; // Prevent double opening
+    this.isMidLevelUpgrade = isMidLevel;
+
+    // Exit pointer lock to show cursor
+    if (document.pointerLockElement) {
+        document.exitPointerLock();
+    }
+
+    // Force cursor to be visible
+    document.body.style.cursor = 'default';
+
+    // Hide touch controls if active
+    if (this.input && this.input.touchControls) {
+        this.input.touchControls.container.style.display = 'none';
+    }
+
+    // Small delay to ensure pointer lock is released
+    setTimeout(() => {
+        const menu = document.getElementById('upgrade-menu');
+        menu.style.display = 'block';
+
+        this.upgradePoints = points;
+        this.renderUpgradeUI();
+    }, 100);
+}
+
+renderUpgradeUI() {
+    const grid = document.querySelector('.upgrade-grid');
+    grid.innerHTML = '';
+
+    // --- NEW: Stats Panels ---
+    let statsContainer = document.getElementById('stats-container');
+    if (!statsContainer) {
+        statsContainer = document.createElement('div');
+        statsContainer.id = 'stats-container';
+        statsContainer.style.display = 'flex';
+        statsContainer.style.flexDirection = 'column'; // Stack header and panels
+        statsContainer.style.marginBottom = '20px';
+        statsContainer.style.gap = '10px';
+
+        // Sticky Positioning
+        statsContainer.style.position = 'sticky';
+        statsContainer.style.top = '0';
+        statsContainer.style.zIndex = '10';
+        statsContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.95)'; // Opaque background
+        statsContainer.style.paddingBottom = '10px'; // Spacing
+        statsContainer.style.borderBottom = '1px solid #444'; // Separator
+
+        // Insert before grid
+        grid.parentNode.insertBefore(statsContainer, grid);
+    }
+    statsContainer.innerHTML = ''; // Clear previous
+
+    // 1. Header Row (Level Complete + Points)
+    const headerRow = document.createElement('div');
+    headerRow.style.display = 'flex';
+    headerRow.style.justifyContent = 'space-between';
+    headerRow.style.alignItems = 'center';
+    headerRow.style.padding = '10px';
+    headerRow.style.background = '#111';
+    headerRow.style.border = '1px solid #444';
+
+    const title = document.createElement('h2');
+    title.innerText = `LEVEL ${this.currentLevel} COMPLETE`;
+    title.style.margin = '0';
+    title.style.color = '#fff';
+    headerRow.appendChild(title);
+
+    const pointsContainer = document.createElement('div');
+    pointsContainer.style.fontSize = '1.5em';
+    pointsContainer.style.fontWeight = 'bold';
+    pointsContainer.style.color = '#ffff00';
+    pointsContainer.style.textShadow = '0 0 10px #ffaa00';
+    pointsContainer.innerHTML = `POINTS: <span id="upgrade-points">${this.upgradePoints}</span>`;
+    headerRow.appendChild(pointsContainer);
+
+    statsContainer.appendChild(headerRow);
+
+    // 2. Panels Row
+    const panelsRow = document.createElement('div');
+    panelsRow.style.display = 'flex';
+    panelsRow.style.justifyContent = 'space-around';
+    panelsRow.style.gap = '10px';
+    statsContainer.appendChild(panelsRow);
+
+    // 3. Player Stats Panel
+    const playerPanel = document.createElement('div');
+    playerPanel.style.border = '1px solid #00ff00';
+    playerPanel.style.padding = '10px';
+    playerPanel.style.background = '#002200';
+    playerPanel.style.flex = '1';
+    playerPanel.innerHTML = `
+            <h3 style="margin: 0 0 10px 0; color: #00ff00;">PLAYER STATS</h3>
+            <div style="display: grid; grid-template-columns: auto 1fr auto 1fr; text-align: left; gap: 5px 15px; font-size: 0.85em; align-items: center;">
+                <div style="color: #88ff88;">Max HP:</div><div style="text-align: right;">${Math.round(this.player.maxHealth)}</div>
+                <div style="color: #88ff88;">Armor:</div><div style="text-align: right;">${Math.round(this.player.armor * 100)}%</div>
+                
+                <div style="color: #88ff88;">Regen:</div><div style="text-align: right;">${this.player.regen.toFixed(1)}/s</div>
+                <div style="color: #88ff88;">Life Steal:</div><div style="text-align: right;">${Math.round(this.player.vampirism * 100)}%</div>
+                
+                <div style="color: #88ff88;">Speed:</div><div style="text-align: right;">${Math.round((this.player.speed / CONSTANTS.PLAYER_SPEED) * 100)}%</div>
+                <div style="color: #ff8888;">Damage:</div><div style="text-align: right;">${this.player.weapon.bulletCount > 1 ? (this.player.weapon.damage * this.player.weapon.bulletCount).toFixed(1) + ' / ' + this.player.weapon.bulletCount : this.player.weapon.damage.toFixed(1)}</div>
+                
+                <div style="color: #ff8888;">Fire Rate:</div><div style="text-align: right;">${(1 / this.player.weapon.fireRate).toFixed(1)}/s</div>
+                <div style="color: #ff8888;">Crit Chance:</div><div style="text-align: right;">${Math.round(this.player.weapon.critChance * 100)}%</div>
+                
+                <div style="color: #ff8888;">Crit Dmg:</div><div style="text-align: right;">${Math.round(this.player.weapon.critDamage * 100)}%</div>
+                <div style="color: #ff8888;">Ammo:</div><div style="text-align: right;">${this.player.weapon.maxAmmo}</div>
+                
+                <div style="color: #ff8888;">Reload:</div><div style="text-align: right;">${this.player.weapon.reloadTime.toFixed(1)}s</div>
+                <div style="color: #ff8888;">Spread Arc:</div><div style="text-align: right;">${this.player.weapon.arc}°</div>
+                
+                <div style="color: #ff8888;">Range:</div><div style="text-align: right;">${this.player.weapon.range.toFixed(1)}</div>
+                <div style="color: #ff8888;">Proj Spd:</div><div style="text-align: right;">${this.player.weapon.projectileSpeed.toFixed(1)}</div>
+                
+                <div style="color: #aaaaff;">Multishot:</div><div style="text-align: right;">${this.player.weapon.bulletCount}</div>
+                <div style="color: #aaaaff;">Piercing:</div><div style="text-align: right;">${this.player.weapon.piercing}</div>
+                
+                <div style="color: #aaaaff;">Knockback:</div><div style="text-align: right;">${this.player.weapon.knockback.toFixed(1)}</div>
+                <div style="color: #aaaaff;">Explosion:</div><div style="text-align: right;">${Math.round(this.player.weapon.explosion * 100)}%</div>
+            </div>
+        `;
+    panelsRow.appendChild(playerPanel);
+
+    // 4. Enemy Stats Panel (Next Round)
+    const nextLevel = this.currentLevel + 1;
+    const isBoss = nextLevel % 10 === 0;
+
+    const enemyPanel = document.createElement('div');
+    enemyPanel.style.border = '1px solid #ff0000';
+    enemyPanel.style.padding = '10px';
+    enemyPanel.style.background = '#220000';
+    enemyPanel.style.flex = '1';
+
+    let enemyHtml = '';
+    if (isBoss) {
+        const bossHP = 2000 + (nextLevel * 200);
+        const bossDmg = 10 + nextLevel; // Base laser damage
+        enemyHtml = `
+                <h3 style="margin: 0 0 10px 0; color: #ff0000;">⚠️ BOSS LEVEL ${nextLevel} ⚠️</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; text-align: left; gap: 5px; font-size: 0.9em;">
+                    <div>Boss HP:</div><div style="text-align: right;">${bossHP}</div>
+                    <div>Damage:</div><div style="text-align: right;">${bossDmg}+</div>
+                </div>
+                <div style="margin-top: 5px; text-align: left; font-size: 0.9em;">
+                    <span style="color: #ffaaaa;">Abilities:</span> Meteor Rain, Nova, Spiral, Summons
+                </div>
+             `;
+    } else {
+        const enemyHP = (10 + (nextLevel * 5)) / 2;
+        const enemyDmg = 10 + (nextLevel * 2.25);
+        const enemySpeed = Math.min(8.0, 4.0 + (nextLevel * 0.2));
+        const enemyCount = Math.floor(7 + nextLevel * 2.1);
+
+        enemyHtml = `
+                <h3 style="margin: 0 0 10px 0; color: #ff0000;">NEXT ROUND: LEVEL ${nextLevel}</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; text-align: left; gap: 5px; font-size: 0.9em;">
+                    <div>Enemy HP:</div><div style="text-align: right;">${enemyHP.toFixed(1)}</div>
+                    <div>Damage:</div><div style="text-align: right;">${enemyDmg.toFixed(1)}</div>
+                    <div>Speed:</div><div style="text-align: right;">${enemySpeed.toFixed(1)}</div>
+                    <div>Count:</div><div style="text-align: right;">~${enemyCount}</div>
+                </div>
+            `;
+    }
+    enemyPanel.innerHTML = enemyHtml;
+    panelsRow.appendChild(enemyPanel);
+
+
+    // document.getElementById('upgrade-points').innerText = this.upgradePoints; // Removed as it's now in the header
+
+    const labels = {
+        damage: 'Damage',
+        fireRate: 'Fire Rate',
+        arc: 'Spread Arc', // Replaces Accuracy
+        reload: 'Reload Speed',
+        ammo: 'Max Ammo',
+        range: 'Range',
+        projectileSpeed: 'Projectile Speed',
+        // New Stats
+        maxHealth: 'Max Health',
+        armor: 'Armor',
+        vampirism: 'Life Steal',
+        regen: 'Regeneration',
+        bulletCount: 'Multishot',
+        piercing: 'Piercing',
+        critChance: 'Crit Chance',
+        critDamage: 'Crit Damage',
+        speed: 'Speed',
+        knockback: 'Knockback',
+        explosion: 'Explosion'
+    };
+
+    // Hide Next Level button (auto-advance instead)
+    const nextLevelBtn = document.getElementById('next-level-btn');
+    if (nextLevelBtn) {
+        nextLevelBtn.style.display = 'none';
+    }
+
+    this.upgradeList.forEach(item => {
+        const stat = item.id;
+        const sourceObj = item.source === 'weapon' ? this.player.weapon : this.player;
+
+        const level = sourceObj.stats[stat];
+        const currentVal = sourceObj.getStatValue(stat, level);
+        const nextVal = sourceObj.getStatValue(stat, level + 1);
+        const maxLevel = sourceObj.MAX_LEVEL;
+
+        const card = document.createElement('div');
+        card.className = 'upgrade-card';
+
+        // Title
+        const title = document.createElement('h3');
+        title.innerText = labels[stat] || stat;
+        title.style.margin = '0 0 10px 0';
+        card.appendChild(title);
+
+        // Values
+        const values = document.createElement('div');
+        const fmt = (n) => {
+            if (stat === 'fireRate') return (1 / n).toFixed(1) + '/s';
+            if (stat === 'arc') return n + '°'; // Degrees
+            if (stat === 'reload') return n.toFixed(1);
+            if (stat === 'armor' || stat === 'vampirism' || stat === 'critChance' || stat === 'critDamage' || stat === 'speed' || stat === 'explosion') return Math.round(n) + '%';
+            return n.toFixed(1);
+        };
+        values.innerText = `${fmt(currentVal)} -> ${fmt(nextVal)} `;
+        values.style.marginBottom = '10px';
+        card.appendChild(values);
+
+        // Progress Bar
+        const progress = document.createElement('div');
+        progress.className = 'progress-bar';
+        for (let i = 0; i < maxLevel; i++) {
+            const seg = document.createElement('div');
+            seg.className = 'segment' + (i < level ? ' filled' : '');
+            progress.appendChild(seg);
+        }
+        card.appendChild(progress);
+
+        // Button
+        const btn = document.createElement('button');
+        btn.innerText = '+';
+        btn.style.marginTop = '10px';
+        btn.style.width = '100%';
+
+        if (this.upgradePoints <= 0 || level >= maxLevel) {
+            btn.disabled = true;
+        }
+
+        btn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            if (this.upgradePoints > 0 && sourceObj.upgrade(stat)) {
+                this.upgradePoints--;
+                this.renderUpgradeUI();
+
+                // Ensure cursor stays visible after click
+                document.body.style.cursor = 'default';
+
+                // Auto-advance to next level when all upgrades are used OR no upgrades available
+                let availableUpgrades = false;
+                for (const item of this.upgradeList) {
+                    const sObj = item.source === 'weapon' ? this.player.weapon : this.player;
+                    if (sObj.stats[item.id] < sObj.MAX_LEVEL) {
+                        availableUpgrades = true;
+                        break;
+                    }
+                }
+
+                if (this.upgradePoints === 0 || !availableUpgrades) {
+                    setTimeout(() => {
+                        document.getElementById('upgrade-menu').style.display = 'none';
+                        document.body.style.cursor = 'none'; // Hide cursor for gameplay
+                        document.body.requestPointerLock();
+                        this.isPaused = false;
+                        this.isRunning = true;
+                        this.menuShown = false; // Reset flag
+
+                        // Show touch controls if on mobile
+                        if (this.input && this.input.touchControls) {
+                            if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+                                this.input.touchControls.container.style.display = 'block';
+                            }
+                        }
+
+                        if (!this.isMidLevelUpgrade) {
+                            this.currentLevel++;
+                            this.startNewLevel();
+                        }
+                    }, 300); // Small delay for visual feedback
+                }
+            }
+        };
+        card.appendChild(btn);
+        grid.appendChild(card);
+    });
+
+    // --- NEW: Random & Auto Upgrade Buttons ---
+    const buttonsContainer = document.createElement('div');
+    buttonsContainer.style.gridColumn = '1 / -1'; // Span full width
+    buttonsContainer.style.display = 'flex';
+    buttonsContainer.style.gap = '10px';
+    buttonsContainer.style.marginTop = '20px';
+    buttonsContainer.style.justifyContent = 'center';
+
+    // Random Upgrade Button (1 Point)
+    const randomBtn = document.createElement('button');
+    randomBtn.innerText = '🎲 Random Upgrade (1 Point)';
+    randomBtn.style.padding = '10px 20px';
+    randomBtn.style.background = '#4444ff';
+    randomBtn.style.color = 'white';
+    randomBtn.style.border = 'none';
+    randomBtn.style.cursor = 'pointer';
+    randomBtn.style.fontSize = '1em';
+    randomBtn.style.fontWeight = 'bold';
+
+    randomBtn.onclick = () => {
+        if (this.upgradePoints <= 0) return;
+
+        // Find all available upgrades
+        const available = this.upgradeList.filter(item => {
+            const sourceObj = item.source === 'weapon' ? this.player.weapon : this.player;
+            return sourceObj.stats[item.id] < sourceObj.MAX_LEVEL;
+        });
+
+        if (available.length > 0) {
+            const randomItem = available[Math.floor(Math.random() * available.length)];
+            const sourceObj = randomItem.source === 'weapon' ? this.player.weapon : this.player;
+
+            if (sourceObj.upgrade(randomItem.id)) {
+                this.upgradePoints--;
+                this.renderUpgradeUI();
+
+                // Check if we should close menu
+                let anyAvailable = false;
+                for (const item of this.upgradeList) {
+                    const sObj = item.source === 'weapon' ? this.player.weapon : this.player;
+                    if (sObj.stats[item.id] < sObj.MAX_LEVEL) {
+                        anyAvailable = true;
+                        break;
+                    }
+                }
+
+                if (this.upgradePoints === 0 || !anyAvailable) {
+                    setTimeout(() => {
+                        document.getElementById('upgrade-menu').style.display = 'none';
+                        document.body.style.cursor = 'none';
+                        document.body.requestPointerLock();
+                        this.isPaused = false;
+                        this.isRunning = true;
+                        this.menuShown = false;
+
+                        if (this.input && this.input.touchControls && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) {
+                            this.input.touchControls.container.style.display = 'block';
+                        }
+
+                        if (!this.isMidLevelUpgrade) {
+                            this.currentLevel++;
+                            this.startNewLevel();
+                        }
+                    }, 300);
+                }
+            }
+        }
+    };
+    buttonsContainer.appendChild(randomBtn);
+
+    // Auto Upgrade Button (All Points)
+    const autoBtn = document.createElement('button');
+    autoBtn.innerText = '⚡ Auto Upgrade (All Points)';
+    autoBtn.style.padding = '10px 20px';
+    autoBtn.style.background = '#ffaa00';
+    autoBtn.style.color = 'black';
+    autoBtn.style.border = 'none';
+    autoBtn.style.cursor = 'pointer';
+    autoBtn.style.fontSize = '1em';
+    autoBtn.style.fontWeight = 'bold';
+
+    autoBtn.onclick = () => {
+        if (this.upgradePoints <= 0) return;
+
+        while (this.upgradePoints > 0) {
+            // Find all available upgrades
+            const available = this.upgradeList.filter(item => {
+                const sourceObj = item.source === 'weapon' ? this.player.weapon : this.player;
+                return sourceObj.stats[item.id] < sourceObj.MAX_LEVEL;
+            });
+
+            if (available.length === 0) break;
+
+            const randomItem = available[Math.floor(Math.random() * available.length)];
+            const sourceObj = randomItem.source === 'weapon' ? this.player.weapon : this.player;
+
+            if (sourceObj.upgrade(randomItem.id)) {
+                this.upgradePoints--;
+            } else {
+                break; // Should not happen if filtered correctly
+            }
+        }
+        this.renderUpgradeUI();
+
+        // Close menu automatically
+        setTimeout(() => {
+            document.getElementById('upgrade-menu').style.display = 'none';
+            document.body.style.cursor = 'none';
+            document.body.requestPointerLock();
+            this.isPaused = false;
+            this.isRunning = true;
+            this.menuShown = false;
+
+            if (this.input && this.input.touchControls && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) {
+                this.input.touchControls.container.style.display = 'block';
+            }
+
+            if (!this.isMidLevelUpgrade) {
+                this.currentLevel++;
+                this.startNewLevel();
+            }
+        }, 300);
+    };
+    buttonsContainer.appendChild(autoBtn);
+
+    grid.appendChild(buttonsContainer);
+}
+}
