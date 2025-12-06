@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 
+import { CONSTANTS } from '../core/Constants.js';
+
 export class EnemyHealthSystem {
     // Shared Resources
     static bgGeo = new THREE.PlaneGeometry(1.2, 0.15);
@@ -10,17 +12,53 @@ export class EnemyHealthSystem {
     static matGreen = new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide });
     static matYellow = new THREE.MeshBasicMaterial({ color: 0xffff00, side: THREE.DoubleSide });
     static matRed = new THREE.MeshBasicMaterial({ color: 0xff0000, side: THREE.DoubleSide });
+    static matShield = new THREE.MeshBasicMaterial({ color: 0x0088ff, side: THREE.DoubleSide }); // Shield Color
 
     constructor(enemy, mesh, level) {
         this.enemy = enemy;
         this.mesh = mesh;
         this.level = level;
 
-        this.health = ((10 + (level * 5)) / 2) * 0.7; // Reduced by 30%
+        // Base Health Calculation
+        let baseHealth = CONSTANTS.DIFFICULTY.ENEMY_HEALTH_BASE + (level * CONSTANTS.DIFFICULTY.ENEMY_HEALTH_PER_LEVEL);
+
+        // Post-Level 10 Multiplier
+        if (level > 10) {
+            const extraLevels = level - 10;
+            const multiplier = 1.0 + (extraLevels * CONSTANTS.DIFFICULTY.ENEMY_HEALTH_MULTIPLIER_POST_10);
+            baseHealth *= multiplier;
+        }
+
+        this.health = baseHealth * 0.7; // Keep the 0.7 reduction from original code if desired, or remove it. Keeping for consistency.
         this.maxHealth = this.health;
         this.isFlashing = false;
 
+        // Mechanics
+        this.regenEnabled = level >= CONSTANTS.DIFFICULTY.MECHANIC_REGEN_LEVEL;
+        this.shieldEnabled = level >= CONSTANTS.DIFFICULTY.MECHANIC_SHIELD_LEVEL;
+
+        this.lastDamageTime = 0;
+        this.shieldHits = this.shieldEnabled ? CONSTANTS.DIFFICULTY.SHIELD_HITS : 0;
+
+        // Visuals for Shield
+        if (this.shieldHits > 0) {
+            this.createShieldVisual();
+        }
+
         this.createHealthBar();
+    }
+
+    createShieldVisual() {
+        const shieldGeo = new THREE.SphereGeometry(1.0, 16, 16);
+        const shieldMat = new THREE.MeshBasicMaterial({
+            color: 0x0088ff,
+            transparent: true,
+            opacity: 0.3,
+            wireframe: true
+        });
+        this.shieldMesh = new THREE.Mesh(shieldGeo, shieldMat);
+        this.shieldMesh.position.y = 0.8; // Center on enemy
+        this.mesh.add(this.shieldMesh);
     }
 
     createHealthBar() {
@@ -40,8 +78,33 @@ export class EnemyHealthSystem {
         this.mesh.add(this.healthBarFill);
     }
 
+    update(dt) {
+        const now = performance.now() / 1000;
+
+        // Health Regeneration Logic
+        if (this.regenEnabled && this.health < this.maxHealth && this.health > 0) {
+            if (now - this.lastDamageTime > CONSTANTS.DIFFICULTY.REGEN_DELAY) {
+                const regenAmount = this.maxHealth * CONSTANTS.DIFFICULTY.REGEN_RATE * dt;
+                this.health = Math.min(this.health + regenAmount, this.maxHealth);
+            }
+        }
+
+        // Shield Regeneration Logic
+        if (this.shieldEnabled && this.shieldHits < CONSTANTS.DIFFICULTY.SHIELD_HITS) {
+            if (now - this.lastDamageTime > CONSTANTS.DIFFICULTY.SHIELD_REGEN_DELAY) {
+                // Regenerate Shield (Full restore for now, or use rate if we had a tick system)
+                this.shieldHits = CONSTANTS.DIFFICULTY.SHIELD_HITS;
+
+                // Restore Visuals
+                if (!this.shieldMesh) {
+                    this.createShieldVisual();
+                }
+            }
+        }
+    }
+
     updateHealthBar(camera) {
-        if (this.health >= this.maxHealth) {
+        if (this.health >= this.maxHealth && this.shieldHits === 0) {
             this.healthBarBg.visible = false;
             this.healthBarFill.visible = false;
             return;
@@ -54,8 +117,12 @@ export class EnemyHealthSystem {
         this.healthBarFill.scale.x = healthPercent;
         this.healthBarFill.position.x = -(1.2 * (1 - healthPercent)) / 2;
 
-        // Swap shared materials based on health
-        if (healthPercent > 0.6) {
+        // Swap shared materials based on health or shield
+        if (this.shieldHits > 0) {
+            if (this.healthBarFill.material !== EnemyHealthSystem.matShield) {
+                this.healthBarFill.material = EnemyHealthSystem.matShield;
+            }
+        } else if (healthPercent > 0.6) {
             if (this.healthBarFill.material !== EnemyHealthSystem.matGreen) {
                 this.healthBarFill.material = EnemyHealthSystem.matGreen;
             }
@@ -77,37 +144,28 @@ export class EnemyHealthSystem {
     }
 
     takeDamage(amount) {
+        this.lastDamageTime = performance.now() / 1000;
+
+        // Shield Logic
+        if (this.shieldHits > 0) {
+            this.shieldHits--;
+            // Shield Break Effect
+            if (this.shieldHits === 0) {
+                if (this.shieldMesh) {
+                    this.mesh.remove(this.shieldMesh);
+                    this.shieldMesh = null;
+                }
+                // Play sound?
+            } else {
+                // Flash shield?
+            }
+            return false; // Blocked damage
+        }
+
         this.health -= amount;
 
         if (this.isFlashing) return;
         this.isFlashing = true;
-
-        // Flash effect - this still modifies material color, which is tricky with shared materials.
-        // However, EnemyMeshBuilder uses shared materials now too.
-        // If we change color on a shared material, ALL enemies will flash.
-        // FIX: We need to use emissive or a separate material for flashing, or accept that we can't flash easily without unique materials.
-        // For now, let's DISABLE the flash effect to save performance and avoid bugs with shared materials.
-        // Or better: Use a simple visibility toggle or scale punch.
-
-        /* 
-        // Disabled for performance/shared material compatibility
-        this.mesh.traverse((child) => {
-            if (child.material && child.material.color) {
-                child.material.color.setHex(0xffffff);
-            }
-        });
-
-        setTimeout(() => {
-            if (this.health > 0) {
-                this.mesh.traverse((child) => {
-                    if (child.material && child.userData.originalColor !== undefined) {
-                        child.material.color.setHex(child.userData.originalColor);
-                    }
-                });
-            }
-            this.isFlashing = false;
-        }, 50);
-        */
 
         // Simple scale punch instead
         this.mesh.scale.multiplyScalar(1.1);

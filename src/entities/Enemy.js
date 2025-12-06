@@ -94,7 +94,8 @@ export class Enemy {
         this.mesh.position.z = this.position.z;
         this.mesh.position.y = this.position.y - 0.8;
 
-        // Update health bar
+        // Update health bar and mechanics (regen)
+        this.healthSystem.update(dt);
         this.healthSystem.updateHealthBar(player.camera || player);
     }
 }

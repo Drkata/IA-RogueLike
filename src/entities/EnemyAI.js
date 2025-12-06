@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Projectile } from './Projectile.js';
 import { Pathfinder } from '../systems/Pathfinder.js';
+import { CONSTANTS } from '../core/Constants.js';
 
 export class EnemyAI {
     constructor(enemy, levelManager, entityManager, level) {
@@ -13,11 +14,22 @@ export class EnemyAI {
         this.path = [];
         this.lastPathTime = 0;
 
-        this.speed = Math.min(8.0, 4.0 + (level * 0.2));
-        this.damage = 5 + (level * 1.125); // Halved damage
+        // Speed Scaling
+        let speed = CONSTANTS.DIFFICULTY.ENEMY_SPEED_BASE + (level * CONSTANTS.DIFFICULTY.ENEMY_SPEED_PER_LEVEL);
+        this.speed = Math.min(CONSTANTS.DIFFICULTY.ENEMY_SPEED_CAP, speed);
+
+        // Damage Scaling
+        let damage = CONSTANTS.DIFFICULTY.ENEMY_DAMAGE_BASE + (level * CONSTANTS.DIFFICULTY.ENEMY_DAMAGE_PER_LEVEL);
+        if (level > 10) {
+            const extraLevels = level - 10;
+            const multiplier = 1.0 + (extraLevels * CONSTANTS.DIFFICULTY.ENEMY_DAMAGE_MULTIPLIER_POST_10);
+            damage *= multiplier;
+        }
+        this.damage = damage;
+
         // High projectile speed for better accuracy
         this.projectileSpeed = 10.0 * (1 + level * 0.15);
-        this.attackCooldown = Math.max(1.0, 4.0 - (level * 0.10));
+        this.attackCooldown = Math.max(0.5, 4.0 - (level * 0.10)); // Lower floor to 0.5
         this.attackRange = 12.5;
         this.lastAttackTime = 0;
 
@@ -27,6 +39,7 @@ export class EnemyAI {
     update(dt, player, position) {
         const dist = position.distanceTo(player.position);
         let nextPosition = null;
+        const now = performance.now() / 1000;
 
         // Movement Logic
         // Simple Chase Behavior:
@@ -35,8 +48,6 @@ export class EnemyAI {
         const stopDistance = 10;
 
         if (dist > stopDistance) {
-            const now = performance.now() / 1000;
-
             // Recalculate path periodically
             if (now - this.lastPathTime > 0.5) {
                 this.lastPathTime = now;
@@ -109,7 +120,6 @@ export class EnemyAI {
             const hasLOS = dist < 5.0 || this.pathfinder.hasLineOfSight(position, player.position, 0);
 
             if (hasLOS) {
-                const now = performance.now() / 1000;
                 // Constant cooldown, no distance scaling for consistent threat
                 if (now - this.lastAttackTime > this.attackCooldown) {
                     this.lastAttackTime = now;

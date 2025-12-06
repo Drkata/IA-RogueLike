@@ -199,6 +199,28 @@ export class SoundManager {
         ding.start(now + 0.3);
         ding.stop(now + 0.45);
     }
+    playPowerup() {
+        this.ensureContext();
+        const now = this.ctx.currentTime;
+
+        // Magical chime
+        const frequencies = [523.25, 659.25, 783.99, 1046.50]; // C Major Arpeggio
+        frequencies.forEach((freq, i) => {
+            const osc = this.ctx.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, now + i * 0.05);
+            osc.frequency.exponentialRampToValueAtTime(freq * 2, now + i * 0.05 + 0.3);
+
+            const gain = this.ctx.createGain();
+            gain.gain.setValueAtTime(0.1, now + i * 0.05);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.05 + 0.3);
+
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.start(now + i * 0.05);
+            osc.stop(now + i * 0.05 + 0.3);
+        });
+    }
 }
 
 export const soundManager = new SoundManager();

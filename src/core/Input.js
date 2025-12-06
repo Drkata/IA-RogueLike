@@ -1,13 +1,9 @@
-import { TouchControls } from '../ui/TouchControls.js';
 import { soundManager } from '../systems/SoundManager.js';
 
 export class Input {
     constructor() {
         this.keys = {};
         this.mouseDelta = { x: 0, y: 0 };
-
-        // Initialize Touch Controls
-        this.touchControls = new TouchControls(this);
 
         document.addEventListener('keydown', (e) => this.onKeyDown(e));
         document.addEventListener('keyup', (e) => this.onKeyUp(e));
@@ -21,11 +17,9 @@ export class Input {
             soundManager.ensureContext();
             document.removeEventListener('click', resumeAudio);
             document.removeEventListener('keydown', resumeAudio);
-            document.removeEventListener('touchstart', resumeAudio);
         };
         document.addEventListener('click', resumeAudio);
         document.addEventListener('keydown', resumeAudio);
-        document.addEventListener('touchstart', resumeAudio);
     }
 
     onKeyDown(e) {
@@ -56,10 +50,6 @@ export class Input {
     requestPointerLock() {
         // Don't request pointer lock if game is paused (upgrade menu open)
         if (window.game && window.game.isPaused) {
-            return;
-        }
-        // Don't request pointer lock on mobile (if touch controls are visible)
-        if (this.touchControls && this.touchControls.container.style.display !== 'none') {
             return;
         }
         document.body.requestPointerLock();

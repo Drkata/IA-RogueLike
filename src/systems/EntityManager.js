@@ -31,6 +31,16 @@ export class EntityManager {
             side: THREE.DoubleSide
         });
         this.telegraphs = []; // Active telegraphs
+
+        // Shockwave Visuals
+        this.shockwaveGeo = new THREE.RingGeometry(0.5, 1.0, 32);
+        this.shockwaveMat = new THREE.MeshBasicMaterial({
+            color: 0x00ffff, // Cyan
+            transparent: true,
+            opacity: 0.8,
+            side: THREE.DoubleSide,
+            depthTest: false
+        });
     }
 
     add(entity) {
@@ -75,6 +85,12 @@ export class EntityManager {
                     const scale = 0.5 + (progress * 5.5); // 0.5 -> 6.0
                     effect.scale.setScalar(scale);
                     effect.material.opacity = effect.userData.life / 0.3;
+                } else if (effect.userData.isShockwave) {
+                    // Shockwave: Expand to radius 15
+                    const progress = 1 - (effect.userData.life / 0.5);
+                    const scale = 1.0 + (progress * 30.0); // 1.0 -> 31.0 (Radius ~15)
+                    effect.scale.setScalar(scale);
+                    effect.material.opacity = (effect.userData.life / 0.5) * 0.8;
                 } else {
                     // Hit Flash: Rapid expansion
                     effect.scale.multiplyScalar(1.0 + (dt * 10));
@@ -243,22 +259,21 @@ export class EntityManager {
             const mat = this.hitBaseMat.clone();
             flash = new THREE.Mesh(this.hitGeo, mat);
         } else {
-            // Ensure geometry is correct (in case a large explosion mesh leaked into pool)
             flash.geometry = this.hitGeo;
         }
 
         flash.position.copy(position);
 
         if (isCritical) {
-            flash.scale.set(1, 1, 1); // Standard size (was 2)
-            flash.material.color.setHex(0xff0000); // Red
+            flash.scale.set(1, 1, 1);
+            flash.material.color.setHex(0xff0000);
         } else {
             flash.scale.set(1, 1, 1);
-            flash.material.color.setHex(0xffff00); // Yellow
+            flash.material.color.setHex(0xffff00);
         }
 
         flash.material.opacity = 0.8;
-        flash.userData.life = 0.2; // 0.2 seconds life
+        flash.userData.life = 0.2;
 
         this.scene.add(flash);
         this.hitEffects.push(flash);
@@ -270,21 +285,17 @@ export class EntityManager {
         const targets = [];
 
         for (const enemy of enemies) {
-            // Check distance (Boss has larger radius, so check distance to surface roughly)
             const dist = enemy.position.distanceTo(position);
-            const hitDist = enemy.radius ? 6 + enemy.radius : 6; // Explosion radius 6 + enemy radius
-
-            if (dist < 6) { // Doubled radius check
+            if (dist < 6) {
                 targets.push(enemy);
             }
         }
 
         // Only play visual if we actually hit something
         if (targets.length > 0) {
-            // Visual - Solid Sphere for clear AOE range
-            const geometry = new THREE.SphereGeometry(1, 16, 16); // Base radius 1
+            const geometry = new THREE.SphereGeometry(1, 16, 16);
             const material = new THREE.MeshBasicMaterial({
-                color: 0xff4400, // Orange/Red
+                color: 0xff4400,
                 transparent: true,
                 opacity: 0.5
             });
@@ -313,21 +324,30 @@ export class EntityManager {
         }
     }
 
+    createShockwave(position) {
+        const effect = new THREE.Mesh(this.shockwaveGeo, this.shockwaveMat.clone());
+        effect.position.copy(position);
+        effect.position.y = 0.5; // Slightly above ground
+        effect.rotation.x = -Math.PI / 2; // Flat on ground
+        effect.userData = { life: 0.5, isShockwave: true };
+        effect.scale.setScalar(1.0);
+        this.scene.add(effect);
+        this.hitEffects.push(effect);
+    }
+
     createTelegraph(position, duration) {
         const mat = this.telegraphMat.clone();
         const mesh = new THREE.Mesh(this.telegraphGeo, mat);
 
         mesh.position.copy(position);
-        mesh.position.y = 0.1; // Slightly above ground
-        mesh.rotation.x = -Math.PI / 2; // Flat on ground
+        mesh.position.y = 0.1;
+        mesh.rotation.x = -Math.PI / 2;
 
         mesh.userData.life = duration;
         mesh.userData.maxLife = duration;
 
         this.scene.add(mesh);
 
-        // --- VISUAL IMPROVEMENT: Vertical Beacon ---
-        // Add a tall cylinder to make the zone visible even when looking up
         const beaconGeo = new THREE.CylinderGeometry(0.1, 0.1, 20, 8);
         const beaconMat = new THREE.MeshBasicMaterial({
             color: 0xff0000,
@@ -337,28 +357,8 @@ export class EntityManager {
             depthWrite: false
         });
         const beacon = new THREE.Mesh(beaconGeo, beaconMat);
-        beacon.position.set(0, 10, 0); // Center at height 10 (total height 20)
-        beacon.rotation.x = Math.PI / 2; // Rotate to match parent's rotation (since parent is rotated -90 deg X)
-        // Wait, parent is rotated -PI/2. So parent's Y is World Z. Parent's Z is World Y.
-        // Actually, let's just add it to the scene separately or attach it carefully.
-        // Easier: Attach to the mesh.
-        // Mesh rotation is -PI/2 on X.
-        // Local Y axis points along World Z.
-        // Local Z axis points along World Y (Up).
-        // So we want the cylinder to align with Local Z.
-        beacon.rotation.x = Math.PI / 2; // Cylinder default is Y-up. Rotate 90 deg X to align with Z?
-
-        // Let's simplify: Don't rely on parent rotation.
-        // Just create a group or handle it separately?
-        // No, let's just add it to the mesh and adjust rotation.
-        // Mesh is flat on ground (Rot X -90).
-        // We want beacon to go UP (World Y).
-        // In Local space of Mesh, UP is +Z.
-        // Cylinder is Y-aligned by default.
-        // So rotate Cylinder X +90 to align with +Z.
-
         beacon.rotation.x = Math.PI / 2;
-        beacon.position.set(0, 0, 10); // Move "Up" in local Z (which is World Y) by 10 units
+        beacon.position.set(0, 0, 10);
 
         mesh.add(beacon);
 
@@ -377,14 +377,12 @@ export class EntityManager {
         }
         this.entities = [];
 
-        // Clear hit effects
         for (const effect of this.hitEffects) {
             this.scene.remove(effect);
         }
         this.hitEffects = [];
-        this.hitEffectPool = []; // Clear pool to remove any corrupted meshes
+        this.hitEffectPool = [];
 
-        // Clear telegraphs
         for (const tele of this.telegraphs) {
             this.scene.remove(tele);
         }

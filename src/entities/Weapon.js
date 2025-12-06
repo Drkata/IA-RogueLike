@@ -58,6 +58,8 @@ export class Weapon {
         // Ammo State
         this.currentAmmo = this.baseMaxAmmo;
         this.reserveAmmo = 60;
+        this.infiniteAmmo = false; // For Berserk Buff
+        this.fireRateMultiplier = 1.0; // For Berserk Buff
 
         // Melee State
         this.isMeleeing = false;
@@ -312,22 +314,28 @@ export class Weapon {
     }
 
     shoot() {
-        if (this.isReloading || this.currentAmmo <= 0) {
-            if (this.currentAmmo <= 0 && !this.isReloading) this.reload();
+        if (this.isReloading || (this.currentAmmo <= 0 && !this.infiniteAmmo)) {
+            if (this.currentAmmo <= 0 && !this.isReloading && !this.infiniteAmmo) this.reload();
             return 0;
         }
 
         const now = performance.now() / 1000;
-        if (now - this.lastShootTime < this.fireRate) return 0;
+        const effectiveFireRate = this.fireRate / this.fireRateMultiplier;
+        if (now - this.lastShootTime < effectiveFireRate) return 0;
 
         // Multishot Logic: Determine how many bullets to fire
-        // Limit by available ammo in clip
-        const bulletsToFire = Math.min(this.bulletCount, this.currentAmmo);
+        // Limit by available ammo in clip (unless infinite)
+        let bulletsToFire = this.bulletCount;
+        if (!this.infiniteAmmo) {
+            bulletsToFire = Math.min(this.bulletCount, this.currentAmmo);
+        }
 
         this.lastShootTime = now;
 
-        // Consume ammo equal to bullets fired
-        this.currentAmmo -= bulletsToFire;
+        // Consume ammo equal to bullets fired (unless infinite)
+        if (!this.infiniteAmmo) {
+            this.currentAmmo -= bulletsToFire;
+        }
 
         this.flashTime = 0.1;
 

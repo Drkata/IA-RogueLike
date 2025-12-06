@@ -26,10 +26,15 @@ export class Player {
 
         this.maxHealth = 100;
         this.health = this.maxHealth;
+        this.shield = 0; // New Shield Stat
         this.armor = 0; // Percentage reduction (0-50%)
         this.vampirism = 0; // Life steal percentage
         this.regen = 0; // HP per second
         this.speed = CONSTANTS.PLAYER_SPEED;
+
+        // Buff States
+        this.isBerserk = false;
+        this.berserkTimer = 0;
 
         // Upgrade Stats
         this.stats = {
@@ -70,9 +75,23 @@ export class Player {
     takeDamage(amount, sourceName = 'Unknown', sourceId = -1) {
         if (this.invulnerabilityTimer > 0) return;
 
+        // Shield Absorption
+        let remainingDamage = amount;
+        if (this.shield > 0) {
+            if (this.shield >= remainingDamage) {
+                this.shield -= remainingDamage;
+                remainingDamage = 0;
+            } else {
+                remainingDamage -= this.shield;
+                this.shield = 0;
+            }
+            this.updateHUD();
+            if (remainingDamage <= 0) return; // All absorbed
+        }
+
         // Apply armor reduction (max 50%)
         const reduction = Math.min(0.5, this.armor); // 5% per armor level
-        const finalDamage = amount * (1 - reduction);
+        const finalDamage = remainingDamage * (1 - reduction);
         this.sessionStats.damageTaken += finalDamage;
 
         // Log Damage
@@ -135,9 +154,23 @@ export class Player {
 
         this.damageLog = []; // Clear log for new round
 
+        // Reset Buffs
+        this.isBerserk = false;
+        this.berserkTimer = 0;
+        this.weapon.infiniteAmmo = false;
+        this.weapon.fireRateMultiplier = 1.0;
+
         this.recalculateStats();
 
         this.weapon.reset();
+        this.updateHUD();
+    }
+
+    resetBuffs() {
+        this.isBerserk = false;
+        this.berserkTimer = 0;
+        this.weapon.infiniteAmmo = false;
+        this.weapon.fireRateMultiplier = 1.0;
         this.updateHUD();
     }
 
@@ -152,16 +185,77 @@ export class Player {
         this.updateHUD();
     }
 
+    addShield(amount) {
+        this.shield += amount;
+        this.updateHUD();
+    }
+
+    activateBerserk(duration) {
+        this.isBerserk = true;
+        this.berserkTimer = duration;
+        this.berserkMaxDuration = duration;
+        this.weapon.infiniteAmmo = true;
+        this.weapon.fireRateMultiplier = 2.0;
+        this.updateHUD();
+    }
+
+    triggerShockwave() {
+        // Visual Effect
+        if (this.entityManager) {
+            this.entityManager.createShockwave(this.position);
+        }
+
+        // Logic: Push all enemies away
+        if (this.entityManager && this.entityManager.entities) {
+            this.entityManager.entities.forEach(entity => {
+                if (entity.entityType === 'enemy' && !entity.isDead) {
+                    const dist = this.position.distanceTo(entity.position);
+                    if (dist < 15) { // 15m Radius
+                        entity.takeDamage(50); // Massive Damage
+
+                        // Knockback
+                        const pushDir = new THREE.Vector3().subVectors(entity.position, this.position).normalize();
+                        pushDir.y = 0.2; // Slight lift
+
+                        // Apply push (simple teleport for now, or velocity if they had physics)
+                        const newPos = entity.position.clone().add(pushDir.multiplyScalar(5));
+                        if (entity.ai && entity.ai.canMoveTo(newPos)) {
+                            entity.position.copy(newPos);
+                        }
+                    }
+                }
+            });
+        }
+    }
+
     updateHUD() {
         if (this.hudManager) {
-            this.hudManager.updateHealth(this.health, this.maxHealth);
+            this.hudManager.updateHealth(this.health, this.maxHealth, this.shield);
             this.hudManager.updateAmmo(this.weapon.currentAmmo, this.weapon.reserveAmmo);
             this.hudManager.updateStats(this);
+            this.hudManager.updateBuffs({
+                berserk: {
+                    active: this.isBerserk,
+                    time: this.berserkTimer,
+                    max: this.berserkMaxDuration || 15
+                }
+            });
         }
     }
 
     update(dt) {
         if (this.invulnerabilityTimer > 0) this.invulnerabilityTimer -= dt;
+
+        // Berserk Timer
+        if (this.isBerserk) {
+            this.berserkTimer -= dt;
+            if (this.berserkTimer <= 0) {
+                this.isBerserk = false;
+                this.weapon.infiniteAmmo = false;
+                this.weapon.fireRateMultiplier = 1.0;
+            }
+        }
+
         this.handleRotation();
         this.handleMovement(dt);
 

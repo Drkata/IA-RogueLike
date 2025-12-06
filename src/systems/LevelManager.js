@@ -35,6 +35,31 @@ export class LevelManager {
         }
 
         this.loadLevelData(levelData);
+
+        // Generate Chest Positions (2-3 per level, excluding Arena)
+        this.chestPositions = [];
+        if (levelIndex % 10 !== 0 && levelData.rooms) {
+            const roomCount = levelData.rooms.length;
+            if (roomCount > 1) {
+                const numChests = Math.floor(Math.random() * 2) + 2; // 2 or 3
+                // Shuffle rooms (excluding first/safe room)
+                const availableRooms = levelData.rooms.slice(1).sort(() => 0.5 - Math.random());
+
+                for (let i = 0; i < Math.min(numChests, availableRooms.length); i++) {
+                    const room = availableRooms[i];
+                    // Pick a random corner
+                    const corners = [
+                        { x: room.x + 1, z: room.z + 1 },
+                        { x: room.x + room.w - 2, z: room.z + 1 },
+                        { x: room.x + 1, z: room.z + room.h - 2 },
+                        { x: room.x + room.w - 2, z: room.z + room.h - 2 }
+                    ];
+                    const corner = corners[Math.floor(Math.random() * corners.length)];
+                    this.chestPositions.push(corner);
+                }
+            }
+        }
+
         return levelData.playerStart;
     }
 

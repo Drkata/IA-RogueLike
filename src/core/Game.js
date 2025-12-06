@@ -8,6 +8,7 @@ import { Enemy } from '../entities/Enemy.js';
 import { BossSentinel } from '../entities/BossSentinel.js';
 import { Minimap } from '../systems/Minimap.js';
 import { HUDManager } from '../ui/HUDManager.js';
+import { LootChest } from '../entities/LootChest.js';
 
 export class Game {
     constructor() {
@@ -320,6 +321,7 @@ export class Game {
             // Update references for existing player
             this.player.levelManager = this.levelManager;
             this.player.entityManager = this.entityManager;
+            this.player.resetBuffs(); // Clear temporary buffs between levels
         }
 
         this.player.position.set(
@@ -328,6 +330,8 @@ export class Game {
             startPos.z * CONSTANTS.CELL_SIZE + CONSTANTS.CELL_SIZE / 2
         );
         this.camera.position.copy(this.player.position);
+        console.log(`DEBUG: Player pos: ${this.player.position.x}, ${this.player.position.y}, ${this.player.position.z}`);
+        console.log(`DEBUG: Camera pos: ${this.camera.position.x}, ${this.camera.position.y}, ${this.camera.position.z}`);
 
         // Minimap
         this.minimap = new Minimap(this.levelManager, this.player);
@@ -346,24 +350,8 @@ export class Game {
             // Reset reload state
             this.player.weapon.isReloading = false;
             this.player.weapon.reloadTimer = 0;
-        }
-
-        this.hudManager.updateLevel(this.currentLevel);
-
-        // Spawn Enemies or Boss
-        if (this.currentLevel % 10 === 0) {
-            this.spawnBoss();
-        } else {
-            // Normal Level
-            const enemyCount = 5 + (this.currentLevel * 2);
-            console.log(`DEBUG: About to spawn ${enemyCount} enemies`);
-            this.spawnEnemies(enemyCount);
-            console.log(`DEBUG: After spawn, EntityManager has ${this.entityManager.entities.length} entities`);
-            console.log(`DEBUG: Enemy count = ${this.entityManager.getEnemyCount()} `);
-
-            // Auto-aim at nearest enemy
-            let nearestEnemy = null;
             let minDist = Infinity;
+            let nearestEnemy = null;
 
             for (const entity of this.entityManager.entities) {
                 if (entity.entityType === 'enemy') {
@@ -397,6 +385,80 @@ export class Game {
         if (!this.isRunning) {
             this.start();
             this.isRunning = true;
+        }
+
+        // Spawn Enemies or Boss
+        if (this.currentLevel % 10 === 0) {
+            this.spawnBoss();
+        } else {
+            // Normal Level
+            // Base Scaling
+            let enemyCount = CONSTANTS.DIFFICULTY.ENEMY_COUNT_BASE + (this.currentLevel * CONSTANTS.DIFFICULTY.ENEMY_COUNT_PER_LEVEL);
+
+            // Post-Level 10 Scaling (Steeper)
+            if (this.currentLevel > 10) {
+                enemyCount += (this.currentLevel - 10) * CONSTANTS.DIFFICULTY.ENEMY_COUNT_SCALING_POST_10;
+            }
+
+            console.log(`DEBUG: About to spawn ${enemyCount} enemies (Level ${this.currentLevel})`);
+            this.spawnEnemies(enemyCount);
+            console.log(`DEBUG: After spawn, EntityManager has ${this.entityManager.entities.length} entities`);
+            console.log(`DEBUG: Enemy count = ${this.entityManager.getEnemyCount()} `);
+
+            // Spawn Loot Chests
+            if (this.levelManager.chestPositions) {
+                this.levelManager.chestPositions.forEach(pos => {
+                    const position = new THREE.Vector3(
+                        pos.x * CONSTANTS.CELL_SIZE + CONSTANTS.CELL_SIZE / 2,
+                        0,
+                        pos.z * CONSTANTS.CELL_SIZE + CONSTANTS.CELL_SIZE / 2
+                    );
+
+                    const chest = new LootChest(position, this.player, () => {
+                        // Loot Logic
+                        const rand = Math.random();
+                        let message = "";
+
+                        if (rand < 0.25) {
+                            // Ammo (25%)
+                            this.player.weapon.reserveAmmo += 100;
+                            this.player.weapon.currentAmmo = this.player.weapon.maxAmmo; // Instant Reload
+                            this.player.weapon.isReloading = false; // Cancel reload if active
+                            this.player.updateHUD();
+                            message = "Ammo Refilled & Reloaded";
+                        } else if (rand < 0.40) {
+                            // Health (15%)
+                            this.player.health = this.player.maxHealth; // Full Heal
+                            this.player.updateHUD();
+                            message = "Health Fully Restored";
+                        } else if (rand < 0.55) {
+                            // Overshield (15%)
+                            this.player.addShield(50);
+                            message = "Overshield Acquired";
+                        } else if (rand < 0.70) {
+                            // Berserk (15%)
+                            this.player.activateBerserk(10);
+                            message = "BERSERK MODE ACTIVATED";
+                        } else if (rand < 0.85) {
+                            // Shockwave (15%)
+                            this.player.triggerShockwave();
+                            message = "Shockwave Triggered";
+                        } else {
+                            // Upgrade Chest (15%)
+                            this.showChestUpgradeMenu();
+                            message = "Upgrade Found!";
+                        }
+
+                        console.log("Loot Pickup: " + message);
+                        // Show message on HUD (Need to implement HUD message)
+                        if (this.hudManager) {
+                            this.hudManager.showMessage(message);
+                        }
+                    });
+
+                    this.entityManager.add(chest);
+                });
+            }
         }
     }
 
@@ -582,13 +644,16 @@ export class Game {
         this.renderer.render(this.scene, this.camera);
     }
 
-    showUpgradeMenu(points = 3, isMidLevel = false, choiceCount = 6) {
-        // 1. Filter available upgrades
+    showUpgradeMenu(points = 3, isMidLevel = false) {
+        // 1. Filter upgrades that are not maxed out
         const available = this.upgradeList.filter(item => {
             const sourceObj = item.source === 'weapon' ? this.player.weapon : this.player;
             return sourceObj.stats[item.id] < sourceObj.MAX_LEVEL;
         });
 
+        const choiceCount = 6;
+
+        // Show ALL available upgrades for level-up menu
         if (available.length === 0) {
             console.log("All upgrades maxed! Skipping menu.");
             if (!isMidLevel) {
@@ -620,12 +685,6 @@ export class Game {
 
         // Force cursor to be visible
         document.body.style.cursor = 'default';
-
-        // Hide touch controls if active
-        if (this.input && this.input.touchControls) {
-            this.wasTouchVisible = this.input.touchControls.container.style.display !== 'none';
-            this.input.touchControls.container.style.display = 'none';
-        }
 
         // Small delay to ensure pointer lock is released
         setTimeout(() => {
@@ -923,13 +982,18 @@ export class Game {
                 if (this.upgradePoints <= 0 || level >= maxLevel) {
                     btn.disabled = true;
                 }
+
                 btn.onclick = (e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     if (this.upgradePoints > 0 && sourceObj.upgrade(stat)) {
                         this.upgradePoints--;
-                        this.renderUpgradeUI(false);
+                        this.renderUpgradeUI(false); // Don't re-animate on update
+
+                        // Ensure cursor stays visible after click
                         document.body.style.cursor = 'default';
+
+                        // Auto-advance to next level when all upgrades are used OR no upgrades available
                         let availableUpgrades = false;
                         for (const item of this.upgradeList) {
                             const sObj = item.source === 'weapon' ? this.player.weapon : this.player;
@@ -938,19 +1002,26 @@ export class Game {
                                 break;
                             }
                         }
+
                         if (this.upgradePoints === 0 || !availableUpgrades) {
                             setTimeout(() => {
-                                this.menuShown = false;
-                                this.isPaused = false;
-                                this.isRunning = true;
-                                document.getElementById('upgrade-menu').style.display = 'none';
-                                document.body.requestPointerLock();
-                                if (this.input && this.input.touchControls) {
-                                    this.input.touchControls.container.style.display = 'flex';
-                                }
-                                if (!this.isMidLevelUpgrade) {
-                                    this.currentLevel++;
-                                    this.startNewLevel();
+                                if (this.onUpgradeMenuComplete) {
+                                    this.onUpgradeMenuComplete();
+                                } else {
+                                    this.menuShown = false;
+                                    this.isPaused = false;
+                                    this.isRunning = true;
+                                    document.getElementById('upgrade-menu').style.display = 'none';
+                                    document.body.requestPointerLock();
+
+                                    if (this.input && this.input.touchControls) {
+                                        this.input.touchControls.container.style.display = 'flex';
+                                    }
+
+                                    if (!this.isMidLevelUpgrade) {
+                                        this.currentLevel++;
+                                        this.startNewLevel();
+                                    }
                                 }
                             }, 500);
                         }
@@ -1069,17 +1140,23 @@ export class Game {
 
                         if (this.upgradePoints === 0 || !availableUpgrades) {
                             setTimeout(() => {
-                                this.menuShown = false;
-                                this.isPaused = false;
-                                this.isRunning = true;
-                                document.getElementById('upgrade-menu').style.display = 'none';
-                                document.body.requestPointerLock();
-                                if (this.input && this.input.touchControls) {
-                                    this.input.touchControls.container.style.display = 'flex';
-                                }
-                                if (!this.isMidLevelUpgrade) {
-                                    this.currentLevel++;
-                                    this.startNewLevel();
+                                if (this.onUpgradeMenuComplete) {
+                                    this.onUpgradeMenuComplete();
+                                } else {
+                                    this.menuShown = false;
+                                    this.isPaused = false;
+                                    this.isRunning = true;
+                                    document.getElementById('upgrade-menu').style.display = 'none';
+                                    document.body.requestPointerLock();
+
+                                    if (this.input && this.input.touchControls) {
+                                        this.input.touchControls.container.style.display = 'flex';
+                                    }
+
+                                    if (!this.isMidLevelUpgrade) {
+                                        this.currentLevel++;
+                                        this.startNewLevel();
+                                    }
                                 }
                             }, 500);
                         }
@@ -1127,20 +1204,20 @@ export class Game {
 
                     if (this.upgradePoints <= 0) {
                         setTimeout(() => {
-                            document.getElementById('upgrade-menu').style.display = 'none';
-                            document.body.style.cursor = 'none';
-                            document.body.requestPointerLock();
-                            this.isPaused = false;
-                            this.isRunning = true;
-                            this.menuShown = false;
+                            if (this.onUpgradeMenuComplete) {
+                                this.onUpgradeMenuComplete();
+                            } else {
+                                document.getElementById('upgrade-menu').style.display = 'none';
+                                document.body.style.cursor = 'none';
+                                document.body.requestPointerLock();
+                                this.isPaused = false;
+                                this.isRunning = true;
+                                this.menuShown = false;
 
-                            if (this.input && this.input.touchControls && this.wasTouchVisible) {
-                                this.input.touchControls.container.style.display = 'block';
-                            }
-
-                            if (!this.isMidLevelUpgrade) {
-                                this.currentLevel++;
-                                this.startNewLevel();
+                                if (!this.isMidLevelUpgrade) {
+                                    this.currentLevel++;
+                                    this.startNewLevel();
+                                }
                             }
                         }, 300);
                     }
@@ -1185,20 +1262,20 @@ export class Game {
 
             // Close menu automatically
             setTimeout(() => {
-                document.getElementById('upgrade-menu').style.display = 'none';
-                document.body.style.cursor = 'none';
-                document.body.requestPointerLock();
-                this.isPaused = false;
-                this.isRunning = true;
-                this.menuShown = false;
+                if (this.onUpgradeMenuComplete) {
+                    this.onUpgradeMenuComplete();
+                } else {
+                    document.getElementById('upgrade-menu').style.display = 'none';
+                    document.body.style.cursor = 'none';
+                    document.body.requestPointerLock();
+                    this.isPaused = false;
+                    this.isRunning = true;
+                    this.menuShown = false;
 
-                if (this.input && this.input.touchControls && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) {
-                    this.input.touchControls.container.style.display = 'block';
-                }
-
-                if (!this.isMidLevelUpgrade) {
-                    this.currentLevel++;
-                    this.startNewLevel();
+                    if (!this.isMidLevelUpgrade) {
+                        this.currentLevel++;
+                        this.startNewLevel();
+                    }
                 }
             }, 300);
         };
@@ -1206,6 +1283,46 @@ export class Game {
 
         grid.appendChild(buttonsContainer);
     }
+
+    showChestUpgradeMenu() {
+        this.isRunning = false;
+        this.isPaused = true;
+        this.menuShown = true;
+        this.isMidLevelUpgrade = true; // Treat as mid-level to avoid level increment
+        this.upgradePoints = 1;
+
+        // Select 3 random unique upgrades
+        const available = this.upgradeList.filter(item => {
+            const sObj = item.source === 'weapon' ? this.player.weapon : this.player;
+            return sObj.stats[item.id] < sObj.MAX_LEVEL;
+        });
+
+        const options = [];
+        while (options.length < 3 && available.length > 0) {
+            const idx = Math.floor(Math.random() * available.length);
+            options.push(available[idx]);
+            available.splice(idx, 1);
+        }
+
+        this.currentUpgradeChoices = options; // Use specific list for this menu
+
+        // Custom callback for chest upgrade
+        this.onUpgradeMenuComplete = () => {
+            this.menuShown = false;
+            this.isPaused = false;
+            this.isRunning = true;
+            document.getElementById('upgrade-menu').style.display = 'none';
+            document.body.requestPointerLock();
+            this.currentUpgradeChoices = null; // Reset
+            this.onUpgradeMenuComplete = null;
+        };
+
+        this.renderUpgradeUI(true);
+        document.exitPointerLock();
+        document.body.style.cursor = 'default';
+        document.getElementById('upgrade-menu').style.display = 'flex';
+    }
+
     getIconForStat(stat) {
         const icons = {
             damage: '⚔️',
