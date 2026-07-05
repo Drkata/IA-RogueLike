@@ -51,7 +51,9 @@ export class Player {
             armor: 0,
             vampirism: 0,
             regen: 0,
-            speed: 0
+            speed: 0,
+            meleeDamage: 0,
+            immolation: 0
         };
 
         // Session Stats (for Game Over screen)
@@ -145,8 +147,26 @@ export class Player {
             armor: 0,
             vampirism: 0,
             regen: 0,
-            speed: 0
+            speed: 0,
+            meleeDamage: 0,
+            immolation: 0
         };
+
+        // Reset Immolation Ring
+        if (this.immolationRing) {
+            if (this.entityManager && this.entityManager.scene) {
+                this.entityManager.scene.remove(this.immolationRing);
+            }
+            this.immolationRing = null;
+        }
+
+        // Reset Pact Modifiers
+        this.lifeSteal = 0;
+        this.healthRegen = 0;
+        this.pactHpMultiplier = 1.0;
+        this.pactSpeedMultiplier = 1.0;
+        this.pactArmorBonus = 0;
+        this.pactVampirism = 0;
 
         this.sessionStats = {
             damageDealt: 0,
@@ -156,7 +176,6 @@ export class Player {
             startTime: Date.now(),
             critCount: 0,
             maxDamageHit: 0,
-            damageTaken: 0,
             damageTaken: 0,
             healingDone: 0
         };
@@ -309,9 +328,73 @@ export class Player {
 
         this.weapon.update(dt);
 
-        // Regeneration
-        if (this.regen > 0 && this.health < this.maxHealth) {
-            this.heal(this.regen * dt);
+        // Immolation Aura Logic
+        if (this.stats.immolation > 0) {
+            if (!this.immolationRing) {
+                const ringGeom = new THREE.RingGeometry(4.4, 4.5, 64);
+                ringGeom.rotateX(-Math.PI / 2);
+                const ringMat = new THREE.MeshBasicMaterial({
+                    color: 0xff3300,
+                    side: THREE.DoubleSide,
+                    transparent: true,
+                    opacity: 0.6,
+                    depthWrite: false
+                });
+                this.immolationRing = new THREE.Mesh(ringGeom, ringMat);
+                if (this.entityManager && this.entityManager.scene) {
+                    this.entityManager.scene.add(this.immolationRing);
+                }
+                this.immolationTimer = 0;
+                this.immolationPulseTimer = 0;
+            }
+
+            this.immolationRing.visible = true;
+            this.immolationRing.position.set(this.position.x, 0.05, this.position.z);
+            
+            this.immolationPulseTimer += dt * 4.0;
+            const pulse = 1.0 + Math.sin(this.immolationPulseTimer) * 0.04;
+            this.immolationRing.scale.set(pulse, 1.0, pulse);
+            this.immolationRing.rotation.y += dt * 0.5;
+
+            this.immolationTimer += dt;
+            if (this.immolationTimer >= 0.5) {
+                this.immolationTimer = 0;
+                const range = 4.5;
+                const damage = this.stats.immolation * 2.5; // 5 damage/sec per level
+                const origin = this.position;
+
+                if (this.entityManager && this.entityManager.entities) {
+                    this.entityManager.entities.forEach(entity => {
+                        if (entity.entityType === 'enemy' && !entity.isDead) {
+                            const dist = origin.distanceTo(entity.position);
+                            if (dist < range) {
+                                entity.takeDamage(damage);
+                            }
+                        }
+                    });
+                }
+            }
+        } else {
+            if (this.immolationRing) {
+                this.immolationRing.visible = false;
+            }
+        }
+
+        // Regeneration / Drain
+        const totalRegen = this.regen + (this.healthRegen || 0);
+        if (totalRegen > 0 && this.health < this.maxHealth) {
+            this.heal(totalRegen * dt);
+        } else if (totalRegen < 0) {
+            // Drain health, but don't kill the player directly (leave at 1 HP or kill?)
+            // Let's let it kill the player!
+            this.health += totalRegen * dt;
+            if (this.health <= 0) {
+                this.health = 0;
+                if (!this.isDeadCallbackTriggered) {
+                    this.isDeadCallbackTriggered = true;
+                    if (window.game) window.game.gameOver(this.damageLog);
+                }
+            }
         }
 
         this.updateHUD();
@@ -325,7 +408,7 @@ export class Player {
             // Range: 3.0
             // Radius: 1.0
             const range = 3.0;
-            const damage = 10; // Reduced from 25
+            const damage = 10 + (this.stats.meleeDamage || 0) * 15; // Base 10, +15 per level
             const knockbackForce = 15; // Strong push
 
             // Get camera forward direction
@@ -342,7 +425,8 @@ export class Player {
                         const toEnemy = new THREE.Vector3().subVectors(entity.position, origin);
                         const dist = toEnemy.length();
 
-                        if (dist < range + 1.0) { // Within range
+                        const hitRadius = entity.radius || 0.8;
+                        if (dist < range + hitRadius) { // Within range
                             const angle = toEnemy.angleTo(forward);
                             if (angle < Math.PI / 4) { // Within 45 degree cone
                                 // Found a candidate, check if it's closer
@@ -435,6 +519,7 @@ export class Player {
                     this.weapon.ricochet || 0 // Ricochet Count
                 );
                 projectile.isPlayerProjectile = true; // Mark as player projectile
+                projectile.homingLevel = this.weapon.stats.homing || 0; // Transmit homing level
 
                 // Add to entity manager
                 if (this.entityManager) {
@@ -502,7 +587,6 @@ export class Player {
         const checkRadius = this.radius;
 
         // Helper to check collision at a specific point
-        // Helper to check collision at a specific point
         const checkCollision = (x, z) => {
             if (!this.levelManager) return false;
             return this.levelManager.isWall(x, z) || this.levelManager.isDecoration(x, z);
@@ -548,9 +632,14 @@ export class Player {
         this.camera.position.copy(this.position);
     }
 
+    getMaxLevel(stat) {
+        return this.MAX_LEVEL;
+    }
+
     upgrade(stat) {
         if (this.stats[stat] !== undefined) {
-            if (this.stats[stat] < this.MAX_LEVEL) {
+            const maxLvl = this.getMaxLevel(stat);
+            if (this.stats[stat] < maxLvl) {
                 this.stats[stat]++;
                 this.recalculateStats();
                 return true;
@@ -562,7 +651,8 @@ export class Player {
     recalculateStats() {
         // Max Health: +25 per level (Buffed from 20)
         const oldMax = this.maxHealth;
-        this.maxHealth = Math.max(25, 100 + (this.stats.maxHealth * 25) - (this.pactHpReduction || 0));
+        const baseMax = 100 + (this.stats.maxHealth * 25);
+        this.maxHealth = Math.max(25, baseMax * (this.pactHpMultiplier || 1.0));
 
         // Heal the difference so upgrade feels good immediately
         if (this.maxHealth > oldMax) {
@@ -575,8 +665,8 @@ export class Player {
         // Armor: +3.0% per level (Nerfed from 4%) + pact bonus
         this.armor = this.stats.armor * 0.03 + (this.pactArmorBonus || 0);
 
-        // Vampirism: +2% per level (max 20%)
-        this.vampirism = this.stats.vampirism * 0.02;
+        // Vampirism: +2% per level (max 20%) + pact modifier
+        this.vampirism = this.stats.vampirism * 0.02 + (this.pactVampirism || 0);
 
         // Regeneration: +0.3 HP/s per level (Nerfed from 0.5)
         this.regen = this.stats.regen * 0.3;
@@ -594,6 +684,8 @@ export class Player {
             case 'vampirism': return level * 2; // Return as percentage number
             case 'regen': return level * 0.3; // HP per second
             case 'speed': return Math.round((1 + level * 0.08) * 100); // Percentage speed
+            case 'meleeDamage': return 10 + level * 15;
+            case 'immolation': return level * 5; // Damage per second
             default: return 0;
         }
     }

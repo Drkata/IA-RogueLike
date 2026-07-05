@@ -1,11 +1,67 @@
 export class SoundManager {
     constructor() {
         this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Background Music
+        this.bgmVolume = 0.3;
+        this.isMuted = true;
+        this.playlist = [
+            'sounds/bgm1.mp3',
+            'sounds/bgm2.mp3',
+            'sounds/bgm3.mp3'
+        ];
+        this.currentTrackIndex = Math.floor(Math.random() * this.playlist.length);
+        this.bgmAudio = new Audio();
+        this.bgmAudio.volume = this.bgmVolume;
+        this.hasStartedBGM = false;
+        
+        this.bgmAudio.addEventListener('ended', () => {
+            this.playNextTrack();
+        });
+    }
+
+    toggleMute() {
+        this.isMuted = !this.isMuted;
+        if (this.isMuted) {
+            this.bgmAudio.pause();
+        } else {
+            if (this.hasStartedBGM) {
+                this.bgmAudio.play().catch(e => console.warn('Autoplay blocked:', e));
+            } else {
+                this.startBGM();
+            }
+        }
+        return this.isMuted;
+    }
+
+    startBGM() {
+        if (this.isMuted || this.hasStartedBGM) return;
+        this.hasStartedBGM = true;
+        this.bgmAudio.src = this.playlist[this.currentTrackIndex];
+        this.bgmAudio.play().catch(e => {
+            console.warn('Autoplay blocked:', e);
+            this.hasStartedBGM = false;
+        });
+    }
+
+    playNextTrack() {
+        if (this.isMuted) return;
+        let nextIndex;
+        do {
+            nextIndex = Math.floor(Math.random() * this.playlist.length);
+        } while (nextIndex === this.currentTrackIndex && this.playlist.length > 1);
+        
+        this.currentTrackIndex = nextIndex;
+        this.bgmAudio.src = this.playlist[this.currentTrackIndex];
+        this.bgmAudio.play().catch(e => console.warn('Autoplay blocked:', e));
     }
 
     ensureContext() {
         if (this.ctx.state === 'suspended') {
             this.ctx.resume();
+        }
+        if (!this.hasStartedBGM && !this.isMuted) {
+            this.startBGM();
         }
     }
 

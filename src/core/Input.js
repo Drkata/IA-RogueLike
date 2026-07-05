@@ -52,7 +52,12 @@ export class Input {
         if (window.game && window.game.isPaused) {
             return;
         }
-        document.body.requestPointerLock();
+        const promise = document.body.requestPointerLock();
+        if (promise) {
+            promise.catch(err => {
+                // Ignore PointerLock errors caused by rapid clicking
+            });
+        }
     }
 
     isKeyDown(code) {

@@ -24,13 +24,13 @@ export class MagicalSentinel {
             gridZ * this.cellSize + this.cellSize / 2
         );
 
-        this.health = 25 + (level * 5);
+        this.health = (25 + (level * 5)) / 2;
         this.radius = 0.8; // Hitbox radius
 
         // Attack config
         this.projectileSpeed = 12.0;
-        this.damage = 10 + (level * 2);
-        this.attackCooldown = Math.max(1.0, 3.5 - (level * 0.15));
+        this.damage = (10 + (level * 2)) * 2;
+        this.attackCooldown = Math.max(1.0, 3.5 - (level * 0.15)) / 5.0;
         this.lastAttackTime = Math.random() * 1.5; // Stagger attack starts
         this.attackRange = 15.0;
 
@@ -82,7 +82,30 @@ export class MagicalSentinel {
         this.mesh.add(this.eyeMesh);
 
         // 4. Point Light (Red glow)
-        this.light = new THREE.PointLight(0xff0000, 1.0, 4);
+        // A dynamic PointLight being removed from the scene causes a massive global shader recompilation freeze!
+        // We replace it with a glowing Sprite.
+        const canvas = document.createElement('canvas');
+        canvas.width = 64;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+        grad.addColorStop(0, 'rgba(255, 0, 0, 1)');
+        grad.addColorStop(0.4, 'rgba(255, 0, 0, 0.5)');
+        grad.addColorStop(1, 'rgba(255, 0, 0, 0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 64, 64);
+        
+        const glowTex = new THREE.CanvasTexture(canvas);
+        const glowMat = new THREE.SpriteMaterial({
+            map: glowTex,
+            color: 0xff0000,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        
+        this.light = new THREE.Sprite(glowMat);
+        this.light.scale.set(4, 4, 4);
         this.light.position.y = 1.4;
         this.mesh.add(this.light);
     }

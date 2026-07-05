@@ -1,32 +1,12 @@
 import { CONSTANTS } from '../../core/Constants.js';
+import { SVG_ICONS } from '../SVGIcons.js';
 
 export class StatsDisplay {
     constructor(container) {
         this.element = document.createElement('div');
         this.element.id = 'stats-display';
-        this.element.style.position = 'absolute';
-        this.element.style.top = '10px';
-        this.element.style.right = '10px';
-        this.element.style.padding = '10px';
-        this.element.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-        this.element.style.border = '1px solid #444';
-        this.element.style.borderRadius = '5px';
-        this.element.style.fontFamily = 'monospace';
-        this.element.style.fontSize = '11px'; // Slightly smaller
-        this.element.style.color = 'white';
-        this.element.style.pointerEvents = 'none';
-        this.element.style.display = 'block';
-        this.element.style.textAlign = 'left';
-        this.element.style.minWidth = '150px';
-
-        // Append to body directly to avoid HUD container relative positioning issues if any,
-        // OR just ensure it breaks out of flow if container is top-left.
-        // Actually, HUDManager passes 'container' which is #hud-container (top-left).
-        // If we want top-right, we should probably append to document.body OR use fixed positioning.
-        // Fixed positioning is safest relative to viewport.
-        this.element.style.position = 'fixed';
-
-        document.body.appendChild(this.element); // Attach to body instead of container
+        this.element.className = 'medieval-panel';
+        container.appendChild(this.element);
     }
 
     update(player) {
@@ -35,49 +15,104 @@ export class StatsDisplay {
         const w = player.weapon;
         const s = w.stats; // Access upgrade levels
 
-        // Helper to format: Total (+Level)
-        const fmt = (val, level, suffix = '') => {
+        // Helper to format: Total (+Level) [Pact]
+        const fmt = (val, level, pactMult = 1.0, suffix = '') => {
             const valStr = Number.isInteger(val) ? val : val.toFixed(1);
+            let str = valStr + suffix;
             if (level > 0) {
-                return `${valStr}${suffix} <span style="color: #00ff00; font-size: 0.9em;">(+${level})</span>`;
+                str += ` <span style="color: #00ff00; font-size: 0.9em;">(+${level})</span>`;
             }
-            return `${valStr}${suffix}`;
+            if (pactMult !== 1.0) {
+                const color = pactMult > 1.0 ? '#ff8888' : '#8888ff';
+                str += ` <span style="color: ${color}; font-size: 0.8em;">(x${pactMult.toFixed(2)})</span>`;
+            }
+            return str;
         };
+
+        // Helper for simple flat pacts
+        const fmtFlat = (val, pactFlat = 0, suffix = '') => {
+            const valStr = Number.isInteger(val) ? val : val.toFixed(1);
+            let str = valStr + suffix;
+            if (pactFlat !== 0) {
+                const color = pactFlat > 0 ? '#ff8888' : '#8888ff';
+                const sign = pactFlat > 0 ? '+' : '';
+                str += ` <span style="color: ${color}; font-size: 0.8em;">(${sign}${pactFlat.toFixed(1)})</span>`;
+            }
+            return str;
+        };
+
+        // Safe fallbacks for pact variables
+        const pactHpMultiplier = player.pactHpMultiplier !== undefined ? player.pactHpMultiplier : 1.0;
+        const pactSpeedMultiplier = player.pactSpeedMultiplier !== undefined ? player.pactSpeedMultiplier : 1.0;
+        const pactArmorBonus = player.pactArmorBonus !== undefined ? player.pactArmorBonus : 0.0;
+        const healthRegen = player.healthRegen !== undefined ? player.healthRegen : 0.0;
+        const pactVampirism = player.pactVampirism !== undefined ? player.pactVampirism : 0.0;
+
+        const pactDamageMultiplier = w.pactDamageMultiplier !== undefined ? w.pactDamageMultiplier : 1.0;
+        const pactFireRateMultiplier = w.pactFireRateMultiplier !== undefined ? w.pactFireRateMultiplier : 1.0;
+        const pactProjectileSpeedMultiplier = w.pactProjectileSpeedMultiplier !== undefined ? w.pactProjectileSpeedMultiplier : 1.0;
 
         // Calculations
         const currentDamage = w.bulletCount > 1 ? w.damage * w.bulletCount : w.damage;
         const currentFireRate = 1 / w.fireRate;
         const currentCritChance = w.critChance * 100;
         const currentCritDamage = w.critDamage * 100;
-        const currentArc = w.arc;
+
+        const totalRegen = player.regen + healthRegen;
+
+        const makeRow = (icon, color, label, valueHtml) => `
+            <div style="display: flex; align-items: center; gap: 4px; color: ${color};">
+                <span class="icon-wrapper" style="width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center;">${icon}</span>
+                <span>${label}</span>
+            </div>
+            <div style="text-align: right; color: #fff;">${valueHtml}</div>
+        `;
 
         this.element.innerHTML = `
-            <div style="margin-bottom: 5px; color: #00ff00; font-weight: bold; border-bottom: 1px solid #444; text-align: center;">STATS</div>
-            <div style="display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center;">
-                <div style="color: #88ff88;">Max Health:</div><div style="text-align: right;">${Math.round(player.maxHealth)}</div>
-                <div style="color: #88ff88;">Armor:</div><div style="text-align: right;">${Math.round(player.armor * 100)}%</div>
-                <div style="color: #88ff88;">Regeneration:</div><div style="text-align: right;">${player.regen.toFixed(1)}/s</div>
-                <div style="color: #88ff88;">Life Steal:</div><div style="text-align: right;">${Math.round(player.vampirism * 100)}%</div>
-                <div style="color: #88ff88;">Speed:</div><div style="text-align: right;">${Math.round((player.speed / CONSTANTS.PLAYER_SPEED) * 100)}%</div>
-                
-                <div style="height: 4px;"></div><div style="height: 4px;"></div>
+            <div class="panel-header">STATISTIQUES</div>
+            <div style="display: flex; gap: 15px; align-items: flex-start;">
+                <!-- Column 1: Defense & Mobility -->
+                <div style="display: grid; grid-template-columns: auto auto; gap: 4px 8px; align-items: center; min-width: 145px;">
+                    ${makeRow(SVG_ICONS.maxHealth, '#88ff88', 'Vie Max:', `${Math.round(player.maxHealth)} <span style="color: ${pactHpMultiplier !== 1.0 ? '#ff8888' : 'transparent'}; font-size: 0.8em;">${pactHpMultiplier !== 1.0 ? '(x' + pactHpMultiplier.toFixed(2) + ')' : ''}</span>`)}
+                    ${makeRow(SVG_ICONS.armor, '#88ff88', 'Armure:', `${Math.round(player.armor * 100)}% <span style="color: ${pactArmorBonus !== 0.0 ? '#ff8888' : 'transparent'}; font-size: 0.8em;">${pactArmorBonus !== 0.0 ? '(' + (pactArmorBonus > 0 ? '+' : '') + (pactArmorBonus * 100).toFixed(0) + '%)' : ''}</span>`)}
+                    ${makeRow(SVG_ICONS.regen, '#88ff88', 'Régén.:', fmtFlat(totalRegen, healthRegen, '/s'))}
+                    ${makeRow(SVG_ICONS.vampirism, '#88ff88', 'Vol de Vie:', fmtFlat(player.vampirism * 100, pactVampirism * 100, '%'))}
+                    ${makeRow(SVG_ICONS.speed, '#88ff88', 'Vitesse:', `${Math.round((player.speed / CONSTANTS.PLAYER_SPEED) * 100)}% <span style="color: ${pactSpeedMultiplier !== 1.0 ? '#ff8888' : 'transparent'}; font-size: 0.8em;">${pactSpeedMultiplier !== 1.0 ? '(x' + pactSpeedMultiplier.toFixed(2) + ')' : ''}</span>`)}
+                </div>
 
-                <div style="color: #ff8888;">Damage:</div><div style="text-align: right;">${fmt(currentDamage, s.damage)}</div>
-                <div style="color: #ff8888;">Fire Rate:</div><div style="text-align: right;">${fmt(currentFireRate, s.fireRate, '/s')}</div>
-                <div style="color: #ff8888;">Crit Chance:</div><div style="text-align: right;">${fmt(currentCritChance, s.critChance, '%')}</div>
-                <div style="color: #ff8888;">Crit Damage:</div><div style="text-align: right;">${fmt(currentCritDamage, s.critDamage, '%')}</div>
-                <div style="color: #ff8888;">Max Ammo:</div><div style="text-align: right;">${fmt(w.maxAmmo, s.ammo)}</div>
-                <div style="color: #ff8888;">Reload Speed:</div><div style="text-align: right;">${fmt(w.reloadTime, s.reload, 's')}</div>
-                <div style="color: #ff8888;">Range:</div><div style="text-align: right;">${fmt(w.range, s.range)}</div>
-                <div style="color: #ff8888;">Projectile Speed:</div><div style="text-align: right;">${fmt(w.projectileSpeed, s.projectileSpeed)}</div>
+                <!-- Vertical Separator -->
+                <div style="width: 1px; align-self: stretch; background: rgba(212, 175, 55, 0.2);"></div>
 
-                <div style="height: 4px;"></div><div style="height: 4px;"></div>
-                
-                <div style="color: #aaaaff;">Multishot:</div><div style="text-align: right;">${fmt(w.bulletCount, s.bulletCount)}</div>
-                <div style="color: #aaaaff;">Piercing:</div><div style="text-align: right;">${fmt(w.piercing, s.piercing)}</div>
-                <div style="color: #aaaaff;">Knockback:</div><div style="text-align: right;">${fmt(w.knockback, s.knockback)}</div>
-                <div style="color: #aaaaff;">Explosion:</div><div style="text-align: right;">${fmt(w.explosion * 100, s.explosion, '%')}</div>
-                <div style="color: #aaaaff;">Ricochet:</div><div style="text-align: right;">${fmt(w.ricochet, s.ricochet)}</div>
+                <!-- Column 2: Weapon Core -->
+                <div style="display: grid; grid-template-columns: auto auto; gap: 4px 8px; align-items: center; min-width: 145px;">
+                    ${makeRow(SVG_ICONS.damage, '#ff8888', 'Dégâts:', fmt(currentDamage, s.damage, pactDamageMultiplier))}
+                    ${makeRow(SVG_ICONS.fireRate, '#ff8888', 'Cadence:', fmt(currentFireRate, s.fireRate, pactFireRateMultiplier, '/s'))}
+                    ${makeRow(SVG_ICONS.ammo, '#ff8888', 'Max Mana:', fmt(w.maxAmmo, s.ammo))}
+                    ${makeRow(SVG_ICONS.reload, '#ff8888', 'Recharge:', fmt(w.reloadTime, s.reload, 1.0, 's'))}
+                </div>
+
+                <!-- Vertical Separator -->
+                <div style="width: 1px; align-self: stretch; background: rgba(212, 175, 55, 0.2);"></div>
+
+                <!-- Column 3: Criticals & Projectiles -->
+                <div style="display: grid; grid-template-columns: auto auto; gap: 4px 8px; align-items: center; min-width: 145px;">
+                    ${makeRow(SVG_ICONS.critChance, '#ff8888', 'Crit %:', fmt(currentCritChance, s.critChance, 1.0, '%'))}
+                    ${makeRow(SVG_ICONS.critDamage, '#ff8888', 'Crit Dég.:', fmt(currentCritDamage, s.critDamage, 1.0, '%'))}
+                    ${makeRow(SVG_ICONS.range, '#ff8888', 'Portée:', fmt(w.range, s.range))}
+                    ${makeRow(SVG_ICONS.projectileSpeed, '#ff8888', 'Vit. Proj.:', fmt(w.projectileSpeed, s.projectileSpeed, pactProjectileSpeedMultiplier))}
+                </div>
+
+                <!-- Vertical Separator -->
+                <div style="width: 1px; align-self: stretch; background: rgba(212, 175, 55, 0.2);"></div>
+
+                <!-- Column 4: Specials & Utilities -->
+                <div style="display: grid; grid-template-columns: auto auto; gap: 4px 8px; align-items: center; min-width: 145px;">
+                    ${makeRow(SVG_ICONS.arc, '#aaaaff', 'Proj. Nbr:', fmt(w.bulletCount, s.bulletCount))}
+                    ${makeRow(SVG_ICONS.piercing, '#aaaaff', 'Perforation:', fmt(w.piercing, s.piercing))}
+                    ${makeRow(SVG_ICONS.knockback, '#aaaaff', 'Recul Cible:', fmt(w.knockback, s.knockback))}
+                    ${makeRow(SVG_ICONS.explosion, '#aaaaff', 'Explosion:', fmt(w.explosion * 100, s.explosion, 1.0, '%'))}
+                    ${makeRow(SVG_ICONS.ricochet, '#aaaaff', 'Rebonds:', fmt(w.ricochet, s.ricochet))}
+                </div>
             </div>
         `;
     }

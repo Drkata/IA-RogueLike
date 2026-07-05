@@ -1,39 +1,49 @@
 import * as THREE from 'three';
 
 export class FloatingText {
+    static cache = {}; // Cache to prevent canvas recreation
+
     constructor(position, text, color = '#ffffff', size = 1) {
         this.isDead = false;
         this.lifeTime = 1.0; // Seconds
         this.age = 0;
 
-        // Create canvas for text
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        canvas.width = 256;
-        canvas.height = 128; // Rectangular for text
+        const cacheKey = `${text}_${color}`;
+        
+        let texture = FloatingText.cache[cacheKey];
+        
+        if (!texture) {
+            // Create canvas for text ONLY ONCE per unique text/color
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = 256;
+            canvas.height = 128; // Rectangular for text
 
-        // Text style
-        context.font = 'bold 60px monospace';
-        context.textAlign = 'center';
-        context.textBaseline = 'middle';
+            // Text style
+            context.font = 'bold 60px monospace';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
 
-        // Stroke (outline)
-        context.lineWidth = 4;
-        context.strokeStyle = 'black';
-        context.strokeText(text, 128, 64);
+            // Stroke (outline)
+            context.lineWidth = 4;
+            context.strokeStyle = 'black';
+            context.strokeText(text, 128, 64);
 
-        // Fill
-        context.fillStyle = color;
-        context.fillText(text, 128, 64);
+            // Fill
+            context.fillStyle = color;
+            context.fillText(text, 128, 64);
 
-        // Create texture
-        const texture = new THREE.CanvasTexture(canvas);
+            // Create texture
+            texture = new THREE.CanvasTexture(canvas);
+            FloatingText.cache[cacheKey] = texture;
+        }
 
         // Create sprite material
+        // We MUST create a new material instance so opacity fades independently per text instance
         const material = new THREE.SpriteMaterial({
             map: texture,
             transparent: true,
-            depthTest: false, // Always visible on top (optional, maybe true is better for depth)
+            depthTest: false,
             depthWrite: false
         });
 

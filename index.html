@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="src/ui/hud.css">
+  <script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js"></script>
   <style>
     body {
       margin: 0;
@@ -146,10 +147,12 @@
 
       /* In-Game Stats Display */
       #stats-display {
-        transform: scale(0.5);
-        transform-origin: top right;
-        top: 2px !important;
-        right: 2px !important;
+        transform: translate(-50%, 0) scale(0.5) !important;
+        transform-origin: bottom center !important;
+        bottom: 2px !important;
+        left: 50% !important;
+        top: auto !important;
+        right: auto !important;
       }
 
       #next-level-btn {
@@ -195,7 +198,8 @@
 
       /* Make stats display even smaller in landscape height */
       #stats-display {
-        transform: scale(0.45);
+        transform: translate(-50%, 0) scale(0.4) !important;
+        transform-origin: bottom center !important;
         max-height: 80vh;
       }
     }
@@ -207,6 +211,41 @@
   <div id="app"></div>
   <!-- HUD Container for dynamic UI -->
   <div id="hud-container"></div>
+
+  <!-- Preload Iconify Icons to cache them before pointer lock is active -->
+  <div style="display: none;">
+    <iconify-icon icon="game-icons:crossed-swords"></iconify-icon>
+    <iconify-icon icon="game-icons:arrow-flights"></iconify-icon>
+    <iconify-icon icon="game-icons:split-arrows"></iconify-icon>
+    <iconify-icon icon="game-icons:ammo-box"></iconify-icon>
+    <iconify-icon icon="game-icons:bullets"></iconify-icon>
+    <iconify-icon icon="game-icons:bullseye"></iconify-icon>
+    <iconify-icon icon="game-icons:fast-arrow"></iconify-icon>
+    <iconify-icon icon="game-icons:shatter"></iconify-icon>
+    <iconify-icon icon="game-icons:barbed-spear"></iconify-icon>
+    <iconify-icon icon="game-icons:rolling-dices"></iconify-icon>
+    <iconify-icon icon="game-icons:skull-mask"></iconify-icon>
+    <iconify-icon icon="game-icons:heart-shield"></iconify-icon>
+    <iconify-icon icon="game-icons:shield"></iconify-icon>
+    <iconify-icon icon="game-icons:glass-heart"></iconify-icon>
+    <iconify-icon icon="game-icons:healing"></iconify-icon>
+    <iconify-icon icon="game-icons:sprint"></iconify-icon>
+    <iconify-icon icon="game-icons:punch"></iconify-icon>
+    <iconify-icon icon="game-icons:explosion-rays"></iconify-icon>
+    <iconify-icon icon="game-icons:ricochet"></iconify-icon>
+    <iconify-icon icon="game-icons:fire-ring"></iconify-icon>
+    <iconify-icon icon="game-icons:wood-club"></iconify-icon>
+    <iconify-icon icon="game-icons:target-arrows"></iconify-icon>
+    <iconify-icon icon="game-icons:blood"></iconify-icon>
+    <iconify-icon icon="game-icons:wizard-staff"></iconify-icon>
+    <iconify-icon icon="game-icons:gold-stack"></iconify-icon>
+    <iconify-icon icon="game-icons:stone-wall"></iconify-icon>
+    <iconify-icon icon="game-icons:vampire-dracula"></iconify-icon>
+    <iconify-icon icon="game-icons:health-potion"></iconify-icon>
+    <iconify-icon icon="game-icons:crown-coin"></iconify-icon>
+    <iconify-icon icon="game-icons:speaker"></iconify-icon>
+    <iconify-icon icon="game-icons:speaker-off"></iconify-icon>
+  </div>
 
   <div id="boss-health-container"
     style="display: none; position: absolute; top: 20px; left: 50%; transform: translateX(-50%); width: 600px; text-align: center; z-index: 50;">
@@ -240,19 +279,8 @@
       <h2 style="font-family: 'MedievalSharp', serif; color: #9400d3; font-size: 2.2em; text-shadow: 0 0 10px rgba(148, 0, 211, 0.5); margin-bottom: 5px;">Autel du Chaos</h2>
       <p style="font-family: 'Courier New', monospace; color: #ddd; font-size: 14px; margin-bottom: 20px;">Proposez une offrande pour sceller un pacte magique :</p>
       
-      <div class="altar-grid">
-        <div class="altar-card" id="altar-card-blood">
-          <div class="altar-card-icon">🩸</div>
-          <h3>Pacte de Sang</h3>
-          <p class="desc">Sacrifiez 25% de vos PV maximum pour augmenter de 40% les dégâts de votre bâton magique.</p>
-          <button onclick="window.game.selectAltarPact('blood')">Accepter le Pacte</button>
-        </div>
-        <div class="altar-card" id="altar-card-armor">
-          <div class="altar-card-icon">🛡️</div>
-          <h3>Pacte d'Armure</h3>
-          <p class="desc">Réduisez votre vitesse de déplacement de 15% pour obtenir +40 d'Armure de manière permanente.</p>
-          <button onclick="window.game.selectAltarPact('armor')">Accepter le Pacte</button>
-        </div>
+      <div class="altar-grid" id="altar-grid-container">
+        <!-- Generated dynamically by JS -->
       </div>
       
       <button id="close-altar-btn" onclick="window.game.closeAltarMenu()">Refuser et Partir</button>
@@ -263,38 +291,59 @@
     <div id="shop-content-wrapper">
       <h2 style="font-family: 'MedievalSharp', serif; color: #00bfff; font-size: 2.2em; text-shadow: 0 0 10px rgba(0, 191, 255, 0.5); margin-bottom: 5px;">Marchand Mystique</h2>
       <p style="font-family: 'Courier New', monospace; color: #ddd; font-size: 14px; margin-bottom: 10px;">Échangez votre or contre des reliques et des élixirs :</p>
-      <div id="shop-gold-container" style="font-family: 'Courier New', monospace; font-size: 1.1em; color: #ffd700; font-weight: bold; margin-bottom: 10px; text-shadow: 1px 1px 0 #000;">
-        Votre Or : <span id="shop-gold-value">0</span> 🪙
+      <div id="shop-gold-container" style="font-family: 'Courier New', monospace; font-size: 1.1em; color: #ffd700; font-weight: bold; margin-bottom: 10px; text-shadow: 1px 1px 0 #000; display: flex; align-items: center; justify-content: center; gap: 6px;">
+        Votre Or : <span id="shop-gold-value">0</span>
+        <iconify-icon icon="game-icons:crown-coin" style="width: 18px; height: 18px; color: #ffd700; display: inline-block; vertical-align: middle;"></iconify-icon>
       </div>
       <div id="shop-feedback" style="font-family: 'Courier New', monospace; font-size: 1.2em; min-height: 24px; color: #00ff00; font-weight: bold; margin-bottom: 15px; text-shadow: 0 0 8px rgba(0, 255, 0, 0.5); opacity: 0; transition: opacity 0.3s;"></div>
       
       <div class="shop-grid">
         <div class="shop-card" id="shop-card-potion">
-          <div class="shop-card-icon">🧪</div>
+          <div class="shop-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:44px; height:44px; color:#ff3333;"><path d="M8.5 2h7M12 2v5M10 7h4v3a4 4 0 0 1 4 4v5a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3v-5a4 4 0 0 1 4-4Z"/></svg>
+          </div>
           <h3>Élixir de Vie</h3>
           <p class="desc">Restaure instantanément 50 points de vie.</p>
-          <div class="shop-price">Prix : 20 🪙</div>
+          <div class="shop-price" style="display: flex; align-items: center; justify-content: center; gap: 4px;">
+            Prix : 20 
+            <iconify-icon icon="game-icons:crown-coin" style="width: 14px; height: 14px; color: #ffd700; display: inline-block; vertical-align: middle;"></iconify-icon>
+          </div>
           <button onclick="window.game.buyShopItem('potion')">Acheter</button>
         </div>
         <div class="shop-card" id="shop-card-ammo">
-          <div class="shop-card-icon">🎒</div>
+          <div class="shop-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:44px; height:44px; color:#00aaff;"><path d="M4 20V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><path d="M9 4v16M15 4v16"/></svg>
+          </div>
           <h3>Sac de Munitions</h3>
           <p class="desc">Restaure 150 projectiles magiques de réserve.</p>
-          <div class="shop-price">Prix : 15 🪙</div>
+          <div class="shop-price" style="display: flex; align-items: center; justify-content: center; gap: 4px;">
+            Prix : 15 
+            <iconify-icon icon="game-icons:crown-coin" style="width: 14px; height: 14px; color: #ffd700; display: inline-block; vertical-align: middle;"></iconify-icon>
+          </div>
           <button onclick="window.game.buyShopItem('ammo')">Acheter</button>
         </div>
         <div class="shop-card" id="shop-card-shield">
-          <div class="shop-card-icon">🛡️</div>
+          <div class="shop-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:44px; height:44px; color:#00ffaa;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>
+          </div>
           <h3>Sceau de Protection</h3>
           <p class="desc">Confère un bouclier d'énergie de 30 points.</p>
-          <div class="shop-price">Prix : 25 🪙</div>
+          <div class="shop-price" style="display: flex; align-items: center; justify-content: center; gap: 4px;">
+            Prix : 25 
+            <iconify-icon icon="game-icons:crown-coin" style="width: 14px; height: 14px; color: #ffd700; display: inline-block; vertical-align: middle;"></iconify-icon>
+          </div>
           <button onclick="window.game.buyShopItem('shield')">Acheter</button>
         </div>
         <div class="shop-card" id="shop-card-upgrade">
-          <div class="shop-card-icon">⚡</div>
+          <div class="shop-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:44px; height:44px; color:#ffff00;"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          </div>
           <h3>Fragment d'Âme</h3>
           <p class="desc">Gagnez immédiatement 1 point d'amélioration.</p>
-          <div class="shop-price">Prix : 50 🪙</div>
+          <div class="shop-price" style="display: flex; align-items: center; justify-content: center; gap: 4px;">
+            Prix : 50 
+            <iconify-icon icon="game-icons:crown-coin" style="width: 14px; height: 14px; color: #ffd700; display: inline-block; vertical-align: middle;"></iconify-icon>
+          </div>
           <button onclick="window.game.buyShopItem('upgrade')">Acheter</button>
         </div>
       </div>

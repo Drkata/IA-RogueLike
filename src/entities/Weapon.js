@@ -8,6 +8,7 @@ export class Weapon {
         this.flashTime = 0;
         this.isReloading = false;
         this.reloadTimer = 0;
+        this.lastShootTime = 0;
 
         // Upgrade Levels
         this.stats = {
@@ -24,7 +25,8 @@ export class Weapon {
             critDamage: 0,  // New
             knockback: 0,   // New
             explosion: 0,   // New
-            ricochet: 0     // New (Replaces Arc)
+            ricochet: 0,     // New (Replaces Arc)
+            homing: 0
         };
         this.MAX_LEVEL = 10;
 
@@ -55,6 +57,11 @@ export class Weapon {
         this.explosion = 0;
         this.ricochet = 0;
 
+        // Pact Modifiers
+        this.pactDamageMultiplier = 1.0;
+        this.pactFireRateMultiplier = 1.0;
+        this.pactProjectileSpeedMultiplier = 1.0;
+
         // Ammo State
         this.currentAmmo = this.baseMaxAmmo;
         this.reserveAmmo = 60;
@@ -81,8 +88,13 @@ export class Weapon {
 
 
 
+    getMaxLevel(stat) {
+        return this.MAX_LEVEL;
+    }
+
     upgrade(stat) {
-        if (this.stats[stat] < this.MAX_LEVEL) {
+        const maxLvl = this.getMaxLevel(stat);
+        if (this.stats[stat] < maxLvl) {
             this.stats[stat]++;
             this.recalculateStats();
             this.rebuildMesh(this.getTotalLevel());
@@ -96,11 +108,11 @@ export class Weapon {
     }
 
     recalculateStats() {
-        // Damage: +18% per level (was 15%)
-        this.damage = this.baseDamage * (1 + this.stats.damage * 0.18);
+        // Damage: +18% per level (was 15%) * pact modifier
+        this.damage = this.baseDamage * (1 + this.stats.damage * 0.18) * (this.pactDamageMultiplier || 1.0);
 
-        // Fire Rate: -6% delay per level (was 5%) (Cap at 0.05s)
-        this.fireRate = Math.max(0.05, this.baseFireRate * Math.pow(0.94, this.stats.fireRate));
+        // Fire Rate: -6% delay per level (was 5%) (Cap at 0.05s) / pact modifier
+        this.fireRate = Math.max(0.05, this.baseFireRate * Math.pow(0.94, this.stats.fireRate)) / (this.pactFireRateMultiplier || 1.0);
 
         // Arc: Derived from Multishot (2 degrees per extra bullet)
         this.arc = this.stats.bulletCount * 2;
@@ -114,8 +126,8 @@ export class Weapon {
         // Range: +20% per level (Base 15 -> Max 45)
         this.range = this.baseRange * (1 + this.stats.range * 0.20);
 
-        // Projectile Speed: +6% per level (Base 25 -> Max 40)
-        this.projectileSpeed = this.baseProjectileSpeed * (1 + this.stats.projectileSpeed * 0.06);
+        // Projectile Speed: +6% per level (Base 25 -> Max 40) * pact modifier
+        this.projectileSpeed = this.baseProjectileSpeed * (1 + this.stats.projectileSpeed * 0.06) * (this.pactProjectileSpeedMultiplier || 1.0);
 
         // Multishot: 1 + level (1 to 11)
         this.bulletCount = 1 + this.stats.bulletCount;
@@ -173,6 +185,7 @@ export class Weapon {
             case 'knockback': return level * 0.5;
             case 'explosion': return level * 0.10 * 100; // %
             case 'ricochet': return level; // Bounces
+            case 'homing': return level;
             default: return 0;
         }
     }
@@ -205,16 +218,24 @@ export class Weapon {
             critDamage: 0,
             knockback: 0,
             explosion: 0,
-            ricochet: 0
+            ricochet: 0,
+            homing: 0
         };
         this.currentAmmo = this.baseMaxAmmo;
         this.reserveAmmo = 400;
         this.explosion = 0; // Force reset
 
+        // Pact Modifiers
+        this.pactDamageMultiplier = 1.0;
+        this.pactFireRateMultiplier = 1.0;
+        this.pactProjectileSpeedMultiplier = 1.0;
+
         // Melee State
         this.isMeleeing = false;
         this.meleeTimer = 0;
         this.meleeCooldown = 0.8;
+        
+        this.lastShootTime = 0;
 
         this.recalculateStats();
         this.rebuildMesh(0);
@@ -279,17 +300,19 @@ export class Weapon {
                 }
             }
         } else if (this.gunMesh) {
-            // Idle Animation (Bobbing / Floating)
+            // Recoil recovery
+            if (this.recoil === undefined) this.recoil = 0;
+            this.recoil = THREE.MathUtils.lerp(this.recoil, 0, dt * 10); // Fast recovery
+
+            // Base Idle Animation (Bobbing / Floating)
             const time = performance.now() / 1000;
             const baseY = -0.3 + Math.sin(time * 2) * 0.02; // Gentle bob
-            this.gunMesh.position.y = baseY;
-            this.gunMesh.rotation.z = Math.sin(time * 1.5) * 0.05; // Gentle sway
+            this.gunMesh.position.set(0.3, baseY, -0.5);
+            this.gunMesh.rotation.set(0.2, 0, Math.sin(time * 1.5) * 0.05);
 
-            // Recoil recovery (Stable Lerp)
-            const alpha = Math.min(1.0, dt * 5); // Clamp to prevent overshoot
-            this.gunMesh.position.z = THREE.MathUtils.lerp(this.gunMesh.position.z, -0.5, alpha);
-            this.gunMesh.rotation.x = THREE.MathUtils.lerp(this.gunMesh.rotation.x, 0.2, alpha);
-            this.gunMesh.rotation.y = THREE.MathUtils.lerp(this.gunMesh.rotation.y, 0, alpha);
+            // Apply recoil offsets
+            this.gunMesh.position.z += this.recoil * 0.2; // Move back
+            this.gunMesh.rotation.x -= this.recoil * 0.3; // Tilt up
         }
 
         // Flash fade (Orb glow pulse)
@@ -339,11 +362,8 @@ export class Weapon {
 
         this.flashTime = 0.1;
 
-        // Visual Recoil (Staff thrust)
-        if (this.gunMesh) {
-            this.gunMesh.position.z += 0.1;
-            this.gunMesh.rotation.x -= 0.2; // Tilt up
-        }
+        // Visual Recoil trigger
+        this.recoil = 1.0;
 
         return bulletsToFire;
     }

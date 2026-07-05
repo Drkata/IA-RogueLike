@@ -1,3 +1,5 @@
+import { SVG_ICONS } from '../SVGIcons.js';
+
 export class GameInfo {
     constructor(container) {
         this.element = document.createElement('div');
@@ -11,15 +13,24 @@ export class GameInfo {
         this.infoContainer = document.createElement('div');
         this.infoContainer.innerHTML = `
             <div class="info-row">
-                <span>LEVEL</span>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span class="icon-wrapper" style="width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center;">${SVG_ICONS.dungeon_gate}</span>
+                    <span>LEVEL</span>
+                </div>
                 <span id="level-display" style="color: #00ff00">1</span>
             </div>
             <div class="info-row">
-                <span>HOSTILES</span>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span class="icon-wrapper" style="width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center;">${SVG_ICONS.hostile}</span>
+                    <span>HOSTILES</span>
+                </div>
                 <span id="enemies-display" style="color: #ff3333">0</span>
             </div>
             <div class="info-row">
-                <span>GOLD</span>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span class="icon-wrapper" style="width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center;">${SVG_ICONS.coin}</span>
+                    <span>GOLD</span>
+                </div>
                 <span id="gold-display" style="color: #ffd700">0</span>
             </div>
         `;

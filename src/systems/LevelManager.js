@@ -105,8 +105,8 @@ export class LevelManager {
         } else if (floorTextureType === 'lava') {
             floorTex = TextureGenerator.createLavaTexture(floorColorHex, '#ff4400');
         } else {
-            const floorColor2Hex = '#' + (floorColor + 0x111111).toString(16).padStart(6, '0');
-            floorTex = TextureGenerator.createGridTexture(floorColorHex, floorColor2Hex);
+            const mortarHex = '#1a1a1a';
+            floorTex = TextureGenerator.createFlagstoneTexture(floorColorHex, mortarHex);
         }
 
         return {
@@ -114,7 +114,8 @@ export class LevelManager {
             floor: new THREE.MeshStandardMaterial({
                 map: floorTex,
                 roughness: 0.8,
-                metalness: 0.2
+                metalness: 0.2,
+                vertexColors: true
             })
         };
     }
@@ -129,7 +130,8 @@ export class LevelManager {
 
         // Prepare instance data
         const wallInstances = mats.walls.map(() => []);
-        const eventWallMatrices = [];
+        const NUM_EVENT_VARIATIONS = 15;
+        const eventWallInstances = Array.from({length: NUM_EVENT_VARIATIONS}, () => []);
         const treasureWallMatrices = [];
 
         for (let y = 0; y < this.height; y++) {
@@ -146,7 +148,8 @@ export class LevelManager {
 
                     const roomType = this.getRoomTypeForWall(x, y);
                     if (roomType === 'event') {
-                        eventWallMatrices.push(dummy.matrix.clone());
+                        const vIndex = Math.floor(Math.random() * NUM_EVENT_VARIATIONS);
+                        eventWallInstances[vIndex].push(dummy.matrix.clone());
                     } else if (roomType === 'treasure') {
                         treasureWallMatrices.push(dummy.matrix.clone());
                     } else {
@@ -174,30 +177,37 @@ export class LevelManager {
         });
 
         // Create Event Room InstancedMesh (glowing purple obsidian walls)
-        if (eventWallMatrices.length > 0) {
+        eventWallInstances.forEach((matrices) => {
+            if (matrices.length === 0) return;
+            const eventTex = TextureGenerator.createRuneWallTexture('#180c26', '#8a2be2');
             const eventWallMat = new THREE.MeshStandardMaterial({
-                color: 0x180c26, // Very dark purple
+                map: eventTex,
+                color: 0xffffff, // White to show texture colors correctly
                 emissive: 0x8a2be2, // Purple glow
-                emissiveIntensity: 0.25,
+                emissiveIntensity: 0.1, // Very low intensity so it doesn't wash out the texture
+                emissiveMap: eventTex, // Make the bright parts of the texture glow
                 roughness: 0.3,
                 metalness: 0.8
             });
-            const eventMesh = new THREE.InstancedMesh(wallGeo, eventWallMat, eventWallMatrices.length);
-            for (let j = 0; j < eventWallMatrices.length; j++) {
-                eventMesh.setMatrixAt(j, eventWallMatrices[j]);
+            const eventMesh = new THREE.InstancedMesh(wallGeo, eventWallMat, matrices.length);
+            for (let j = 0; j < matrices.length; j++) {
+                eventMesh.setMatrixAt(j, matrices[j]);
             }
             eventMesh.instanceMatrix.needsUpdate = true;
             eventMesh.castShadow = true;
             eventMesh.receiveShadow = true;
             this.levelMeshGroup.add(eventMesh);
-        }
+        });
 
         // Create Treasure Room InstancedMesh (glimmering golden brass walls)
         if (treasureWallMatrices.length > 0) {
+            const treasureTex = TextureGenerator.createVaultWallTexture('#3d290d', '#d4af37');
             const treasureWallMat = new THREE.MeshStandardMaterial({
-                color: 0x3d290d, // Golden brown
+                map: treasureTex,
+                color: 0xffffff, // White to show texture colors correctly
                 emissive: 0xd4af37, // Gold glow
-                emissiveIntensity: 0.2,
+                emissiveIntensity: 0.1, // Very low intensity
+                emissiveMap: treasureTex,
                 roughness: 0.2,
                 metalness: 0.9
             });
@@ -211,14 +221,22 @@ export class LevelManager {
             this.levelMeshGroup.add(treasureMesh);
         }
 
-        // Floor
+        // Setup floor with Baked Texture (Rock + Paths + AO)
+        const theme = this.themeManager.getTheme(this.currentLevelIndex);
+        const floorColorHex = '#' + theme.floorColor.toString(16).padStart(6, '0');
+        const bakedTex = TextureGenerator.createBakedFloorTexture(this.levelData, floorColorHex, theme);
+        mats.floor.map = bakedTex;
+        mats.floor.vertexColors = false; // We don't need vertex colors anymore, everything is baked!
+        mats.floor.needsUpdate = true;
+
+        // Simple Floor Geometry (no subdivisions needed anymore)
         const floorGeo = new THREE.PlaneGeometry(this.width * this.cellSize, this.height * this.cellSize);
         const floor = new THREE.Mesh(floorGeo, mats.floor);
         floor.rotation.x = -Math.PI / 2;
         floor.position.set(
-            (this.width * this.cellSize) / 2 - this.cellSize / 2,
+            (this.width * this.cellSize) / 2,
             0,
-            (this.height * this.cellSize) / 2 - this.cellSize / 2
+            (this.height * this.cellSize) / 2
         );
         floor.receiveShadow = true;
         this.levelMeshGroup.add(floor);
@@ -265,171 +283,328 @@ export class LevelManager {
             const mapW = this.width * this.cellSize;
             const mapH = this.height * this.cellSize;
 
-            // Spawn 60 to 90 floating islands across the expanded map surface (including the outer sky)
-            const totalIslands = 60 + Math.floor(Math.random() * 30);
+            // Spawn 80 to 120 floating islands across the expanded map surface (30% density increase)
+            const totalIslands = 80 + Math.floor(Math.random() * 40);
             for (let k = 0; k < totalIslands; k++) {
-                const blockW = 2.0 + Math.random() * 4.0;
-                const blockH = 1.0 + Math.random() * 2.0;
-                const blockD = 2.0 + Math.random() * 4.0;
-
                 // Spawns with +100% margin around the map boundaries
                 const posX = -mapW / 2 + Math.random() * (mapW * 2);
                 const posZ = -mapH / 2 + Math.random() * (mapH * 2);
                 const posY = 8.0 + Math.random() * 32.0;
 
-                    // Create group for the entire sky structure
-                    const structureGroup = new THREE.Group();
-                    structureGroup.position.set(posX, posY, posZ);
+                const structureGroup = new THREE.Group();
+                structureGroup.position.set(posX, posY, posZ);
 
-                    // 1. Central Platform (The rocky base)
+                const islandType = Math.floor(Math.random() * 3);
+
+                if (islandType === 0) {
+                    // TYPE 0: CLASSIC (Box with cone underneath)
+                    const blockW = (2.0 + Math.random() * 4.0) * 1.4;
+                    const blockH = (1.0 + Math.random() * 2.0) * 1.4;
+                    const blockD = (2.0 + Math.random() * 4.0) * 1.4;
+
                     const blockGeo = new THREE.BoxGeometry(blockW, blockH, blockD);
                     const mainMesh = new THREE.Mesh(blockGeo, stoneMat);
-                    mainMesh.castShadow = true;
-                    mainMesh.receiveShadow = true;
                     structureGroup.add(mainMesh);
 
-                    // 2. Top Grass/Cobblestone Cap (Matching the map style)
                     const capGeo = new THREE.BoxGeometry(blockW + 0.1, 0.15, blockD + 0.1);
                     const capMesh = new THREE.Mesh(capGeo, capMat);
                     capMesh.position.y = blockH / 2 + 0.055;
-                    capMesh.castShadow = true;
-                    capMesh.receiveShadow = true;
                     structureGroup.add(capMesh);
 
-                    // 3. Tapered Rocky Underside (Cone/Pyramid underneath to form the floating island V-shape)
-                    const undersideW = blockW * 0.7;
-                    const undersideD = blockD * 0.7;
-                    const undersideH = blockH * 1.5;
-                    
-                    const coneGeo = new THREE.ConeGeometry((undersideW + undersideD) / 4, undersideH, 4);
+                    const coneGeo = new THREE.ConeGeometry((blockW + blockD) * 0.17, blockH * 1.5, 4);
                     const coneMesh = new THREE.Mesh(coneGeo, stoneMat);
                     coneMesh.rotation.x = Math.PI;
-                    coneMesh.position.y = -(blockH / 2 + undersideH / 2);
-                    coneMesh.castShadow = true;
-                    coneMesh.receiveShadow = true;
+                    coneMesh.position.y = -(blockH / 2 + blockH * 0.75);
                     structureGroup.add(coneMesh);
-
-                    // Add 1-2 smaller auxiliary cones underneath for jagged realism
-                    const subConesCount = 1 + Math.floor(Math.random() * 2);
-                    for (let sc = 0; sc < subConesCount; sc++) {
-                        const scR = (blockW + blockD) * 0.15;
-                        const scH = undersideH * (0.5 + Math.random() * 0.5);
-                        const scGeo = new THREE.ConeGeometry(scR, scH, 4);
-                        const scMesh = new THREE.Mesh(scGeo, stoneMat);
-                        scMesh.rotation.x = Math.PI;
+                    // Runic Temple or Crystal
+                    if (blockW * blockD > 25 && Math.random() > 0.3) {
+                        const templeGeo = new THREE.BoxGeometry(2.0, 2.5, 2.0);
+                        const temple = new THREE.Mesh(templeGeo, stoneMat);
+                        temple.position.set(0, blockH / 2 + 1.25, 0);
                         
-                        scMesh.position.set(
-                            (Math.random() - 0.5) * blockW * 0.4,
-                            -(blockH / 2 + scH / 2),
-                            (Math.random() - 0.5) * blockD * 0.4
-                        );
-                        scMesh.castShadow = true;
-                        scMesh.receiveShadow = true;
-                        structureGroup.add(scMesh);
+                        const roofGeo = new THREE.ConeGeometry(1.8, 1.5, 4);
+                        const roof = new THREE.Mesh(roofGeo, stoneMat);
+                        roof.position.set(0, 1.25 + 0.75, 0);
+                        roof.rotation.y = Math.PI / 4;
+                        temple.add(roof);
+
+                        const runeDecal = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.0, 2.1), runeMat);
+                        temple.add(runeDecal);
+
+                        temple.castShadow = true;
+                        temple.receiveShadow = true;
+                        structureGroup.add(temple);
+                    } else if (Math.random() > 0.5) {
+                        // Crystal
+                        const coreGeo = new THREE.OctahedronGeometry(0.18 + Math.random() * 0.08, 0);
+                        const core = new THREE.Mesh(coreGeo, runeMat);
+                        core.position.set(0, blockH / 2 + 0.2, 0);
+                        structureGroup.add(core);
                     }
 
-                    // 4. Satellite Floating Rocks (small debris orbiting)
-                    const shardCount = 1 + Math.floor(Math.random() * 2);
-                    for (let s = 0; s < shardCount; s++) {
-                        const sw = blockW * (0.25 + Math.random() * 0.2);
-                        const sh = blockH * (0.3 + Math.random() * 0.3);
-                        const sd = blockD * (0.25 + Math.random() * 0.2);
-
-                        const shardGeo = new THREE.BoxGeometry(sw, sh, sd);
-                        const shard = new THREE.Mesh(shardGeo, stoneMat);
+                } else if (islandType === 1) {
+                    // TYPE 1: PILLAR CLUSTER (Basalt-like columns)
+                    const numPillars = 3 + Math.floor(Math.random() * 4);
+                    for (let p = 0; p < numPillars; p++) {
+                        const pw = (0.8 + Math.random() * 1.0) * 1.4;
+                        const ph = (4.0 + Math.random() * 6.0) * 1.4;
                         
-                        const shardCapGeo = new THREE.BoxGeometry(sw + 0.05, 0.05, sd + 0.05);
-                        const shardCap = new THREE.Mesh(shardCapGeo, capMat);
-                        shardCap.position.y = sh / 2 + 0.02;
-                        shard.add(shardCap);
-
-                        const angle = Math.random() * Math.PI * 2;
-                        const dist = (blockW + blockD) / 4 + 0.5 + Math.random() * 0.5;
-                        shard.position.set(
-                            Math.sin(angle) * dist,
-                            (Math.random() - 0.5) * 0.5,
-                            Math.cos(angle) * dist
-                        );
-                        shard.rotation.set(
-                            (Math.random() - 0.5) * 0.5,
-                            (Math.random() - 0.5) * 0.5,
-                            (Math.random() - 0.5) * 0.5
-                        );
-                        shard.castShadow = true;
-                        shard.receiveShadow = true;
-                        structureGroup.add(shard);
+                        const pillarGeo = new THREE.CylinderGeometry(pw, pw * 0.7, ph, 6);
+                        const pillar = new THREE.Mesh(pillarGeo, stoneMat);
+                        
+                        const px = (Math.random() - 0.5) * 3.0;
+                        const pz = (Math.random() - 0.5) * 3.0;
+                        const py = (Math.random() - 0.5) * 2.0;
+                        
+                        pillar.position.set(px, py, pz);
+                        pillar.rotation.x = (Math.random() - 0.5) * 0.2;
+                        pillar.rotation.z = (Math.random() - 0.5) * 0.2;
+                        structureGroup.add(pillar);
+                        
+                        // Top cap for pillar
+                        const pCapGeo = new THREE.CylinderGeometry(pw + 0.05, pw + 0.05, 0.2, 6);
+                        const pCap = new THREE.Mesh(pCapGeo, capMat);
+                        pCap.position.set(px, py + ph / 2 + 0.1, pz);
+                        pCap.rotation.copy(pillar.rotation);
+                        structureGroup.add(pCap);
                     }
 
-                    // 5. Hanging Vines/Roots from the sides
-                    const vineCount = 3 + Math.floor(Math.random() * 4);
-                    for (let v = 0; v < vineCount; v++) {
-                        const vineH = 0.5 + Math.random() * 1.5;
-                        const vineGeo = new THREE.CylinderGeometry(0.03, 0.015, vineH, 4);
-                        const vine = new THREE.Mesh(vineGeo, vineMat);
+                } else {
+                    // TYPE 2: RUINS (Flat circular island with standing stones)
+                    const radius = (2.5 + Math.random() * 2.0) * 1.4;
+                    const thickness = (0.8 + Math.random() * 1.0) * 1.4;
+                    
+                    const baseGeo = new THREE.CylinderGeometry(radius, radius * 0.5, thickness, 8);
+                    const base = new THREE.Mesh(baseGeo, stoneMat);
+                    structureGroup.add(base);
+                    
+                    const capGeo = new THREE.CylinderGeometry(radius + 0.1, radius + 0.1, 0.15, 8);
+                    const cap = new THREE.Mesh(capGeo, capMat);
+                    cap.position.y = thickness / 2 + 0.055;
+                    structureGroup.add(cap);
+
+                    // Centerpiece (Hexagonal Temple)
+                    if (radius > 4.5 && Math.random() > 0.3) {
+                        const templeGeo = new THREE.CylinderGeometry(1.5, 1.5, 3.0, 6);
+                        const temple = new THREE.Mesh(templeGeo, stoneMat);
+                        temple.position.set(0, thickness / 2 + 1.5, 0);
                         
-                        const edgeAngle = Math.random() * Math.PI * 2;
-                        const edgeX = Math.sin(edgeAngle) * (blockW / 2 + 0.05);
-                        const edgeZ = Math.cos(edgeAngle) * (blockD / 2 + 0.05);
-                        
-                        vine.position.set(edgeX, -vineH / 2, edgeZ);
-                        vine.rotation.z = (Math.random() - 0.5) * 0.3;
-                        vine.rotation.x = (Math.random() - 0.5) * 0.3;
-                        
-                        vine.castShadow = true;
-                        structureGroup.add(vine);
+                        const roofGeo = new THREE.ConeGeometry(2.0, 2.0, 6);
+                        const roof = new THREE.Mesh(roofGeo, stoneMat);
+                        roof.position.set(0, 1.5 + 1.0, 0);
+                        temple.add(roof);
+
+                        const runeDecal = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.55, 0.5, 6), runeMat);
+                        temple.add(runeDecal);
+
+                        temple.castShadow = true;
+                        temple.receiveShadow = true;
+                        structureGroup.add(temple);
                     }
-
-                    // 6. Glowing Magical Core (Crystal powering the island)
-                    const coreGeo = new THREE.OctahedronGeometry(0.18 + Math.random() * 0.08, 0);
-                    const core = new THREE.Mesh(coreGeo, runeMat);
-                    core.position.set(0, blockH / 2 + 0.2, 0);
-                    core.rotation.y = Math.random() * Math.PI;
-                    structureGroup.add(core);
-
-                    // 7. Glowing Runic Engravings
-                    const sideRunesCount = 2 + Math.floor(Math.random() * 2);
-                    for (let r = 0; r < sideRunesCount; r++) {
-                        const runeGeo = new THREE.BoxGeometry(0.04, blockH * 0.5, 0.015);
+                    
+                    // Standing stones (arch or monoliths)
+                    const numStones = 2 + Math.floor(Math.random() * 4);
+                    for (let s = 0; s < numStones; s++) {
+                        const sw = 0.4 + Math.random() * 0.3;
+                        const sh = 1.0 + Math.random() * 2.0;
+                        const sd = 0.4 + Math.random() * 0.3;
+                        
+                        const stoneGeo = new THREE.BoxGeometry(sw, sh, sd);
+                        const stone = new THREE.Mesh(stoneGeo, stoneMat);
+                        
+                        const angle = (s / numStones) * Math.PI * 2 + Math.random();
+                        const dist = radius * 0.6;
+                        
+                        stone.position.set(Math.cos(angle) * dist, thickness / 2 + sh / 2, Math.sin(angle) * dist);
+                        stone.rotation.y = -angle; // Face outward
+                        
+                        // Small glowing rune on the stone
+                        const runeGeo = new THREE.BoxGeometry(sw * 1.1, sh * 0.3, sd * 1.1);
                         const rune = new THREE.Mesh(runeGeo, runeMat);
-                        
-                        const face = Math.floor(Math.random() * 4);
-                        if (face === 0) {
-                            rune.position.set((Math.random() - 0.5) * blockW * 0.6, 0, blockD / 2 + 0.01);
-                        } else if (face === 1) {
-                            rune.position.set((Math.random() - 0.5) * blockW * 0.6, 0, -blockD / 2 - 0.01);
-                        } else if (face === 2) {
-                            rune.position.set(blockW / 2 + 0.01, 0, (Math.random() - 0.5) * blockD * 0.6);
-                            rune.rotation.y = Math.PI / 2;
-                        } else {
-                            rune.position.set(-blockW / 2 - 0.01, 0, (Math.random() - 0.5) * blockD * 0.6);
-                            rune.rotation.y = Math.PI / 2;
-                        }
+                        rune.position.copy(stone.position);
                         structureGroup.add(rune);
+                        
+                        structureGroup.add(stone);
                     }
+                }
 
-                    this.levelMeshGroup.add(structureGroup);
+                // Add satellite shards and vines to ALL types
+                const shardCount = Math.floor(Math.random() * 3);
+                for (let s = 0; s < shardCount; s++) {
+                    const shardGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+                    const shard = new THREE.Mesh(shardGeo, stoneMat);
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = 3.0 + Math.random() * 3.0;
+                    shard.position.set(Math.cos(angle) * dist, (Math.random() - 0.5) * 2.0, Math.sin(angle) * dist);
+                    shard.rotation.set(Math.random(), Math.random(), Math.random());
+                    structureGroup.add(shard);
+                }
 
-                    // Physical Bounding Box
-                    const box = new THREE.Box3().setFromObject(structureGroup);
-                    this.skyStructures.push(box);
+                const vineCount = Math.floor(Math.random() * 4);
+                for (let v = 0; v < vineCount; v++) {
+                    const vineH = 1.0 + Math.random() * 2.0;
+                    const vineGeo = new THREE.CylinderGeometry(0.03, 0.015, vineH, 4);
+                    const vine = new THREE.Mesh(vineGeo, vineMat);
+                    vine.position.set((Math.random() - 0.5) * 2.0, -vineH / 2 - 0.5, (Math.random() - 0.5) * 2.0);
+                    vine.rotation.z = (Math.random() - 0.5) * 0.3;
+                    vine.rotation.x = (Math.random() - 0.5) * 0.3;
+                    structureGroup.add(vine);
+                }
+
+                // Enable shadows for all parts
+                structureGroup.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                    }
+                });
+
+                this.levelMeshGroup.add(structureGroup);
+                
+                // Keep track of them for hovering animation & bridges
+                if (!this.floatingIslands) this.floatingIslands = [];
+                this.floatingIslands.push({
+                    mesh: structureGroup,
+                    baseY: posY,
+                    speed: 0.2 + Math.random() * 0.5,
+                    offset: Math.random() * Math.PI * 2,
+                    connections: 0 // Bridge connections counter
+                });
+            }
+
+            // --- Bridge Generation System ---
+            if (this.floatingIslands && this.floatingIslands.length > 0) {
+                const woodMat = new THREE.MeshLambertMaterial({ color: 0x5c4033 });
+                const stoneMatBridge = new THREE.MeshLambertMaterial({ color: 0x6a6a6a });
+                const vineMatBridge = new THREE.MeshLambertMaterial({ color: 0x2e5c2e });
+
+                for (let i = 0; i < this.floatingIslands.length; i++) {
+                    const islA = this.floatingIslands[i];
+                    
+                    for (let j = i + 1; j < this.floatingIslands.length; j++) {
+                        if (islA.connections >= 2) break;
+                        
+                        const islB = this.floatingIslands[j];
+                        if (islB.connections >= 2) continue;
+                        
+                        const dx = islA.mesh.position.x - islB.mesh.position.x;
+                        const dy = islA.mesh.position.y - islB.mesh.position.y;
+                        const dz = islA.mesh.position.z - islB.mesh.position.z;
+                        
+                        const horizDist = Math.sqrt(dx * dx + dz * dz);
+                        const dist3D = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                        
+                        // Valid bridge connection?
+                        if (horizDist > 4.0 && horizDist < 20.0 && Math.abs(dy) < 6.0) {
+                            const bridgeGroup = new THREE.Group();
+                            
+                            const midX = (islA.mesh.position.x + islB.mesh.position.x) / 2;
+                            const midY = (islA.mesh.position.y + islB.mesh.position.y) / 2;
+                            const midZ = (islA.mesh.position.z + islB.mesh.position.z) / 2;
+                            bridgeGroup.position.set(midX, midY, midZ);
+                            bridgeGroup.lookAt(islB.mesh.position.x, islB.mesh.position.y, islB.mesh.position.z);
+                            
+                            const connType = Math.floor(Math.random() * 3);
+
+                            if (connType === 0) {
+                                // Type 0: Wood Bridge
+                                const numPlanks = Math.floor(dist3D / 0.8);
+                                for (let p = 0; p < numPlanks; p++) {
+                                    const t = p / (numPlanks - 1);
+                                    const sag = Math.sin(t * Math.PI) * (dist3D * 0.15); // Sag curve
+                                    
+                                    const plankGeo = new THREE.BoxGeometry(1.5, 0.15, 0.5);
+                                    const plank = new THREE.Mesh(plankGeo, woodMat);
+                                    
+                                    const zPos = (t - 0.5) * dist3D;
+                                    plank.position.set(0, -sag, zPos);
+                                    
+                                    plank.rotation.z = (Math.random() - 0.5) * 0.2;
+                                    plank.rotation.x = (Math.random() - 0.5) * 0.2;
+                                    
+                                    plank.castShadow = true;
+                                    plank.receiveShadow = true;
+                                    bridgeGroup.add(plank);
+                                }
+                            } else if (connType === 1) {
+                                // Type 1: Stone Arch
+                                const numStones = Math.floor(dist3D / 1.2);
+                                for (let p = 0; p < numStones; p++) {
+                                    const t = p / (numStones - 1);
+                                    const arch = Math.sin(t * Math.PI) * (dist3D * 0.2); // Arch goes UP
+                                    
+                                    const stoneGeo = new THREE.BoxGeometry(2.0, 0.8, 1.2);
+                                    const stone = new THREE.Mesh(stoneGeo, stoneMatBridge);
+                                    
+                                    const zPos = (t - 0.5) * dist3D;
+                                    stone.position.set(0, arch, zPos);
+                                    
+                                    stone.rotation.x = -(t - 0.5) * Math.PI * 0.5; // Rotate to follow arch
+                                    stone.rotation.y = (Math.random() - 0.5) * 0.1;
+                                    stone.rotation.z = (Math.random() - 0.5) * 0.1;
+                                    
+                                    stone.castShadow = true;
+                                    stone.receiveShadow = true;
+                                    bridgeGroup.add(stone);
+                                }
+                            } else {
+                                // Type 2: Giant Vines / Roots
+                                const numVines = 2 + Math.floor(Math.random() * 2);
+                                for (let v = 0; v < numVines; v++) {
+                                    const numSegments = Math.floor(dist3D / 1.5);
+                                    const vineRadius = 0.2 + Math.random() * 0.3;
+                                    const vineOffset = (Math.random() - 0.5) * 1.5;
+                                    
+                                    for (let s = 0; s < numSegments; s++) {
+                                        const t = s / (numSegments - 1);
+                                        const sag = Math.sin(t * Math.PI) * (dist3D * 0.2) + (Math.random() - 0.5) * 0.5;
+                                        
+                                        const segGeo = new THREE.CylinderGeometry(vineRadius, vineRadius * 0.8, 1.8, 5);
+                                        const segment = new THREE.Mesh(segGeo, vineMatBridge);
+                                        
+                                        const zPos = (t - 0.5) * dist3D;
+                                        const xPos = Math.sin(t * Math.PI * 4 + v) * 0.8 + vineOffset; // Twist around center
+                                        
+                                        segment.position.set(xPos, -sag, zPos);
+                                        segment.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.5;
+                                        segment.rotation.z = (Math.random() - 0.5) * 0.5;
+                                        
+                                        segment.castShadow = true;
+                                        segment.receiveShadow = true;
+                                        bridgeGroup.add(segment);
+                                    }
+                                }
+                            }
+                            
+                            this.levelMeshGroup.add(bridgeGroup);
+                            
+                            // Synchronize island movement if hovering is ever enabled
+                            islB.speed = islA.speed;
+                            islB.offset = islA.offset;
+                            
+                            islA.connections++;
+                            islB.connections++;
+                        }
+                    }
+                }
             }
         }
     }
-
     createSkybox() {
         const skyGeo = new THREE.SphereGeometry(500, 32, 32);
 
+        const size = 2048; // High resolution skybox
         const canvas = document.createElement('canvas');
-        canvas.width = 1024;
-        canvas.height = 1024;
+        canvas.width = size;
+        canvas.height = size;
         const ctx = canvas.getContext('2d');
 
         const themeName = this.themeManager.getThemeName(this.currentLevelIndex);
         let topColor, bottomColor;
 
         if (themeName === 'Enchanted Forest') {
-            topColor = '#4a90e2'; // Bright Blue Sky
-            bottomColor = '#87ceeb'; // Light Blue Horizon
+            topColor = '#101030'; // Night sky
+            bottomColor = '#2a1a4a'; // Magical purple horizon
         } else if (themeName === 'Medieval City') {
             topColor = '#1a2a6c'; // Deep Blue
             bottomColor = '#b21f1f'; // Sunset Red
@@ -438,97 +613,127 @@ export class LevelManager {
             bottomColor = '#050510'; // Very dark fog
         } else { // Demonic Base
             topColor = '#110000';
-            bottomColor = '#220505'; // Hellish Red
+            bottomColor = '#330000'; // Hellish Red
         }
 
         // Base gradient
-        const gradient = ctx.createLinearGradient(0, 0, 0, 1024);
+        const gradient = ctx.createLinearGradient(0, 0, 0, size);
         gradient.addColorStop(0, topColor);
         gradient.addColorStop(1, bottomColor);
         ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, 1024, 1024);
+        ctx.fillRect(0, 0, size, size);
+
+        // Global Stars
+        if (themeName !== 'Deep Cave') {
+            for (let i = 0; i < 1500; i++) {
+                const x = Math.random() * size;
+                const y = Math.random() * size;
+                const r = Math.random() * 1.5;
+                ctx.fillStyle = `rgba(255, 255, 255, ${Math.random()})`;
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
 
         // Theme-specific effects
         if (themeName === 'Enchanted Forest') {
-            // Clouds
-            for (let i = 0; i < 20; i++) {
-                const x = Math.random() * 1024;
-                const y = Math.random() * 400; // Upper sky
-                const size = 50 + Math.random() * 100;
+            // Magical Nebulas
+            for (let i = 0; i < 15; i++) {
+                const x = Math.random() * size;
+                const y = Math.random() * size; // Spread everywhere
+                const r = 200 + Math.random() * 300;
 
-                const cloudGrad = ctx.createRadialGradient(x, y, 0, x, y, size);
-                cloudGrad.addColorStop(0, 'rgba(255, 255, 255, 0.8)');
-                cloudGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                const cloudGrad = ctx.createRadialGradient(x, y, 0, x, y, r);
+                const hue = Math.random() > 0.5 ? '280, 100%, 70%' : '200, 100%, 70%';
+                cloudGrad.addColorStop(0, `hsla(${hue}, 0.15)`);
+                cloudGrad.addColorStop(1, `hsla(${hue}, 0)`);
                 ctx.fillStyle = cloudGrad;
                 ctx.beginPath();
-                ctx.arc(x, y, size, 0, Math.PI * 2);
+                ctx.arc(x, y, r, 0, Math.PI * 2);
                 ctx.fill();
             }
+            
+            // Giant Magical Moon
+            const moonX = size * 0.7;
+            const moonY = size * 0.3;
+            const moonR = 150;
+            const moonGrad = ctx.createRadialGradient(moonX, moonY, 0, moonX, moonY, moonR * 2);
+            moonGrad.addColorStop(0, 'rgba(200, 240, 255, 1)');
+            moonGrad.addColorStop(0.2, 'rgba(200, 240, 255, 0.8)');
+            moonGrad.addColorStop(1, 'rgba(200, 240, 255, 0)');
+            ctx.fillStyle = moonGrad;
+            ctx.beginPath();
+            ctx.arc(moonX, moonY, moonR * 2, 0, Math.PI * 2);
+            ctx.fill();
 
             // Pollen / Magic motes
             ctx.fillStyle = '#ffffaa';
-            for (let i = 0; i < 200; i++) {
-                const x = Math.random() * 1024;
-                const y = Math.random() * 1024;
-                const size = Math.random() * 2;
-                ctx.globalAlpha = Math.random() * 0.5 + 0.5;
+            for (let i = 0; i < 800; i++) {
+                const x = Math.random() * size;
+                const y = Math.random() * size;
+                const s = Math.random() * 3;
+                ctx.globalAlpha = Math.random() * 0.6 + 0.4;
                 ctx.beginPath();
-                ctx.arc(x, y, size, 0, Math.PI * 2);
+                ctx.arc(x, y, s, 0, Math.PI * 2);
                 ctx.fill();
             }
 
         } else if (themeName === 'Medieval City') {
-            // Sunset / Stars mixing
-            ctx.fillStyle = '#ffffff';
-            for (let i = 0; i < 100; i++) {
-                const x = Math.random() * 1024;
-                const y = Math.random() * 400; // Top only
-                const size = Math.random();
-                ctx.globalAlpha = Math.random();
-                ctx.beginPath();
-                ctx.arc(x, y, size, 0, Math.PI * 2);
-                ctx.fill();
-            }
+            // Huge Setting Sun
+            const sunX = size * 0.5;
+            const sunY = size * 0.7; // Lower on horizon
+            const sunR = 250;
+            const sunGrad = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, sunR * 3);
+            sunGrad.addColorStop(0, 'rgba(255, 200, 50, 1)');
+            sunGrad.addColorStop(0.1, 'rgba(255, 100, 0, 0.8)');
+            sunGrad.addColorStop(1, 'rgba(255, 0, 0, 0)');
+            ctx.fillStyle = sunGrad;
+            ctx.beginPath();
+            ctx.arc(sunX, sunY, sunR * 3, 0, Math.PI * 2);
+            ctx.fill();
 
         } else if (themeName === 'Deep Cave') {
-            // Stalactites silhouettes? Or just darkness
-            // Maybe glowing crystals on ceiling
-            for (let i = 0; i < 50; i++) {
-                const x = Math.random() * 1024;
-                const y = Math.random() * 1024;
-                const size = Math.random() * 3;
+            // Glowing crystals in the dark void
+            for (let i = 0; i < 200; i++) {
+                const x = Math.random() * size;
+                const y = Math.random() * size;
+                const s = Math.random() * 4;
 
-                // Purple/Blue glow
-                const glowColor = Math.random() > 0.5 ? 'rgba(100, 100, 255, 0.5)' : 'rgba(200, 50, 255, 0.5)';
+                const glowColor = Math.random() > 0.5 ? 'rgba(100, 150, 255, 0.6)' : 'rgba(150, 50, 255, 0.6)';
                 ctx.fillStyle = glowColor;
                 ctx.beginPath();
-                ctx.arc(x, y, size, 0, Math.PI * 2);
+                ctx.arc(x, y, s, 0, Math.PI * 2);
                 ctx.fill();
+                
+                // Crystal flare
+                ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                ctx.fillRect(x - s/4, y - s*2, s/2, s*4);
+                ctx.fillRect(x - s*2, y - s/4, s*4, s/2);
             }
 
         } else { // Demonic Base
-            // Red Haze/Ash
-            for (let i = 0; i < 40; i++) {
-                const x = Math.random() * 1024;
-                const y = Math.random() * 1024;
-                const size = 80 + Math.random() * 150;
+            // Giant Blood Moon / Eye
+            const eyeX = size * 0.5;
+            const eyeY = size * 0.3;
+            const eyeR = 200;
+            const eyeGrad = ctx.createRadialGradient(eyeX, eyeY, 0, eyeX, eyeY, eyeR * 2.5);
+            eyeGrad.addColorStop(0, 'rgba(255, 50, 0, 1)');
+            eyeGrad.addColorStop(0.3, 'rgba(150, 0, 0, 0.8)');
+            eyeGrad.addColorStop(1, 'rgba(50, 0, 0, 0)');
+            ctx.fillStyle = eyeGrad;
+            ctx.beginPath();
+            ctx.arc(eyeX, eyeY, eyeR * 2.5, 0, Math.PI * 2);
+            ctx.fill();
 
-                const ashGrad = ctx.createRadialGradient(x, y, 0, x, y, size);
-                ashGrad.addColorStop(0, 'rgba(100, 20, 0, 0.2)');
-                ashGrad.addColorStop(1, 'rgba(100, 20, 0, 0)');
-                ctx.fillStyle = ashGrad;
-                ctx.fillRect(x - size, y - size, size * 2, size * 2);
-            }
-
-            // Embers
-            ctx.fillStyle = '#ffaa00';
-            for (let i = 0; i < 300; i++) {
-                const x = Math.random() * 1024;
-                const y = Math.random() * 1024;
-                const size = Math.random() * 2;
-                ctx.globalAlpha = Math.random();
+            // Raining Embers/Ash
+            for (let i = 0; i < 1000; i++) {
+                const x = Math.random() * size;
+                const y = Math.random() * size;
+                const s = Math.random() * 4 + 1;
+                ctx.fillStyle = Math.random() > 0.3 ? 'rgba(255, 100, 0, 0.8)' : 'rgba(50, 50, 50, 0.8)';
                 ctx.beginPath();
-                ctx.arc(x, y, size, 0, Math.PI * 2);
+                ctx.arc(x, y, s, 0, Math.PI * 2);
                 ctx.fill();
             }
         }

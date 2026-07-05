@@ -2,14 +2,56 @@ import * as THREE from 'three';
 import { CONSTANTS } from '../core/Constants.js';
 import { soundManager } from '../systems/SoundManager.js';
 
+const _tempPos = new THREE.Vector3();
+const _tempDir = new THREE.Vector3();
+
 export class Projectile {
     static geometry = new THREE.IcosahedronGeometry(0.15, 1); // Crystal shape
-    static material = new THREE.MeshBasicMaterial({ color: 0x00ffff }); // Default Cyan
     static glowTexture = null;
+    
+    // Shared Materials Cache
+    static sharedMeshMaterials = {};
+    static sharedSpriteMaterials = {};
+
+    static getMaterials(color) {
+        if (!Projectile.sharedMeshMaterials[color]) {
+            Projectile.sharedMeshMaterials[color] = new THREE.MeshBasicMaterial({ color: color });
+        }
+        
+        if (!Projectile.glowTexture) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+            grad.addColorStop(0.4, 'rgba(255, 255, 255, 0.5)');
+            grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 64, 64);
+            Projectile.glowTexture = new THREE.CanvasTexture(canvas);
+        }
+
+        if (!Projectile.sharedSpriteMaterials[color]) {
+            Projectile.sharedSpriteMaterials[color] = new THREE.SpriteMaterial({
+                map: Projectile.glowTexture,
+                color: color,
+                transparent: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                opacity: 0.6 // Reduced opacity
+            });
+        }
+        
+        return {
+            meshMat: Projectile.sharedMeshMaterials[color],
+            spriteMat: Projectile.sharedSpriteMaterials[color]
+        };
+    }
 
     constructor(position, direction, speed, damage, levelManager, piercing = 0, isCritical = false, knockback = 0, explosion = 0, gravity = 0, radius = 1.0, sourceName = 'Unknown', sourceId = -1, maxDistance = 1000, ricochet = 0) {
         this.position = position.clone();
-        this.direction = direction.normalize();
+        this.direction = direction.clone().normalize();
         this.speed = speed;
         this.damage = damage;
         this.levelManager = levelManager;
@@ -24,6 +66,7 @@ export class Projectile {
         this.maxDistance = maxDistance;
         this.distanceTraveled = 0;
         this.ricochet = ricochet; // Number of bounces allowed
+        this.homingLevel = 0;
 
         this.hitEntities = new Set(); // Track unique entities hit
         this.isDead = false;
@@ -41,34 +84,13 @@ export class Projectile {
         if (isCritical) color = 0xff00ff; // Purple/Magenta for crit
         else if (explosion > 0) color = 0xffaa00; // Orange for explosive
 
-        this.mesh = new THREE.Mesh(Projectile.geometry, new THREE.MeshBasicMaterial({ color: color }));
+        const materials = Projectile.getMaterials(color);
+
+        this.mesh = new THREE.Mesh(Projectile.geometry, materials.meshMat);
         this.mesh.position.copy(this.position);
         this.mesh.userData.entity = this; // For collision detection
 
-        // Add Glow Sprite (Fake Light)
-        if (!Projectile.glowTexture) {
-            const canvas = document.createElement('canvas');
-            canvas.width = 64;
-            canvas.height = 64;
-            const ctx = canvas.getContext('2d');
-            const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-            grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-            grad.addColorStop(0.4, 'rgba(255, 255, 255, 0.5)');
-            grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-            ctx.fillStyle = grad;
-            ctx.fillRect(0, 0, 64, 64);
-            Projectile.glowTexture = new THREE.CanvasTexture(canvas);
-        }
-
-        const spriteMat = new THREE.SpriteMaterial({
-            map: Projectile.glowTexture,
-            color: color,
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            opacity: 0.6 // Reduced opacity
-        });
-        const sprite = new THREE.Sprite(spriteMat);
+        const sprite = new THREE.Sprite(materials.spriteMat);
         sprite.scale.set(0.8, 0.8, 0.8); // Reduced scale (was 1.5)
         this.mesh.add(sprite);
 
@@ -76,27 +98,88 @@ export class Projectile {
             this.mesh.scale.multiplyScalar(1.5); // Bigger projectile for crits
             sprite.scale.set(1.5, 1.5, 1.5); // Reduced crit scale (was 2.5)
         }
+
+        // Reduce player projectile visual size
+        if (this.sourceId === -1) {
+            this.mesh.scale.multiplyScalar(0.65);
+        }
     }
 
     update(dt, player) {
         if (this.isDead) return;
 
-        let nextPos;
+        this.lifeTime -= dt;
+        if (this.lifeTime <= 0) {
+            this.isDead = true;
+            return;
+        }
+
         let moveDist = 0;
 
         if (this.gravity !== 0) {
-            // Physics Movement
+            // Arc Movement (Grenades, arrows)
             this.velocity.y -= this.gravity * dt;
-            const moveStep = this.velocity.clone().multiplyScalar(dt);
-            nextPos = this.position.clone().add(moveStep);
-            moveDist = moveStep.length();
-
-            // Update direction for visual rotation (optional)
-            this.direction.copy(this.velocity).normalize();
+            _tempDir.copy(this.velocity).multiplyScalar(dt);
+            _tempPos.copy(this.position).add(_tempDir);
+            
+            // Align sprite to velocity
+            _tempDir.copy(_tempPos).add(this.velocity);
+            this.mesh.lookAt(_tempDir);
         } else {
             // Linear Movement
             moveDist = this.speed * dt;
-            nextPos = this.position.clone().add(this.direction.clone().multiplyScalar(moveDist));
+            _tempDir.copy(this.direction).multiplyScalar(moveDist);
+            _tempPos.copy(this.position).add(_tempDir);
+        }
+
+        // Auto-aiming / Homing effect for Sentinels
+        if (this.sourceName === "Sentinel" && this.distanceTraveled > 1.0) {
+            if (window.game && window.game.player) {
+                const targetPos = window.game.player.position;
+                _tempDir.copy(targetPos);
+                _tempDir.y = this.position.y; // Keep same height to avoid aiming into floor
+                
+                _tempDir.subVectors(_tempDir, this.position).normalize();
+                this.direction.lerp(_tempDir, 0.6 * dt).normalize();
+                
+                if (this.gravity !== 0) {
+                    const currentSpeed = this.velocity.length();
+                    this.velocity.copy(this.direction).multiplyScalar(currentSpeed);
+                }
+            }
+        }
+
+        // Homing effect for Player projectiles
+        if (this.sourceId === -1 && this.homingLevel > 0 && this.distanceTraveled > 0.5) {
+            let closestEnemy = null;
+            let closestDist = Infinity;
+            
+            if (window.game && window.game.entityManager && window.game.entityManager.entities) {
+                window.game.entityManager.entities.forEach(entity => {
+                    if (entity.entityType === 'enemy' && !entity.isDead) {
+                        const dist = this.position.distanceTo(entity.position);
+                        if (dist < closestDist && dist < 15.0) { // Only track within 15 units
+                            closestDist = dist;
+                            closestEnemy = entity;
+                        }
+                    }
+                });
+            }
+
+            if (closestEnemy) {
+                _tempDir.subVectors(closestEnemy.position, this.position);
+                // Allow vertical tracking to hit floating enemies / Boss
+                _tempDir.normalize();
+                
+                // Homing strength: Level 1: 1.5, Level 2: 3.0, Level 3: 4.5
+                const strength = this.homingLevel * 1.5;
+                this.direction.lerp(_tempDir, strength * dt).normalize();
+                
+                if (this.gravity !== 0) {
+                    const currentSpeed = this.velocity.length();
+                    this.velocity.copy(this.direction).multiplyScalar(currentSpeed);
+                }
+            }
         }
 
         // Range Check
@@ -107,40 +190,40 @@ export class Projectile {
         }
 
         // Wall Collision (only if projectile is low enough to hit the wall)
-        // Walls are 3 units tall, projectiles flying above 2.5 units can pass over low obstacles
-        if (this.levelManager && this.levelManager.isWall(nextPos.x, nextPos.z)) {
+        if (this.levelManager && this.levelManager.isWall(_tempPos.x, _tempPos.z)) {
             // Only collide if projectile is below wall height
-            if (nextPos.y < 2.5) {
+            if (_tempPos.y < 2.5) {
                 if (this.ricochet > 0) {
                     this.ricochet--;
 
-                    // Simple reflection: Invert X or Z based on which boundary was crossed
-                    // This is a simplified grid-based reflection
-                    const currentGridX = Math.floor(this.position.x / this.levelManager.cellSize);
-                    const currentGridZ = Math.floor(this.position.z / this.levelManager.cellSize);
-                    const nextGridX = Math.floor(nextPos.x / this.levelManager.cellSize);
-                    const nextGridZ = Math.floor(nextPos.z / this.levelManager.cellSize);
+                    // Step back to previous valid position
+                    _tempDir.copy(this.direction).multiplyScalar(-moveDist);
+                    _tempPos.copy(this.position).add(_tempDir);
 
-                    if (currentGridX !== nextGridX) {
+                    // Refined AABB-based reflection for accurate angles
+                    const canMoveX = !this.levelManager.isWall(this.position.x + this.direction.x * 0.5, this.position.z);
+                    const canMoveZ = !this.levelManager.isWall(this.position.x, this.position.z + this.direction.z * 0.5);
+
+                    if (!canMoveX && canMoveZ) {
                         this.direction.x *= -1;
                         if (this.velocity) this.velocity.x *= -1;
-                    }
-                    if (currentGridZ !== nextGridZ) {
+                    } else if (canMoveX && !canMoveZ) {
                         this.direction.z *= -1;
                         if (this.velocity) this.velocity.z *= -1;
+                    } else {
+                        // Corner or direct hit
+                        this.direction.x *= -1;
+                        this.direction.z *= -1;
+                        if (this.velocity) {
+                            this.velocity.x *= -1;
+                            this.velocity.z *= -1;
+                        }
                     }
-
-                    // Move back to previous safe position to prevent getting stuck
-                    nextPos = this.position.clone();
-
-                    // Reset range on ricochet
+                    
+                    // Move in new direction
+                    _tempPos.copy(this.position).add(this.direction.clone().multiplyScalar(moveDist));
                     this.distanceTraveled = 0;
-
-                    // Bonus Damage on Ricochet (+25%)
                     this.damage *= 1.25;
-
-                    // Play bounce sound (optional)
-                    // soundManager.playBounce();
                 } else {
                     this.isDead = true;
                     return;
@@ -151,17 +234,17 @@ export class Projectile {
         // Floor Collision & Ricochet
         const floorHeight = 0.05;
 
-        if (nextPos.y <= floorHeight) {
+        if (_tempPos.y <= floorHeight) {
             if (this.ricochet > 0) {
                 this.ricochet--;
                 
                 // Reflect vertical direction and velocity
                 this.direction.y *= -1;
                 if (this.velocity) this.velocity.y *= -1;
-
-                // Move back to safe boundary
-                nextPos.y = floorHeight + 0.01;
-
+                
+                // Snap to floor so it doesn't get stuck
+                _tempPos.y = floorHeight + 0.01;
+                
                 this.distanceTraveled = 0;
                 this.damage *= 1.25;
             } else {
@@ -170,34 +253,48 @@ export class Projectile {
             }
         }
 
-        // Bounding Box (AABB) Sky Structures Collision & Ricochet
+        // SkyStructures collision (Islands/Bridges/Buildings)
         if (this.levelManager && this.levelManager.skyStructures) {
-            for (const box of this.levelManager.skyStructures) {
-                if (box.containsPoint(nextPos)) {
+            for (const mesh of this.levelManager.skyStructures) {
+                if (!mesh.geometry.boundingBox) {
+                    mesh.geometry.computeBoundingBox();
+                }
+                const box = mesh.geometry.boundingBox.clone().applyMatrix4(mesh.matrixWorld);
+                
+                // Fast check if close
+                if (box.containsPoint(_tempPos)) {
                     if (this.ricochet > 0) {
                         this.ricochet--;
-
-                        const currentInX = this.position.x >= box.min.x && this.position.x <= box.max.x;
-                        const currentInY = this.position.y >= box.min.y && this.position.y <= box.max.y;
-                        const currentInZ = this.position.z >= box.min.z && this.position.z <= box.max.z;
-
-                        if (!currentInX) {
+                        
+                        // Determine reflection axis based on what part of the box we hit
+                        const center = new THREE.Vector3();
+                        box.getCenter(center);
+                        const size = new THREE.Vector3();
+                        box.getSize(size);
+                        
+                        const dx = (_tempPos.x - center.x) / size.x;
+                        const dy = (_tempPos.y - center.y) / size.y;
+                        const dz = (_tempPos.z - center.z) / size.z;
+                        
+                        // Find the dominant axis of collision
+                        const absX = Math.abs(dx);
+                        const absY = Math.abs(dy);
+                        const absZ = Math.abs(dz);
+                        
+                        if (absX > absY && absX > absZ) {
                             this.direction.x *= -1;
                             if (this.velocity) this.velocity.x *= -1;
-                        }
-                        if (!currentInY) {
+                        } else if (absY > absX && absY > absZ) {
                             this.direction.y *= -1;
                             if (this.velocity) this.velocity.y *= -1;
-                        }
-                        if (!currentInZ) {
+                        } else {
                             this.direction.z *= -1;
                             if (this.velocity) this.velocity.z *= -1;
                         }
-
-                        nextPos.copy(this.position);
+                        
+                        _tempPos.copy(this.position).add(this.direction.clone().multiplyScalar(moveDist));
                         this.distanceTraveled = 0;
                         this.damage *= 1.25;
-                        break;
                     } else {
                         this.isDead = true;
                         return;
@@ -206,29 +303,26 @@ export class Projectile {
             }
         }
 
-        // Decoration Collision (most decorations are 0.5-1m tall)
-        // Projectiles below 1.2m will hit decorations
-        if (this.levelManager && this.levelManager.isDecoration(nextPos.x, nextPos.z)) {
-            if (nextPos.y < 1.2) {
+        // Obstacles collision
+        if (this.levelManager && this.levelManager.isDecoration(_tempPos.x, _tempPos.z)) {
+            if (_tempPos.y < 1.2) {
                 this.isDead = true;
                 return;
             }
         }
 
-        // Ground Collision (for gravity projectiles)
-        if (this.gravity !== 0 && nextPos.y <= 0) {
+        // Safety catch
+        if (this.gravity !== 0 && _tempPos.y <= 0) {
             this.isDead = true;
-            // Optional: Create explosion here
             return;
         }
 
-        this.position.copy(nextPos);
+        this.position.copy(_tempPos);
         this.mesh.position.copy(this.position);
 
         // Rotate mesh to face direction
         this.mesh.lookAt(this.position.clone().add(this.direction));
 
-        // Life check (Safety fallback)
         this.lifeTime -= dt;
         if (this.lifeTime <= 0) {
             this.isDead = true;

@@ -397,4 +397,350 @@ export class TextureGenerator {
         const texture = new THREE.CanvasTexture(canvas);
         return texture;
     }
+
+    static createFlagstoneTexture(baseColorHex, mortarHex) {
+        const size = 512;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+
+        // Base Mortar
+        ctx.fillStyle = mortarHex;
+        ctx.fillRect(0, 0, size, size);
+
+        // Draw irregular stones
+        ctx.fillStyle = baseColorHex;
+        const numStones = 20;
+        
+        for (let i = 0; i < numStones; i++) {
+            const cx = Math.random() * size;
+            const cy = Math.random() * size;
+            const radius = 30 + Math.random() * 50;
+            const points = 5 + Math.floor(Math.random() * 4);
+
+            ctx.beginPath();
+            for (let j = 0; j < points; j++) {
+                const angle = (j / points) * Math.PI * 2;
+                const r = radius * (0.8 + Math.random() * 0.4);
+                const px = cx + Math.cos(angle) * r;
+                const py = cy + Math.sin(angle) * r;
+                if (j === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fill();
+            
+            // Outline
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#222222';
+            ctx.stroke();
+        }
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.RepeatWrapping;
+        return texture;
+    }
+
+    static createRuneWallTexture(baseColorHex, runeColorHex) {
+        const size = 512;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+
+        // Dark base
+        ctx.fillStyle = baseColorHex;
+        ctx.fillRect(0, 0, size, size);
+
+        // Subtle dark grid
+        ctx.strokeStyle = '#05020a';
+        ctx.lineWidth = 2;
+        const gridLines = 4;
+        for (let i = 1; i < gridLines; i++) {
+            const pos = (size / gridLines) * i;
+            ctx.beginPath();
+            ctx.moveTo(pos, 0);
+            ctx.lineTo(pos, size);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(0, pos);
+            ctx.lineTo(size, pos);
+            ctx.stroke();
+        }
+
+        // Setup Arcane Glow
+        ctx.strokeStyle = runeColorHex;
+        ctx.fillStyle = runeColorHex;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.shadowColor = runeColorHex;
+        ctx.shadowBlur = 15;
+
+        const cx = size / 2;
+        const cy = size / 2;
+
+        // Randomize the magic circle configuration
+        const numOuterRings = 1 + Math.floor(Math.random() * 3); // 1, 2, or 3 outer rings
+        const innerPolygonSides = 3 + Math.floor(Math.random() * 6); // Triangle up to Octagon
+        const rotationOffset = Math.random() * Math.PI;
+        const hasCenterStar = Math.random() > 0.5;
+        const hasConnectingLines = Math.random() > 0.3;
+        
+        // --- SHRUNKEN MAIN EMBLEM ---
+        // 1. Draw Outer Rings
+        ctx.lineWidth = 4;
+        let maxRingRadius = 0;
+        for (let i = 0; i < numOuterRings; i++) {
+            ctx.lineWidth = i === 0 ? 4 : 2;
+            const ringRadius = 150 - (i * 15) - Math.random() * 10; // Scaled down from 210 to 150
+            if (i === 0) maxRingRadius = ringRadius;
+            ctx.beginPath();
+            ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // Random tiny dots around rings
+            if (Math.random() > 0.5) {
+                const dots = 8 + Math.floor(Math.random() * 8);
+                for(let j = 0; j < dots; j++) {
+                    const angle = (j / dots) * Math.PI * 2;
+                    ctx.beginPath();
+                    ctx.arc(cx + Math.cos(angle)*ringRadius, cy + Math.sin(angle)*ringRadius, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
+
+        // 2. Inner Polygon
+        const polyRadius = 90 + Math.random() * 30; // Scaled down from 130 to 90
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        for (let i = 0; i <= innerPolygonSides; i++) {
+            const angle = (i / innerPolygonSides) * Math.PI * 2 + rotationOffset;
+            const px = cx + Math.cos(angle) * polyRadius;
+            const py = cy + Math.sin(angle) * polyRadius;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+
+        // 3. Optional second inverted polygon
+        if (Math.random() > 0.5) {
+            ctx.beginPath();
+            const invertedOffset = rotationOffset + (Math.PI / innerPolygonSides);
+            for (let i = 0; i <= innerPolygonSides; i++) {
+                const angle = (i / innerPolygonSides) * Math.PI * 2 + invertedOffset;
+                const px = cx + Math.cos(angle) * polyRadius;
+                const py = cy + Math.sin(angle) * polyRadius;
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.stroke();
+        }
+
+        // 4. Center emblem
+        const centerRadius = 15 + Math.random() * 20; // Scaled down from 20 to 15
+        ctx.beginPath();
+        ctx.arc(cx, cy, centerRadius, 0, Math.PI * 2);
+        ctx.stroke();
+
+        if (hasCenterStar) {
+            ctx.beginPath();
+            for(let i=0; i<10; i++) {
+                const angle = (i / 10) * Math.PI * 2;
+                const r = i % 2 === 0 ? centerRadius * 0.8 : centerRadius * 0.3;
+                if(i===0) ctx.moveTo(cx + Math.cos(angle)*r, cy + Math.sin(angle)*r);
+                else ctx.lineTo(cx + Math.cos(angle)*r, cy + Math.sin(angle)*r);
+            }
+            ctx.closePath();
+            ctx.fill();
+        } else {
+            ctx.beginPath();
+            ctx.arc(cx, cy, centerRadius * 0.4, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // 5. Connecting lines from center to polygon vertices
+        if (hasConnectingLines) {
+            ctx.lineWidth = 2;
+            for (let i = 0; i < innerPolygonSides; i++) {
+                const angle = (i / innerPolygonSides) * Math.PI * 2 + rotationOffset;
+                ctx.beginPath();
+                ctx.moveTo(cx + Math.cos(angle) * centerRadius, cy + Math.sin(angle) * centerRadius);
+                ctx.lineTo(cx + Math.cos(angle) * polyRadius, cy + Math.sin(angle) * polyRadius);
+                ctx.stroke();
+            }
+        }
+
+        // 6. Small orbiting runes
+        const numSmallRunes = 4 + Math.floor(Math.random() * 6); // 4 to 9 small runes
+        const orbitRadius = 200 + Math.random() * 30; // Orbiting near the edge
+        
+        ctx.lineWidth = 2;
+        for (let i = 0; i < numSmallRunes; i++) {
+            const angle = (i / numSmallRunes) * Math.PI * 2 + Math.random() * 0.5;
+            const rx = cx + Math.cos(angle) * orbitRadius;
+            const ry = cy + Math.sin(angle) * orbitRadius;
+            
+            // Draw a small geometric rune
+            const runeType = Math.floor(Math.random() * 3);
+            const rSize = 10 + Math.random() * 10;
+            
+            ctx.beginPath();
+            if (runeType === 0) {
+                // Triangle or Square
+                const sides = 3 + Math.floor(Math.random() * 2);
+                for(let j=0; j<=sides; j++) {
+                    const a = (j/sides)*Math.PI*2;
+                    if(j===0) ctx.moveTo(rx + Math.cos(a)*rSize, ry + Math.sin(a)*rSize);
+                    else ctx.lineTo(rx + Math.cos(a)*rSize, ry + Math.sin(a)*rSize);
+                }
+                ctx.stroke();
+            } else if (runeType === 1) {
+                // Circle with a dot
+                ctx.arc(rx, ry, rSize, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(rx, ry, 2, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                // Two crossed lines
+                ctx.moveTo(rx - rSize, ry);
+                ctx.lineTo(rx + rSize, ry);
+                ctx.moveTo(rx, ry - rSize);
+                ctx.lineTo(rx, ry + rSize);
+                ctx.stroke();
+            }
+            
+            // Connecting faint line from main circle to the small rune
+            if (Math.random() > 0.3) {
+                ctx.globalAlpha = 0.4;
+                ctx.beginPath();
+                ctx.moveTo(cx + Math.cos(angle) * maxRingRadius, cy + Math.sin(angle) * maxRingRadius);
+                ctx.lineTo(rx, ry);
+                ctx.stroke();
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.RepeatWrapping;
+        return texture;
+    }
+
+    static createVaultWallTexture(baseColorHex, goldColorHex) {
+        const size = 512;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+
+        // Dark base
+        ctx.fillStyle = baseColorHex;
+        ctx.fillRect(0, 0, size, size);
+
+        // Gold panels
+        ctx.fillStyle = goldColorHex;
+        ctx.fillRect(20, 20, size - 40, size - 40);
+
+        // Inner dark panel
+        ctx.fillStyle = '#1a1005';
+        ctx.fillRect(40, 40, size - 80, size - 80);
+
+        // Gold circle in middle
+        ctx.beginPath();
+        ctx.arc(size/2, size/2, 100, 0, Math.PI * 2);
+        ctx.fillStyle = goldColorHex;
+        ctx.fill();
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.RepeatWrapping;
+        return texture;
+    }
+
+    static createBakedFloorTexture(levelData, floorColorHex, theme) {
+        const size = 2048; // High res for the whole map
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+
+        // Base color
+        ctx.fillStyle = floorColorHex;
+        ctx.fillRect(0, 0, size, size);
+
+        // Draw basic patterns or noise to make it look like baked ground
+        ctx.fillStyle = '#000000';
+        ctx.globalAlpha = 0.1;
+        for (let i = 0; i < 1000; i++) {
+            const x = Math.random() * size;
+            const y = Math.random() * size;
+            const r = Math.random() * 20;
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Draw Giant Pentacles in Event Rooms
+        ctx.globalAlpha = 1.0;
+        if (levelData && levelData.rooms) {
+            const mapWidth = levelData.width || 50;
+            const mapHeight = levelData.height || 50;
+            const cellW = size / mapWidth;
+            const cellH = size / mapHeight;
+
+            levelData.rooms.forEach(room => {
+                if (room.type === 'event') {
+                    // Coordinates of the room center
+                    // We flip Y if necessary, but canvas (x, y) maps straightforwardly if flipY is on
+                    const cx = (room.x + room.w / 2) * cellW;
+                    const cy = (room.z + room.h / 2) * cellH;
+
+                    const radius = Math.min(room.w * cellW, room.h * cellH) * 0.45;
+
+                    // Glow effect
+                    ctx.strokeStyle = '#8a2be2'; // Glowing purple
+                    ctx.shadowColor = '#8a2be2';
+                    ctx.shadowBlur = 20;
+
+                    // Outer circle
+                    ctx.lineWidth = 8;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+                    ctx.stroke();
+
+                    // Inner circle
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, radius * 0.9, 0, Math.PI * 2);
+                    ctx.stroke();
+
+                    // Pentagram
+                    ctx.beginPath();
+                    for (let i = 0; i <= 5; i++) {
+                        const angle = (i * 2 / 5) * Math.PI * 2 - Math.PI / 2;
+                        const px = cx + Math.cos(angle) * (radius * 0.9);
+                        const py = cy + Math.sin(angle) * (radius * 0.9);
+                        if (i === 0) ctx.moveTo(px, py);
+                        else ctx.lineTo(px, py);
+                    }
+                    ctx.stroke();
+                    
+                    // Center dot
+                    ctx.fillStyle = '#8a2be2';
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            });
+        }
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.wrapS = THREE.ClampToEdgeWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        return texture;
+    }
 }

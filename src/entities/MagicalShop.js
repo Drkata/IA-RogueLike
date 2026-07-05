@@ -56,12 +56,46 @@ export class MagicalShop {
     }
 
     update(dt, player) {
-        if (this.isDead) return;
+        if (this.isDying) {
+            this.deathProgress += dt;
+            const t = Math.min(1, this.deathProgress / 1.5); // 1.5 seconds transition
+            
+            // Dim light from 1.2 to 0.2 (so it remains faintly visible)
+            this.light.intensity = 1.2 * (1 - t) + 0.2 * t;
+            
+            // Dim emissive intensity
+            this.crystalMat.emissiveIntensity = 0.7 * (1 - t) + 0.2 * t;
+            
+            // Interpolate color from DeepSkyBlue (0, 191, 255) to Grey (100, 100, 100)
+            const r = 0 * (1 - t) + 100 * t;
+            const g = 191 * (1 - t) + 100 * t;
+            const b = 255 * (1 - t) + 100 * t;
+            this.crystalMat.color.setRGB(r / 255, g / 255, b / 255);
+            this.crystalMat.emissive.setRGB(r / 255, g / 255, b / 255);
+            this.light.color.setRGB(r / 255, g / 255, b / 255);
+            
+            // It stays floating, but drops just slightly and spins slower
+            const time = performance.now() / 1000;
+            this.crystal.position.y = (1.1 - 0.1 * t) + Math.sin(time * 2 + this.floatOffset) * 0.06;
+            this.crystal.rotation.y += (dt * 0.6) * (1 - t * 0.5); // Slows down to half speed
 
-        // Visual rotation/floating
-        const time = performance.now() / 1000;
-        this.crystal.position.y = 1.1 + Math.sin(time * 2 + this.floatOffset) * 0.06;
-        this.crystal.rotation.y += dt * 0.6;
+            if (t >= 1) {
+                this.isDying = false;
+                this.isDisabled = true; // DO NOT use isDead or EntityManager will delete the mesh!
+            }
+        } else if (!this.isDisabled) {
+            // Visual rotation/floating
+            const time = performance.now() / 1000;
+            this.crystal.position.y = 1.1 + Math.sin(time * 2 + this.floatOffset) * 0.06;
+            this.crystal.rotation.y += dt * 0.6;
+        } else {
+            // Disabled state: still floats and spins very slowly, but grey
+            const time = performance.now() / 1000;
+            this.crystal.position.y = 1.0 + Math.sin(time * 2 + this.floatOffset) * 0.06;
+            this.crystal.rotation.y += dt * 0.3;
+        }
+
+        if (this.isDisabled || this.isDying) return;
 
         // Interaction check
         const dx = player.position.x - this.position.x;
@@ -83,5 +117,11 @@ export class MagicalShop {
         if (window.game) {
             window.game.showShopMenu(this);
         }
+    }
+
+    disable() {
+        if (this.isDisabled || this.isDying) return;
+        this.isDying = true;
+        this.deathProgress = 0;
     }
 }

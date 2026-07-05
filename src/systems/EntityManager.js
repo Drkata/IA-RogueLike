@@ -9,9 +9,6 @@ export class EntityManager {
         // Hit Effect Pooling
         this.hitEffects = [];
         this.hitEffectPool = [];
-        // Hit Effect Pooling
-        this.hitEffects = [];
-        this.hitEffectPool = [];
         this.hitGeo = new THREE.SphereGeometry(0.15, 8, 8); // Reduced from 0.3
 
         // We reuse geometry but create materials for opacity fading
@@ -125,16 +122,15 @@ export class EntityManager {
             }
         }
 
-        // Get enemies list (including Boss)
-        const enemies = this.entities.filter(e => e.entityType === 'enemy' && !e.isDead);
-
         // Check player projectile collisions with enemies
-        const playerProjectiles = this.entities.filter(e => e.entityType === 'projectile' && e.isPlayerProjectile);
+        for (let i = 0; i < this.entities.length; i++) {
+            const projectile = this.entities[i];
+            if (projectile.isDead || projectile.entityType !== 'projectile' || !projectile.isPlayerProjectile) continue;
 
-        for (const projectile of playerProjectiles) {
-            if (projectile.isDead) continue;
+            for (let j = 0; j < this.entities.length; j++) {
+                const enemy = this.entities[j];
+                if (enemy.isDead || enemy.entityType !== 'enemy') continue;
 
-            for (const enemy of enemies) {
                 // Skip if already hit this enemy (for piercing)
                 if (projectile.hitEntities && projectile.hitEntities.has(enemy.id)) continue;
 
@@ -148,7 +144,12 @@ export class EntityManager {
                     if (player && player.sessionStats) {
                         player.sessionStats.shotsHit++;
                         player.sessionStats.damageDealt += projectile.damage;
-                        if (died) player.sessionStats.kills++;
+                        if (died) {
+                            player.sessionStats.kills++;
+                            if (player.lifeSteal > 0) {
+                                player.heal(player.lifeSteal);
+                            }
+                        }
 
                         if (projectile.isCritical) player.sessionStats.critCount++;
                         if (projectile.damage > player.sessionStats.maxDamageHit) {
@@ -218,10 +219,13 @@ export class EntityManager {
         // Enemy-to-enemy separation (AFTER all updates and collisions)
         const separationRadius = 0.8;
 
-        for (let i = 0; i < enemies.length; i++) {
-            for (let j = i + 1; j < enemies.length; j++) {
-                const enemy1 = enemies[i];
-                const enemy2 = enemies[j];
+        for (let i = 0; i < this.entities.length; i++) {
+            if (this.entities[i].entityType !== 'enemy') continue;
+            for (let j = i + 1; j < this.entities.length; j++) {
+                if (this.entities[j].entityType !== 'enemy') continue;
+                
+                const enemy1 = this.entities[i];
+                const enemy2 = this.entities[j];
 
                 const dist = enemy1.position.distanceTo(enemy2.position);
 
@@ -300,48 +304,67 @@ export class EntityManager {
         this.hitEffects.push(flash);
     }
 
-    createExplosion(position, damage, player = null) {
-        // Find targets first
-        const enemies = this.entities.filter(e => e.entityType === 'enemy' && !e.isDead);
-        const targets = [];
+    createExplosion(position, damage, player) {
+        const radius = 6.0;
+        let targetsHit = 0;
 
-        for (const enemy of enemies) {
-            const dist = enemy.position.distanceTo(position);
-            if (dist < 6) {
-                targets.push(enemy);
+        for (let i = 0; i < this.entities.length; i++) {
+            const enemy = this.entities[i];
+            if (enemy.isDead || enemy.entityType !== 'enemy') continue;
+
+            const dist = position.distanceTo(enemy.position);
+            const hitRadius = enemy.radius ? enemy.radius : 0.85;
+
+            if (dist < (radius + hitRadius)) {
+                // Falloff damage
+                const dmgMult = 1.0 - (dist / (radius + hitRadius));
+                const finalDamage = Math.max(1, Math.floor(damage * dmgMult));
+                const died = enemy.takeDamage(finalDamage, false);
+                if (died && player) {
+                    player.sessionStats.kills++;
+                    if (player.lifeSteal > 0) {
+                        player.heal(player.lifeSteal);
+                    }
+                }
+                this.createHitEffect(enemy.position, false);
+
+                if (player && player.sessionStats) {
+                    player.sessionStats.damageDealt += finalDamage;
+                    if (died) player.sessionStats.kills++;
+
+                    if (finalDamage > player.sessionStats.maxDamageHit) {
+                        player.sessionStats.maxDamageHit = finalDamage;
+                    }
+                }
+                targetsHit++;
             }
         }
 
         // Only play visual if we actually hit something
-        if (targets.length > 0) {
-            const geometry = new THREE.SphereGeometry(1, 16, 16);
-            const material = new THREE.MeshBasicMaterial({
-                color: 0xff4400,
-                transparent: true,
-                opacity: 0.5
-            });
-            const explosion = new THREE.Mesh(geometry, material);
+        if (targetsHit > 0 || !player) { // If !player, it's a turret death or script explosion, so always play visual
+            if (!this.explosionGeo) {
+                this.explosionGeo = new THREE.SphereGeometry(1, 16, 16);
+            }
+            // We must clone the material if we are fading opacity individually over time
+            // Wait, does cloning material trigger recompilation?
+            // Actually, for MeshBasicMaterial, Three.js shares the shader program. It just uploads new uniforms. So cloning is very fast.
+            // But we can also just use a pool!
+            // For now, let's just create material ONCE and use a Sprite or just clone material.
+            if (!this.explosionMat) {
+                this.explosionMat = new THREE.MeshBasicMaterial({
+                    color: 0xff4400,
+                    transparent: true,
+                    opacity: 0.5
+                });
+            }
+            
+            const explosion = new THREE.Mesh(this.explosionGeo, this.explosionMat.clone());
             explosion.position.copy(position);
             explosion.userData.life = 0.3;
             explosion.userData.isExplosion = true;
 
             this.scene.add(explosion);
             this.hitEffects.push(explosion);
-
-            // Apply Damage
-            for (const enemy of targets) {
-                const died = enemy.takeDamage(damage, player ? player.weapon.critChance > Math.random() : false);
-                this.createHitEffect(enemy.position, false);
-
-                if (player && player.sessionStats) {
-                    player.sessionStats.damageDealt += damage;
-                    if (died) player.sessionStats.kills++;
-
-                    if (damage > player.sessionStats.maxDamageHit) {
-                        player.sessionStats.maxDamageHit = damage;
-                    }
-                }
-            }
         }
     }
 
@@ -387,7 +410,14 @@ export class EntityManager {
     }
 
     getEnemyCount() {
-        return this.entities.filter(e => e.entityType === 'enemy' && !e.isDead).length;
+        let count = 0;
+        for (let i = 0; i < this.entities.length; i++) {
+            const e = this.entities[i];
+            if (!e.isDead && e.entityType === 'enemy') {
+                count++;
+            }
+        }
+        return count;
     }
 
     clear() {

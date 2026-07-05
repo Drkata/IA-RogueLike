@@ -45,7 +45,7 @@ export class Minimap {
         const cz = this.size / 2;
         this.ctx.translate(cx, cz);
         // Rotate opposite to player yaw so that forward is always up
-        this.ctx.rotate(-this.player.yaw);
+        this.ctx.rotate(this.player.yaw);
 
         // Draw map cells relative to player
         for (let y = 0; y < mapHeight; y++) {
@@ -87,18 +87,12 @@ export class Minimap {
         this.ctx.arc(playerScreenX, playerScreenZ, this.scale * 1.5, 0, Math.PI * 2);
         this.ctx.fill();
 
-        // Draw player direction arrow pointing up (static)
-        const dirX = Math.sin(this.player.yaw);
-        const dirZ = Math.cos(this.player.yaw);
+        // Draw player direction arrow pointing up (static forward direction)
         this.ctx.strokeStyle = 'red';
         this.ctx.lineWidth = 2;
         this.ctx.beginPath();
         this.ctx.moveTo(playerScreenX, playerScreenZ);
-        // Invert X component to correct left/right inversion
-        this.ctx.lineTo(
-            playerScreenX - dirX * this.scale * 2,
-            playerScreenZ - dirZ * this.scale * 2
-        );
+        this.ctx.lineTo(playerScreenX, playerScreenZ - this.scale * 2.5); // Point straight UP
         this.ctx.stroke();
     }
 }

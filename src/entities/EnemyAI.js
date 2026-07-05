@@ -3,6 +3,16 @@ import { Projectile } from './Projectile.js';
 import { Pathfinder } from '../systems/Pathfinder.js';
 import { CONSTANTS } from '../core/Constants.js';
 
+const _tempNextWaypoint = new THREE.Vector3();
+const _tempMoveDir = new THREE.Vector3();
+const _tempSeparation = new THREE.Vector3();
+const _tempPush = new THREE.Vector3();
+const _tempNextPos = new THREE.Vector3();
+const _tempNextPosX = new THREE.Vector3();
+const _tempNextPosZ = new THREE.Vector3();
+const _tempShootDir = new THREE.Vector3();
+const _tempSpawnPos = new THREE.Vector3();
+
 export class EnemyAI {
     constructor(enemy, levelManager, entityManager, level) {
         this.enemy = enemy;
@@ -56,67 +66,69 @@ export class EnemyAI {
 
             if (this.path && this.path.length > 1) {
                 // Move towards next waypoint
-                const nextWaypoint = new THREE.Vector3(this.path[1].x, 0.8, this.path[1].z);
-                const moveDir = new THREE.Vector3().subVectors(nextWaypoint, position);
-                moveDir.y = 0;
-                moveDir.normalize();
+                _tempNextWaypoint.set(this.path[1].x, 0.8, this.path[1].z);
+                _tempMoveDir.subVectors(_tempNextWaypoint, position);
+                _tempMoveDir.y = 0;
+                _tempMoveDir.normalize();
 
                 // Separation Force (Avoid crowding)
                 if (this.entityManager) {
-                    const separation = new THREE.Vector3();
+                    _tempSeparation.set(0, 0, 0);
                     let count = 0;
                     const entities = this.entityManager.entities;
 
-                    for (const other of entities) {
+                    for (let i = 0; i < entities.length; i++) {
+                        const other = entities[i];
                         if (other !== this.enemy && other.entityType === 'enemy' && !other.isDead) {
-                            const dist = position.distanceTo(other.position);
-                            if (dist < 1.5 && dist > 0.01) { // Check neighbors within 1.5m
-                                const push = new THREE.Vector3().subVectors(position, other.position);
-                                push.y = 0;
-                                push.normalize().divideScalar(dist); // Weight by distance
-                                separation.add(push);
+                            const distToOther = position.distanceTo(other.position);
+                            if (distToOther < 1.5 && distToOther > 0.01) { // Check neighbors within 1.5m
+                                _tempPush.subVectors(position, other.position);
+                                _tempPush.y = 0;
+                                _tempPush.normalize().divideScalar(distToOther); // Weight by distance
+                                _tempSeparation.add(_tempPush);
                                 count++;
-                            } else if (dist <= 0.01) {
+                            } else if (distToOther <= 0.01) {
                                 // Add random small separation force to avoid overlapping stuck enemies
-                                const push = new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
-                                separation.add(push);
+                                _tempPush.set(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
+                                _tempSeparation.add(_tempPush);
                                 count++;
                             }
                         }
                     }
 
                     if (count > 0) {
-                        separation.divideScalar(count);
-                        if (separation.lengthSq() > 0) {
-                            separation.normalize();
+                        _tempSeparation.divideScalar(count);
+                        if (_tempSeparation.lengthSq() > 0) {
+                            _tempSeparation.normalize();
                         }
-                        const finalDir = moveDir.clone().add(separation.multiplyScalar(0.8));
-                        if (finalDir.lengthSq() > 0) {
-                            moveDir.copy(finalDir).normalize();
+                        _tempMoveDir.add(_tempSeparation.multiplyScalar(0.8));
+                        if (_tempMoveDir.lengthSq() > 0) {
+                            _tempMoveDir.normalize();
                         }
                     }
                 }
 
                 // Calculate next position
                 const moveDist = this.speed * dt;
-                const nextPos = position.clone().add(moveDir.clone().multiplyScalar(moveDist));
-                nextPos.y = 0.8;
+                _tempPush.copy(_tempMoveDir).multiplyScalar(moveDist);
+                _tempNextPos.copy(position).add(_tempPush);
+                _tempNextPos.y = 0.8;
 
                 // Try to move directly
-                if (this.canMoveTo(nextPos)) {
-                    nextPosition = nextPos;
+                if (this.canMoveTo(_tempNextPos)) {
+                    nextPosition = new THREE.Vector3().copy(_tempNextPos); // Return a new vector so caller can store it
                 } else {
                     // Wall Sliding: Try X only
-                    const nextPosX = position.clone();
-                    nextPosX.x += moveDir.x * moveDist;
-                    if (this.canMoveTo(nextPosX)) {
-                        nextPosition = nextPosX;
+                    _tempNextPosX.copy(position);
+                    _tempNextPosX.x += _tempMoveDir.x * moveDist;
+                    if (this.canMoveTo(_tempNextPosX)) {
+                        nextPosition = new THREE.Vector3().copy(_tempNextPosX);
                     } else {
                         // Wall Sliding: Try Z only
-                        const nextPosZ = position.clone();
-                        nextPosZ.z += moveDir.z * moveDist;
-                        if (this.canMoveTo(nextPosZ)) {
-                            nextPosition = nextPosZ;
+                        _tempNextPosZ.copy(position);
+                        _tempNextPosZ.z += _tempMoveDir.z * moveDist;
+                        if (this.canMoveTo(_tempNextPosZ)) {
+                            nextPosition = new THREE.Vector3().copy(_tempNextPosZ);
                         }
                     }
                 }
@@ -144,19 +156,20 @@ export class EnemyAI {
     shoot(player, position) {
         if (!this.entityManager) return;
 
-        const dir = new THREE.Vector3().subVectors(player.position, position);
-        if (dir.lengthSq() > 0) {
-            dir.normalize();
+        _tempShootDir.subVectors(player.position, position);
+        if (_tempShootDir.lengthSq() > 0) {
+            _tempShootDir.normalize();
         } else {
-            dir.set(0, 0, -1);
+            _tempShootDir.set(0, 0, -1);
         }
 
         // Spawn projectile slightly in front of enemy to avoid clipping
-        const spawnPos = position.clone().add(dir.clone().multiplyScalar(0.5));
+        _tempPush.copy(_tempShootDir).multiplyScalar(0.5);
+        _tempSpawnPos.copy(position).add(_tempPush);
 
         const projectile = new Projectile(
-            spawnPos,
-            dir,
+            _tempSpawnPos,
+            _tempShootDir,
             this.projectileSpeed,
             this.damage,
             this.levelManager,

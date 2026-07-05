@@ -35,9 +35,30 @@ export class LootChest {
         lid.position.y = 0.65;
         this.mesh.add(lid);
 
-        // Light
-        const light = new THREE.PointLight(0xFFD700, 1, 5);
-        light.position.y = 1.0;
+        // Replaced PointLight with Sprite to avoid recompilation freeze on pickup
+        const canvas = document.createElement('canvas');
+        canvas.width = 64;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+        grad.addColorStop(0, 'rgba(255, 215, 0, 1)');
+        grad.addColorStop(0.4, 'rgba(255, 215, 0, 0.5)');
+        grad.addColorStop(1, 'rgba(255, 215, 0, 0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 64, 64);
+        
+        const glowTex = new THREE.CanvasTexture(canvas);
+        const glowMat = new THREE.SpriteMaterial({
+            map: glowTex,
+            color: 0xFFD700,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        
+        const light = new THREE.Sprite(glowMat);
+        light.scale.set(4, 4, 4);
+        light.position.y = 0.5;
         this.mesh.add(light);
 
         // Float animation

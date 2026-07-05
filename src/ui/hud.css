@@ -877,3 +877,55 @@
         grid-template-columns: 1fr;
     }
 }
+
+/* Medieval Panel (used for Stats Display and other windows) */
+.medieval-panel {
+    position: fixed;
+    top: 60px;
+    right: 10px;
+    padding: 12px;
+    background: rgba(18, 12, 6, 0.95);
+    border: 3px double #8a7322; /* Double dark gold border */
+    border-radius: 5px;
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.8), inset 0 0 10px rgba(0, 0, 0, 0.6);
+    font-family: 'MedievalSharp', cursive;
+    font-size: 11px;
+    color: #f0e6d2;
+    pointer-events: none;
+    display: block;
+    text-align: left;
+    min-width: 180px;
+    z-index: 100;
+}
+
+.panel-header {
+    margin-bottom: 8px;
+    color: #d4af37; /* Gold */
+    font-weight: bold;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.4);
+    text-align: center;
+    font-size: 1.2em;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+/* Iconify SVGs layout */
+iconify-icon {
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.icon-wrapper iconify-icon,
+.icon-wrapper img {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: contain;
+}
+
+#stats-display {
+    top: auto;
+    right: auto;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+}

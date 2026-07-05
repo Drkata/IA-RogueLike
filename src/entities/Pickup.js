@@ -20,14 +20,64 @@ export class Pickup {
         // Reuse geometry and material
         this.mesh = new THREE.Mesh(Pickup.geometry, Pickup.materials[type]);
         this.mesh.position.copy(position);
-        this.mesh.position.y = 0.5; // Float above ground
+        this.mesh.position.y = 0.5; // Start height
+
+        // Fortnite-style drop physics
+        const angle = Math.random() * Math.PI * 2;
+        const horizontalForce = 2 + Math.random() * 4;
+        this.vx = Math.cos(angle) * horizontalForce;
+        this.vz = Math.sin(angle) * horizontalForce;
+        this.vy = 5 + Math.random() * 5; // Upward pop
+        this.isSettled = false;
     }
 
     update(dt, player) {
-        // Bobbing animation
-        this.bobTimer += dt * 3;
-        this.mesh.position.y = 0.5 + Math.sin(this.bobTimer) * 0.2;
-        this.mesh.rotation.y += dt;
+        if (!this.isSettled) {
+            // Physics phase
+            this.vy -= 20 * dt; // Gravity
+            
+            let nextX = this.mesh.position.x + this.vx * dt;
+            let nextZ = this.mesh.position.z + this.vz * dt;
+            
+            if (window.game && window.game.levelManager) {
+                const radius = 0.3; // Small collision radius for pickup
+                if (window.game.levelManager.isWall(nextX + (this.vx > 0 ? radius : -radius), this.mesh.position.z)) {
+                    this.vx *= -0.5; // Bounce on X
+                    nextX = this.mesh.position.x;
+                }
+                if (window.game.levelManager.isWall(this.mesh.position.x, nextZ + (this.vz > 0 ? radius : -radius))) {
+                    this.vz *= -0.5; // Bounce on Z
+                    nextZ = this.mesh.position.z;
+                }
+            }
+            
+            this.mesh.position.x = nextX;
+            this.mesh.position.z = nextZ;
+            this.mesh.position.y += this.vy * dt;
+
+            // Chaotic rotation while in air
+            this.mesh.rotation.x += dt * 8;
+            this.mesh.rotation.y += dt * 5;
+
+            // Bounce on ground
+            if (this.mesh.position.y <= 0.5) {
+                this.mesh.position.y = 0.5;
+                if (this.vy < -3) {
+                    this.vy *= -0.5; // Bounce up
+                    this.vx *= 0.6; // Ground friction
+                    this.vz *= 0.6;
+                } else {
+                    this.isSettled = true;
+                    this.mesh.rotation.x = 0; // Settle upright
+                    this.bobTimer = 0; // Sync bobbing
+                }
+            }
+        } else {
+            // Idle bobbing animation
+            this.bobTimer += dt * 3;
+            this.mesh.position.y = 0.5 + Math.sin(this.bobTimer) * 0.2;
+            this.mesh.rotation.y += dt;
+        }
 
         // Collision detection with player
         const dist = this.mesh.position.distanceTo(player.position);

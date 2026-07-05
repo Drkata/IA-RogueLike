@@ -14,6 +14,7 @@ import { MagicalSentinel } from '../entities/MagicalSentinel.js';
 import { MagicAltar } from '../entities/MagicAltar.js';
 import { HealingFountain } from '../entities/HealingFountain.js';
 import { MagicalShop } from '../entities/MagicalShop.js';
+import { SVG_ICONS } from '../ui/SVGIcons.js';
 
 export class Game {
     constructor() {
@@ -73,7 +74,10 @@ export class Game {
             { id: 'speed', source: 'player' },
             { id: 'knockback', source: 'weapon' },
             { id: 'explosion', source: 'weapon' },
-            { id: 'ricochet', source: 'weapon' }
+            { id: 'ricochet', source: 'weapon' },
+            { id: 'homing', source: 'weapon' },
+            { id: 'meleeDamage', source: 'player' },
+            { id: 'immolation', source: 'player' }
         ];
     }
 
@@ -89,10 +93,10 @@ export class Game {
         // Cheat / Dev Tool: Press 'P' to skip to Boss
         window.addEventListener('keydown', (e) => {
             if (e.code === 'KeyP') {
-                console.log("CHEAT: Skipping to Boss Level");
+                console.log("CHEAT: Skipping to Boss Level and showing all upgrades");
                 this.currentLevel = 9; // Will become 10 after menu
-                // Pass points directly to showUpgradeMenu to avoid overwrite
-                this.showUpgradeMenu(27);
+                // Pass points directly to showUpgradeMenu to avoid overwrite and show all upgrades
+                this.showUpgradeMenu(27, false, true);
             }
             if (e.code === 'KeyU') {
                 console.log("CHEAT: Testing Upgrade Menu");
@@ -176,7 +180,7 @@ export class Game {
         `;
 
         // High Score Logic
-        const highScore = localStorage.getItem('fps_highscore') || 0;
+        const highScore = parseInt(localStorage.getItem('fps_highscore')) || 0;
         const isNewRecord = this.currentLevel > highScore;
         if (isNewRecord) {
             localStorage.setItem('fps_highscore', this.currentLevel);
@@ -284,6 +288,7 @@ export class Game {
     }
 
     startNewLevel() {
+        this.levelCompleteTimerStarted = false;
         console.log(`Starting Level ${this.currentLevel} `);
 
         // Reset menu flag for this level
@@ -296,9 +301,9 @@ export class Game {
         // Clear old entities
         this.entityManager.clear();
 
-        // Dynamic Map Size - Increased by 20%
-        // Base 36x36 (was 30), +1.3 per level, Cap at 72x72 (was 60)
-        const mapSize = Math.min(72, 36 + Math.floor(this.currentLevel * 1.3));
+        // Dynamic Map Size
+        // Base 55 (was 36), +1.3 per level, Cap at 95 (was 72)
+        const mapSize = Math.min(95, 55 + Math.floor(this.currentLevel * 1.3));
 
         // Generate Level with Theme
         const startPos = this.levelManager.generateLevel(mapSize, mapSize, this.currentLevel);
@@ -644,6 +649,8 @@ export class Game {
     }
 
     update() {
+        if (window.stats) window.stats.update();
+
         const dt = this.clock.getDelta();
 
         // Don't update game if paused (upgrade menu open)
@@ -669,28 +676,44 @@ export class Game {
         }
 
         // Check Level Complete
-        if (this.currentLevel % 10 === 0) {
-            // Boss Level: Complete when boss is dead (0 enemies)
-            if (enemyCount === 0 && this.isRunning && !this.menuShown) {
-                this.menuShown = true;
-                this.showUpgradeMenu(5); // 5 points for killing boss
+        if (enemyCount === 0 && this.isRunning && !this.menuShown) {
+            if (!this.levelCompleteTimerStarted) {
+                this.levelCompleteTimerStarted = true;
+                this.levelCompleteTimer = 5.0; // 5 seconds
+                this.hudManager.showCountdown(5);
             }
-        } else {
-            // Normal Level
-            if (enemyCount === 0 && this.isRunning && !this.menuShown) {
+            
+            this.levelCompleteTimer -= dt;
+            const currentSecond = Math.ceil(this.levelCompleteTimer);
+            if (currentSecond !== this.lastCountdownSecond) {
+                this.lastCountdownSecond = currentSecond;
+                if (currentSecond > 0) {
+                    this.hudManager.updateCountdown(currentSecond);
+                }
+            }
+
+            if (this.levelCompleteTimer <= 0) {
+                this.hudManager.hideCountdown();
                 this.menuShown = true;
-                this.showUpgradeMenu();
+                this.levelCompleteTimerStarted = false; // Reset for next level
+                
+                if (this.currentLevel % 10 === 0) {
+                    this.showUpgradeMenu(5);
+                } else {
+                    this.showUpgradeMenu();
+                }
             }
         }
 
         this.renderer.render(this.scene, this.camera);
     }
 
-    showUpgradeMenu(points = 2, isMidLevel = false) {
+    showUpgradeMenu(points = 2, isMidLevel = false, showAll = false) {
         // 1. Filter upgrades that are not maxed out
         const available = this.upgradeList.filter(item => {
             const sourceObj = item.source === 'weapon' ? this.player.weapon : this.player;
-            return sourceObj.stats[item.id] < sourceObj.MAX_LEVEL;
+            const maxLvl = sourceObj.getMaxLevel ? sourceObj.getMaxLevel(item.id) : sourceObj.MAX_LEVEL;
+            return sourceObj.stats[item.id] < maxLvl;
         });
 
         const choiceCount = 3;
@@ -705,15 +728,20 @@ export class Game {
             return;
         }
 
-        // 2. Randomly select up to 'choiceCount' unique upgrades
-        // Fisher-Yates Shuffle
-        for (let i = available.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [available[i], available[j]] = [available[j], available[i]];
-        }
+        if (showAll) {
+            // Keep all available upgrades
+            this.currentUpgradeChoices = available;
+        } else {
+            // 2. Randomly select up to 'choiceCount' unique upgrades
+            // Fisher-Yates Shuffle
+            for (let i = available.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [available[i], available[j]] = [available[j], available[i]];
+            }
 
-        // Take top 'choiceCount'
-        this.currentUpgradeChoices = available.slice(0, choiceCount);
+            // Take top 'choiceCount'
+            this.currentUpgradeChoices = available.slice(0, choiceCount);
+        }
 
         this.isRunning = false;
         this.isPaused = true; // Pause game updates
@@ -916,7 +944,11 @@ export class Game {
             critDamage: 'Crit Damage',
             speed: 'Speed',
             knockback: 'Knockback',
-            explosion: 'Explosion'
+            explosion: 'Explosion',
+            ricochet: 'Ricochet',
+            homing: 'Tête Chercheuse',
+            meleeDamage: 'Dégâts de Bâton',
+            immolation: "Aura d'Immolation"
         };
 
         // Hide Next Level button (auto-advance instead)
@@ -937,7 +969,7 @@ export class Game {
             const level = sourceObj.stats[stat];
             const currentVal = sourceObj.getStatValue(stat, level);
             const nextVal = sourceObj.getStatValue(stat, level + 1);
-            const maxLevel = sourceObj.MAX_LEVEL;
+            const maxLevel = sourceObj.getMaxLevel ? sourceObj.getMaxLevel(stat) : sourceObj.MAX_LEVEL;
 
             const card = document.createElement('div');
 
@@ -1000,6 +1032,8 @@ export class Game {
                     if (stat === 'arc') return n + '°'; // Degrees
                     if (stat === 'reload') return n.toFixed(1);
                     if (stat === 'armor' || stat === 'vampirism' || stat === 'critChance' || stat === 'critDamage' || stat === 'speed' || stat === 'explosion') return Math.round(n) + '%';
+                    if (stat === 'homing') return 'Niv. ' + n;
+                    if (stat === 'immolation') return n + ' dmg/s';
                     return n.toFixed(1);
                 };
                 values.innerText = `${fmt(currentVal)} -> ${fmt(nextVal)} `;
@@ -1039,7 +1073,8 @@ export class Game {
                         let availableUpgrades = false;
                         for (const item of this.upgradeList) {
                             const sObj = item.source === 'weapon' ? this.player.weapon : this.player;
-                            if (sObj.stats[item.id] < sObj.MAX_LEVEL) {
+                            const maxLvl = sObj.getMaxLevel ? sObj.getMaxLevel(item.id) : sObj.MAX_LEVEL;
+                            if (sObj.stats[item.id] < maxLvl) {
                                 availableUpgrades = true;
                                 break;
                             }
@@ -1209,121 +1244,7 @@ export class Game {
             }
         });
 
-        // --- NEW: Random & Auto Upgrade Buttons ---
-        const buttonsContainer = document.createElement('div');
-        buttonsContainer.style.gridColumn = '1 / -1'; // Span full width
-        buttonsContainer.style.display = 'flex';
-        buttonsContainer.style.gap = '10px';
-        buttonsContainer.style.marginTop = '20px';
-        buttonsContainer.style.justifyContent = 'center';
-        // Random Upgrade Button (1 Point)
-        const randomBtn = document.createElement('button');
-        randomBtn.innerText = '🎲 Random Upgrade (1 Point)';
-        randomBtn.style.padding = '10px 20px';
-        randomBtn.style.background = '#4444ff';
-        randomBtn.style.color = 'white';
-        randomBtn.style.border = 'none';
-        randomBtn.style.cursor = 'pointer';
-        randomBtn.style.fontSize = '1em';
-        randomBtn.style.fontWeight = 'bold';
-
-        randomBtn.onclick = () => {
-            if (this.upgradePoints <= 0) return;
-
-            // Find all available upgrades
-            const available = this.upgradeList.filter(item => {
-                const sourceObj = item.source === 'weapon' ? this.player.weapon : this.player;
-                return sourceObj.stats[item.id] < sourceObj.MAX_LEVEL;
-            });
-
-            if (available.length > 0) {
-                const randomItem = available[Math.floor(Math.random() * available.length)];
-                const sourceObj = randomItem.source === 'weapon' ? this.player.weapon : this.player;
-
-                if (sourceObj.upgrade(randomItem.id)) {
-                    this.upgradePoints--;
-                    this.renderUpgradeUI();
-
-                    if (this.upgradePoints <= 0) {
-                        setTimeout(() => {
-                            if (this.onUpgradeMenuComplete) {
-                                this.onUpgradeMenuComplete();
-                            } else {
-                                document.getElementById('upgrade-menu').style.display = 'none';
-                                document.body.style.cursor = 'none';
-                                document.body.requestPointerLock();
-                                this.isPaused = false;
-                                this.isRunning = true;
-                                this.menuShown = false;
-
-                                if (!this.isMidLevelUpgrade) {
-                                    this.currentLevel++;
-                                    this.startNewLevel();
-                                }
-                            }
-                        }, 300);
-                    }
-                }
-            }
-        };
-        buttonsContainer.appendChild(randomBtn);
-
-        // Auto Upgrade Button (All Points)
-        const autoBtn = document.createElement('button');
-        autoBtn.innerText = '⚡ Auto Upgrade (All Points)';
-        autoBtn.style.padding = '10px 20px';
-        autoBtn.style.background = '#ffaa00';
-        autoBtn.style.color = 'black';
-        autoBtn.style.border = 'none';
-        autoBtn.style.cursor = 'pointer';
-        autoBtn.style.fontSize = '1em';
-        autoBtn.style.fontWeight = 'bold';
-
-        autoBtn.onclick = () => {
-            if (this.upgradePoints <= 0) return;
-
-            while (this.upgradePoints > 0) {
-                // Find all available upgrades
-                const available = this.upgradeList.filter(item => {
-                    const sourceObj = item.source === 'weapon' ? this.player.weapon : this.player;
-                    return sourceObj.stats[item.id] < sourceObj.MAX_LEVEL;
-                });
-
-                if (available.length === 0) break;
-
-                const randomItem = available[Math.floor(Math.random() * available.length)];
-                const sourceObj = randomItem.source === 'weapon' ? this.player.weapon : this.player;
-
-                if (sourceObj.upgrade(randomItem.id)) {
-                    this.upgradePoints--;
-                } else {
-                    break; // Should not happen if filtered correctly
-                }
-            }
-            this.renderUpgradeUI();
-
-            // Close menu automatically
-            setTimeout(() => {
-                if (this.onUpgradeMenuComplete) {
-                    this.onUpgradeMenuComplete();
-                } else {
-                    document.getElementById('upgrade-menu').style.display = 'none';
-                    document.body.style.cursor = 'none';
-                    document.body.requestPointerLock();
-                    this.isPaused = false;
-                    this.isRunning = true;
-                    this.menuShown = false;
-
-                    if (!this.isMidLevelUpgrade) {
-                        this.currentLevel++;
-                        this.startNewLevel();
-                    }
-                }
-            }, 300);
-        };
-        buttonsContainer.appendChild(autoBtn);
-
-        grid.appendChild(buttonsContainer);
+        // End of renderUpgradeUI
     }
 
     showChestUpgradeMenu() {
@@ -1366,28 +1287,7 @@ export class Game {
     }
 
     getIconForStat(stat) {
-        const icons = {
-            damage: '⚔️',
-            fireRate: '⚡',
-            arc: '📐',
-            reload: '🔄',
-            ammo: '🎒',
-            range: '🎯',
-            projectileSpeed: '☄️',
-            bulletCount: '💥',
-            piercing: '🏹',
-            critChance: '🎲',
-            critDamage: '💥',
-            maxHealth: '❤️',
-            armor: '🛡️',
-            vampirism: '🩸',
-            regen: '💖',
-            speed: '🏃',
-            knockback: '🥊',
-            explosion: '💣',
-            ricochet: '↩️'
-        };
-        return icons[stat] || '❓';
+        return SVG_ICONS[stat] || '❓';
     }
 
     showAltarMenu(altar) {
@@ -1396,6 +1296,41 @@ export class Game {
         this.isRunning = false;
         document.exitPointerLock();
         document.body.style.cursor = 'default';
+
+        // Pact Definitions (Icons are now SVGs)
+        const ALL_PACTS = [
+            { id: 'blood', icon: SVG_ICONS.blood, title: 'Pacte de Sang', desc: 'Sacrifiez 25% de vos PV max pour augmenter de 40% vos dégâts.' },
+            { id: 'armor', icon: SVG_ICONS.armor_pact, title: 'Pacte d\'Armure', desc: 'Réduisez votre vitesse de 15% pour obtenir +40 Armure.' },
+            { id: 'speed', icon: SVG_ICONS.speed_pact, title: 'Pacte de Vitesse', desc: '+30% Vitesse de déplacement, mais -20% PV max.' },
+            { id: 'vampire', icon: SVG_ICONS.vampire, title: 'Pacte de Vampirisme', desc: 'Vampirisme +20%, mais vous perdez 1 PV par seconde.' },
+            { id: 'wizard', icon: SVG_ICONS.wizard, title: 'Pacte du Magicien', desc: '+50% Cadence de tir, mais -30% Dégâts.' },
+            { id: 'greed', icon: SVG_ICONS.greed, title: 'Pacte de Cupidité', desc: '+150 Or immédiat, mais -15% Vitesse.' },
+            { id: 'precision', icon: SVG_ICONS.precision, title: 'Pacte de Précision', desc: '+50% Vitesse/Portée des projectiles, mais -20 Armure.' },
+            { id: 'resilience', icon: SVG_ICONS.resilience, title: 'Pacte de Résilience', desc: 'Régénération +1 PV / sec, mais -50% Dégâts.' }
+        ];
+
+        // Randomly pick 2 distinct pacts
+        let p1 = ALL_PACTS[Math.floor(Math.random() * ALL_PACTS.length)];
+        let p2;
+        do {
+            p2 = ALL_PACTS[Math.floor(Math.random() * ALL_PACTS.length)];
+        } while (p1.id === p2.id);
+
+        const gridContainer = document.getElementById('altar-grid-container');
+        if (gridContainer) {
+            gridContainer.innerHTML = '';
+            [p1, p2].forEach(pact => {
+                gridContainer.innerHTML += `
+                    <div class="altar-card" id="altar-card-${pact.id}">
+                        <div class="altar-card-icon">${pact.icon}</div>
+                        <h3>${pact.title}</h3>
+                        <p class="desc">${pact.desc}</p>
+                        <button onclick="window.game.selectAltarPact('${pact.id}')">Accepter le Pacte</button>
+                    </div>
+                `;
+            });
+        }
+
         document.getElementById('altar-menu').style.display = 'flex';
     }
 
@@ -1403,28 +1338,50 @@ export class Game {
         if (!this.currentAltar) return;
 
         if (pact === 'blood') {
-            const hpLoss = Math.round(this.player.maxHealth * 0.25);
-            this.player.pactHpReduction = (this.player.pactHpReduction || 0) + hpLoss;
-            this.player.recalculateStats();
-
-            this.player.weapon.baseDamage *= 1.4;
-            this.player.weapon.recalculateStats();
-
+            this.player.pactHpMultiplier = (this.player.pactHpMultiplier || 1.0) * 0.75;
+            this.player.weapon.pactDamageMultiplier = (this.player.weapon.pactDamageMultiplier || 1.0) * 1.4;
             this.hudManager.showMessage("Pacte de Sang scellé : +40% dégâts, -25% PV max !");
         } else if (pact === 'armor') {
             this.player.pactSpeedMultiplier = (this.player.pactSpeedMultiplier || 1.0) * 0.85;
             this.player.pactArmorBonus = (this.player.pactArmorBonus || 0) + 0.40;
-            this.player.recalculateStats();
-
             this.hudManager.showMessage("Pacte d'Armure scellé : +40 Armure, -15% vitesse !");
+        } else if (pact === 'speed') {
+            this.player.pactSpeedMultiplier = (this.player.pactSpeedMultiplier || 1.0) * 1.30;
+            this.player.pactHpMultiplier = (this.player.pactHpMultiplier || 1.0) * 0.80;
+            this.hudManager.showMessage("Pacte de Vitesse scellé : +30% vitesse, -20% PV max !");
+        } else if (pact === 'vampire') {
+            this.player.pactVampirism = (this.player.pactVampirism || 0) + 0.20;
+            this.player.healthRegen = (this.player.healthRegen || 0) - 1; // Drain 1 HP per second
+            this.hudManager.showMessage("Pacte de Vampirisme scellé : Vampirisme +20%, Perte de 1 PV/s !");
+        } else if (pact === 'wizard') {
+            this.player.weapon.pactDamageMultiplier = (this.player.weapon.pactDamageMultiplier || 1.0) * 0.7;
+            this.player.weapon.pactFireRateMultiplier = (this.player.weapon.pactFireRateMultiplier || 1.0) * 1.5; // +50% fire rate
+            this.hudManager.showMessage("Pacte du Magicien scellé : +50% cadence, -30% dégâts !");
+        } else if (pact === 'greed') {
+            this.player.gold += 150;
+            this.player.pactSpeedMultiplier = (this.player.pactSpeedMultiplier || 1.0) * 0.85;
+            this.hudManager.showMessage("Pacte de Cupidité scellé : +150 Or, -15% vitesse !");
+        } else if (pact === 'precision') {
+            this.player.weapon.pactProjectileSpeedMultiplier = (this.player.weapon.pactProjectileSpeedMultiplier || 1.0) * 1.5;
+            this.player.pactArmorBonus = (this.player.pactArmorBonus || 0) - 0.20; // armor is 0..1 scale, -0.20 is -20% reduction
+            this.hudManager.showMessage("Pacte de Précision scellé : Projectiles rapides, -20 Armure !");
+        } else if (pact === 'resilience') {
+            this.player.weapon.pactDamageMultiplier = (this.player.weapon.pactDamageMultiplier || 1.0) * 0.5;
+            this.player.healthRegen = (this.player.healthRegen || 0) + 1; // 1 HP per second
+            this.hudManager.showMessage("Pacte de Résilience scellé : Régénération de vie, -50% dégâts !");
         }
 
+        this.player.recalculateStats();
+        if (this.player.weapon) this.player.weapon.recalculateStats();
+        
         this.player.updateHUD();
-        this.currentAltar.deactivate();
         this.closeAltarMenu();
     }
 
     closeAltarMenu() {
+        if (this.currentAltar) {
+            this.currentAltar.deactivate();
+        }
         this.isPaused = false;
         this.isRunning = true;
         document.getElementById('altar-menu').style.display = 'none';
@@ -1479,6 +1436,9 @@ export class Game {
             console.error("DEBUG: Player is not defined!");
             return;
         }
+        if (!this.currentShop || this.currentShop.isDead) {
+            return; // Shop is already used or invalid
+        }
 
         const prices = {
             potion: 20,
@@ -1495,6 +1455,8 @@ export class Game {
             return;
         }
 
+        let success = false;
+
         if (itemType === 'potion') {
             if (this.player.health >= this.player.maxHealth) {
                 this.showShopFeedback("Vie déjà au maximum !", true);
@@ -1503,21 +1465,23 @@ export class Game {
             this.player.spendGold(cost);
             this.player.heal(50);
             this.showShopFeedback("Achat réussi : +50 PV !");
+            success = true;
         } else if (itemType === 'ammo') {
             this.player.spendGold(cost);
             this.player.weapon.reserveAmmo = Math.min(400, this.player.weapon.reserveAmmo + 150);
             this.player.updateHUD();
             this.showShopFeedback("Achat réussi : +150 Munitions !");
+            success = true;
         } else if (itemType === 'shield') {
             this.player.spendGold(cost);
             this.player.addShield(30);
             this.showShopFeedback("Achat réussi : +30 Bouclier !");
+            success = true;
         } else if (itemType === 'upgrade') {
             const available = this.upgradeList.filter(item => {
                 const sObj = item.source === 'weapon' ? this.player.weapon : this.player;
                 return sObj.stats[item.id] < sObj.MAX_LEVEL;
             });
-            console.log("DEBUG: Available upgrades:", available);
 
             if (available.length === 0) {
                 this.showShopFeedback("Toutes les améliorations sont déjà au maximum !", true);
@@ -1526,36 +1490,22 @@ export class Game {
 
             const randomUpgrade = available[Math.floor(Math.random() * available.length)];
             const sObj = randomUpgrade.source === 'weapon' ? this.player.weapon : this.player;
-            console.log("DEBUG: Selected random upgrade:", randomUpgrade);
             
             if (sObj.upgrade(randomUpgrade.id)) {
                 this.player.spendGold(cost);
                 
                 const labels = {
-                    damage: 'Dégâts',
-                    fireRate: 'Cadence de tir',
-                    arc: 'Dispersion des tirs',
-                    reload: 'Vitesse de rechargement',
-                    ammo: 'Munitions max',
-                    range: 'Portée',
-                    projectileSpeed: 'Vitesse des projectiles',
-                    maxHealth: 'Points de vie max',
-                    armor: 'Armure',
-                    vampirism: 'Vol de vie',
-                    regen: 'Régénération de vie',
-                    bulletCount: 'Tir multiple',
-                    formatting: 'Transpercement',
-                    piercing: 'Transpercement',
-                    critChance: 'Chances de critique',
-                    critDamage: 'Dégâts des critiques',
-                    speed: 'Vitesse',
-                    knockback: 'Recul',
-                    explosion: 'Explosions'
+                    damage: 'Dégâts', fireRate: 'Cadence de tir', arc: 'Dispersion des tirs',
+                    reload: 'Vitesse de rechargement', ammo: 'Munitions max', range: 'Portée',
+                    projectileSpeed: 'Vitesse des projectiles', maxHealth: 'Points de vie max',
+                    armor: 'Armure', vampirism: 'Vol de vie', regen: 'Régénération de vie',
+                    bulletCount: 'Tir multiple', piercing: 'Transpercement', critChance: 'Chances de critique',
+                    critDamage: 'Dégâts des critiques', speed: 'Vitesse', knockback: 'Recul', explosion: 'Explosions'
                 };
                 const upgradeName = labels[randomUpgrade.id] || randomUpgrade.id;
                 this.showShopFeedback(`Achat réussi : Amélioration obtenue ➔ +1 ${upgradeName} !`);
+                success = true;
             } else {
-                console.error("DEBUG: sObj.upgrade failed for stat:", randomUpgrade.id);
                 this.showShopFeedback("Erreur lors de l'application de l'amélioration.", true);
             }
         }
@@ -1563,7 +1513,6 @@ export class Game {
         // Always update gold display inside shop UI
         const shopGoldDisplay = document.getElementById('shop-gold-value');
         if (shopGoldDisplay) {
-            console.log("DEBUG: Updating shop UI gold value to:", this.player.gold);
             shopGoldDisplay.textContent = this.player.gold || 0;
         }
     }
@@ -1574,6 +1523,10 @@ export class Game {
         this.isRunning = true;
         document.getElementById('shop-menu').style.display = 'none';
         document.body.requestPointerLock();
-        this.currentShop = null;
+        
+        if (this.currentShop) {
+            this.currentShop.disable();
+            this.currentShop = null;
+        }
     }
 }
