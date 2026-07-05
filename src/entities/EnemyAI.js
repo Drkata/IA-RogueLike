@@ -3,15 +3,18 @@ import { Projectile } from './Projectile.js';
 import { Pathfinder } from '../systems/Pathfinder.js';
 import { CONSTANTS } from '../core/Constants.js';
 
+// Module-level scratch vectors (zero-allocation in update() hot path)
 const _tempNextWaypoint = new THREE.Vector3();
-const _tempMoveDir = new THREE.Vector3();
-const _tempSeparation = new THREE.Vector3();
-const _tempPush = new THREE.Vector3();
-const _tempNextPos = new THREE.Vector3();
-const _tempNextPosX = new THREE.Vector3();
-const _tempNextPosZ = new THREE.Vector3();
-const _tempShootDir = new THREE.Vector3();
-const _tempSpawnPos = new THREE.Vector3();
+const _tempMoveDir      = new THREE.Vector3();
+const _tempSeparation   = new THREE.Vector3();
+const _tempPush         = new THREE.Vector3();
+const _tempNextPos      = new THREE.Vector3();
+const _tempNextPosX     = new THREE.Vector3();
+const _tempNextPosZ     = new THREE.Vector3();
+const _tempShootDir     = new THREE.Vector3();
+const _tempSpawnPos     = new THREE.Vector3();
+// Shared return vector — caller copies immediately so no aliasing risk
+const _returnPos        = new THREE.Vector3();
 
 export class EnemyAI {
     constructor(enemy, levelManager, entityManager, level) {
@@ -114,21 +117,21 @@ export class EnemyAI {
                 _tempNextPos.copy(position).add(_tempPush);
                 _tempNextPos.y = 0.8;
 
-                // Try to move directly
+                // Try to move directly — reuse _returnPos to avoid new Vector3 on each move
                 if (this.canMoveTo(_tempNextPos)) {
-                    nextPosition = new THREE.Vector3().copy(_tempNextPos); // Return a new vector so caller can store it
+                    nextPosition = _returnPos.copy(_tempNextPos);
                 } else {
                     // Wall Sliding: Try X only
                     _tempNextPosX.copy(position);
                     _tempNextPosX.x += _tempMoveDir.x * moveDist;
                     if (this.canMoveTo(_tempNextPosX)) {
-                        nextPosition = new THREE.Vector3().copy(_tempNextPosX);
+                        nextPosition = _returnPos.copy(_tempNextPosX);
                     } else {
                         // Wall Sliding: Try Z only
                         _tempNextPosZ.copy(position);
                         _tempNextPosZ.z += _tempMoveDir.z * moveDist;
                         if (this.canMoveTo(_tempNextPosZ)) {
-                            nextPosition = new THREE.Vector3().copy(_tempNextPosZ);
+                            nextPosition = _returnPos.copy(_tempNextPosZ);
                         }
                     }
                 }

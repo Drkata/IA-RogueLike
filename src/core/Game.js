@@ -663,16 +663,25 @@ export class Game {
         this.entityManager.update(dt, this.player);
 
         if (this.minimap) {
-            const enemies = this.entityManager.entities.filter(e => e.entityType === 'enemy');
-            this.minimap.update(enemies);
+            // Pass raw entities array — Minimap filters internally (no .filter() allocation)
+            this.minimap.update(this.entityManager.entities);
         }
 
-        // Update HUD
+        // HUD dirty flags — only update DOM when values actually change
         const enemyCount = this.entityManager.getEnemyCount();
-        this.hudManager.updateEnemies(enemyCount);
+        if (enemyCount !== this._lastEnemyCount) {
+            this._lastEnemyCount = enemyCount;
+            this.hudManager.updateEnemies(enemyCount);
+        }
         this.hudManager.updateLevel(this.currentLevel);
         if (this.player && this.player.weapon) {
-            this.hudManager.updateAmmo(this.player.weapon.currentAmmo, this.player.weapon.reserveAmmo);
+            const curAmmo = this.player.weapon.currentAmmo;
+            const resAmmo = this.player.weapon.reserveAmmo;
+            if (curAmmo !== this._lastCurAmmo || resAmmo !== this._lastResAmmo) {
+                this._lastCurAmmo = curAmmo;
+                this._lastResAmmo = resAmmo;
+                this.hudManager.updateAmmo(curAmmo, resAmmo);
+            }
         }
 
         // Check Level Complete

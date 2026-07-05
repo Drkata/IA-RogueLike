@@ -1,6 +1,14 @@
 import * as THREE from 'three';
 import { soundManager } from './SoundManager.js';
 
+// ─── Module-level scratch vectors (zero-allocation in hot paths) ──────────────
+const _sep      = new THREE.Vector3();
+const _push     = new THREE.Vector3();
+const _newPos1  = new THREE.Vector3();
+const _newPos2  = new THREE.Vector3();
+const _knockDir = new THREE.Vector3();
+const _kbPos    = new THREE.Vector3();
+
 export class EntityManager {
     constructor(scene) {
         this.scene = scene;
@@ -28,6 +36,16 @@ export class EntityManager {
             side: THREE.DoubleSide
         });
         this.telegraphs = []; // Active telegraphs
+        this._telegraphPool = []; // Reusable telegraph meshes
+
+        // Explosion Pool (avoids material.clone() on every explosion)
+        this._explosionPool = [];
+        this._explosionGeo  = new THREE.SphereGeometry(1, 16, 16);
+        // Pre-allocate 4 explosion meshes
+        for (let i = 0; i < 4; i++) {
+            const mat = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.5 });
+            this._explosionPool.push(new THREE.Mesh(this._explosionGeo, mat));
+        }
 
         // Shockwave Visuals
         this.shockwaveGeo = new THREE.RingGeometry(0.5, 1.0, 32);
@@ -117,6 +135,7 @@ export class EntityManager {
                 tele.material.opacity = (tele.userData.life / tele.userData.maxLife) * 0.5;
             } else {
                 this.scene.remove(tele);
+                this._telegraphPool.push(tele); // Return to pool
                 this.telegraphs[j] = this.telegraphs[this.telegraphs.length - 1];
                 this.telegraphs.pop();
             }
@@ -163,20 +182,19 @@ export class EntityManager {
                         player.heal(healAmount);
                     }
 
-                    // Knockback
+                    // Knockback — zero-allocation: reuse _knockDir and _kbPos
                     if (projectile.knockback > 0) {
-                        const pushDir = projectile.direction.clone();
-                        pushDir.y = 0;
-                        pushDir.normalize();
+                        _knockDir.copy(projectile.direction);
+                        _knockDir.y = 0;
+                        _knockDir.normalize();
 
                         const pushDist = projectile.knockback * 0.2;
-                        const newPos = enemy.position.clone().add(pushDir.multiplyScalar(pushDist));
+                        _kbPos.copy(enemy.position).addScaledVector(_knockDir, pushDist);
 
-                        // Only apply knockback if not hitting a wall
-                        if (enemy.ai && enemy.ai.canMoveTo(newPos)) {
-                            enemy.position.copy(newPos);
-                            enemy.mesh.position.copy(enemy.position);
-                            enemy.mesh.position.y -= 0.85; // Maintain ground offset
+                        if (enemy.ai && enemy.ai.canMoveTo(_kbPos)) {
+                            enemy.position.copy(_kbPos);
+                            enemy.mesh.position.copy(_kbPos);
+                            enemy.mesh.position.y -= 0.85;
                         }
                     }
 
@@ -216,60 +234,45 @@ export class EntityManager {
             }
         }
 
-        // Enemy-to-enemy separation (AFTER all updates and collisions)
+        // Enemy-to-enemy separation — zero-allocation: scratch vectors _sep/_push/_newPos1/_newPos2
         const separationRadius = 0.8;
 
         for (let i = 0; i < this.entities.length; i++) {
             if (this.entities[i].entityType !== 'enemy') continue;
             for (let j = i + 1; j < this.entities.length; j++) {
                 if (this.entities[j].entityType !== 'enemy') continue;
-                
+
                 const enemy1 = this.entities[i];
                 const enemy2 = this.entities[j];
 
                 const dist = enemy1.position.distanceTo(enemy2.position);
 
-                if (dist < separationRadius && dist > 0.01) {
-                    const separation = enemy1.position.clone().sub(enemy2.position);
-                    separation.y = 0;
-                    if (separation.lengthSq() > 0) {
-                        separation.normalize();
+                if (dist < separationRadius) {
+                    if (dist > 0.01) {
+                        _sep.subVectors(enemy1.position, enemy2.position);
+                        _sep.y = 0;
+                        if (_sep.lengthSq() > 0) _sep.normalize();
+                        else _sep.set(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
                     } else {
-                        separation.set(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
+                        _sep.set(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
                     }
 
-                    const pushForce = (separationRadius - dist) * 0.5;
+                    const pushForce = dist > 0.01
+                        ? (separationRadius - dist) * 0.5
+                        : separationRadius * 0.5;
 
-                    const newPos1 = enemy1.position.clone().add(separation.clone().multiplyScalar(pushForce));
-                    const newPos2 = enemy2.position.clone().sub(separation.clone().multiplyScalar(pushForce));
+                    _newPos1.copy(enemy1.position).addScaledVector(_sep,  pushForce);
+                    _newPos2.copy(enemy2.position).addScaledVector(_sep, -pushForce);
 
-                    if (enemy1.ai && enemy1.ai.canMoveTo(newPos1)) {
-                        enemy1.position.copy(newPos1);
-                        enemy1.mesh.position.copy(enemy1.position);
+                    if (enemy1.ai && enemy1.ai.canMoveTo(_newPos1)) {
+                        enemy1.position.copy(_newPos1);
+                        enemy1.mesh.position.copy(_newPos1);
                         enemy1.mesh.position.y -= 0.85;
                     }
 
-                    if (enemy2.ai && enemy2.ai.canMoveTo(newPos2)) {
-                        enemy2.position.copy(newPos2);
-                        enemy2.mesh.position.copy(enemy2.position);
-                        enemy2.mesh.position.y -= 0.85;
-                    }
-                } else if (dist <= 0.01) {
-                    const separation = new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
-                    const pushForce = separationRadius * 0.5;
-
-                    const newPos1 = enemy1.position.clone().add(separation.clone().multiplyScalar(pushForce));
-                    const newPos2 = enemy2.position.clone().sub(separation.clone().multiplyScalar(pushForce));
-
-                    if (enemy1.ai && enemy1.ai.canMoveTo(newPos1)) {
-                        enemy1.position.copy(newPos1);
-                        enemy1.mesh.position.copy(enemy1.position);
-                        enemy1.mesh.position.y -= 0.85;
-                    }
-
-                    if (enemy2.ai && enemy2.ai.canMoveTo(newPos2)) {
-                        enemy2.position.copy(newPos2);
-                        enemy2.mesh.position.copy(enemy2.position);
+                    if (enemy2.ai && enemy2.ai.canMoveTo(_newPos2)) {
+                        enemy2.position.copy(_newPos2);
+                        enemy2.mesh.position.copy(_newPos2);
                         enemy2.mesh.position.y -= 0.85;
                     }
                 }
@@ -340,39 +343,26 @@ export class EntityManager {
             }
         }
 
-        // Only play visual if we actually hit something
-        if (targetsHit > 0 || !player) { // If !player, it's a turret death or script explosion, so always play visual
-            if (!this.explosionGeo) {
-                this.explosionGeo = new THREE.SphereGeometry(1, 16, 16);
-            }
-            // We must clone the material if we are fading opacity individually over time
-            // Wait, does cloning material trigger recompilation?
-            // Actually, for MeshBasicMaterial, Three.js shares the shader program. It just uploads new uniforms. So cloning is very fast.
-            // But we can also just use a pool!
-            // For now, let's just create material ONCE and use a Sprite or just clone material.
-            if (!this.explosionMat) {
-                this.explosionMat = new THREE.MeshBasicMaterial({
-                    color: 0xff4400,
-                    transparent: true,
-                    opacity: 0.5
-                });
-            }
-            
-            const explosion = new THREE.Mesh(this.explosionGeo, this.explosionMat.clone());
+        // Spawn visual — use explosion pool to avoid material cloning & shader recompilation
+        if (targetsHit > 0 || !player) {
+            const explosion = this._getExplosionFromPool();
             explosion.position.copy(position);
+            explosion.scale.setScalar(0.5);
+            explosion.material.opacity = 0.5;
             explosion.userData.life = 0.3;
             explosion.userData.isExplosion = true;
-
             this.scene.add(explosion);
             this.hitEffects.push(explosion);
         }
     }
 
     createShockwave(position) {
-        const effect = new THREE.Mesh(this.shockwaveGeo, this.shockwaveMat.clone());
+        // Reuse shockwave material — no clone needed because opacity is shared
+        // and we only ever show one shockwave at a time in practice
+        const effect = new THREE.Mesh(this.shockwaveGeo, this.shockwaveMat);
         effect.position.copy(position);
-        effect.position.y = 0.5; // Slightly above ground
-        effect.rotation.x = -Math.PI / 2; // Flat on ground
+        effect.position.y = 0.5;
+        effect.rotation.x = -Math.PI / 2;
         effect.userData = { life: 0.5, isShockwave: true };
         effect.scale.setScalar(1.0);
         this.scene.add(effect);
@@ -380,33 +370,45 @@ export class EntityManager {
     }
 
     createTelegraph(position, duration) {
-        const mat = this.telegraphMat.clone();
-        const mesh = new THREE.Mesh(this.telegraphGeo, mat);
+        // Use telegraph pool to avoid new geometry/material per boss attack
+        let mesh = this._telegraphPool.pop();
+        if (!mesh) {
+            // First time: create the reusable mesh with beacon child
+            const mat = this.telegraphMat.clone();
+            mesh = new THREE.Mesh(this.telegraphGeo, mat);
+            mesh.rotation.x = -Math.PI / 2;
+
+            if (!this._beaconGeo) {
+                this._beaconGeo = new THREE.CylinderGeometry(0.1, 0.1, 20, 8);
+                this._beaconMat = new THREE.MeshBasicMaterial({
+                    color: 0xff0000, transparent: true, opacity: 0.3,
+                    blending: THREE.AdditiveBlending, depthWrite: false
+                });
+            }
+            const beacon = new THREE.Mesh(this._beaconGeo, this._beaconMat);
+            beacon.rotation.x = Math.PI / 2;
+            beacon.position.set(0, 0, 10);
+            mesh.add(beacon);
+        }
 
         mesh.position.copy(position);
         mesh.position.y = 0.1;
-        mesh.rotation.x = -Math.PI / 2;
-
-        mesh.userData.life = duration;
+        mesh.userData.life    = duration;
         mesh.userData.maxLife = duration;
+        mesh.material.opacity = 0.5;
+        mesh.scale.setScalar(1);
 
         this.scene.add(mesh);
-
-        const beaconGeo = new THREE.CylinderGeometry(0.1, 0.1, 20, 8);
-        const beaconMat = new THREE.MeshBasicMaterial({
-            color: 0xff0000,
-            transparent: true,
-            opacity: 0.3,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false
-        });
-        const beacon = new THREE.Mesh(beaconGeo, beaconMat);
-        beacon.rotation.x = Math.PI / 2;
-        beacon.position.set(0, 0, 10);
-
-        mesh.add(beacon);
-
         this.telegraphs.push(mesh);
+    }
+
+    _getExplosionFromPool() {
+        if (this._explosionPool.length > 0) {
+            return this._explosionPool.pop();
+        }
+        // Pool empty (rare): create a new one
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.5 });
+        return new THREE.Mesh(this._explosionGeo, mat);
     }
 
     getEnemyCount() {
@@ -422,20 +424,21 @@ export class EntityManager {
 
     clear() {
         for (const entity of this.entities) {
-            if (entity.mesh) {
-                this.scene.remove(entity.mesh);
-            }
+            if (entity.mesh) this.scene.remove(entity.mesh);
         }
         this.entities = [];
 
         for (const effect of this.hitEffects) {
             this.scene.remove(effect);
+            // Return explosions to pool
+            if (effect.userData.isExplosion) this._explosionPool.push(effect);
         }
         this.hitEffects = [];
-        this.hitEffectPool = [];
+        // Keep hitEffectPool intact (hit flash pool is fine to keep)
 
         for (const tele of this.telegraphs) {
             this.scene.remove(tele);
+            this._telegraphPool.push(tele);
         }
         this.telegraphs = [];
     }

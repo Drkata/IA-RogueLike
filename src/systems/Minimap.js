@@ -13,10 +13,11 @@ export class Minimap {
         this.scale = 1;
     }
 
-    update(enemies = []) {
+    // Accept the raw entities array to avoid .filter() allocation in the caller (Game.js)
+    update(entities = []) {
         if (!this.levelManager.levelData) return;
 
-        const mapWidth = this.levelManager.width;
+        const mapWidth  = this.levelManager.width;
         const mapHeight = this.levelManager.height;
 
         // Calculate scale to fit map in canvas
@@ -25,13 +26,8 @@ export class Minimap {
         this.scale = Math.min(scaleX, scaleY);
 
         // Player grid position
-        const playerGridPos = {
-            x: this.player.position.x / CONSTANTS.CELL_SIZE,
-            z: this.player.position.z / CONSTANTS.CELL_SIZE
-        };
-
-
-
+        const playerGridX = this.player.position.x / CONSTANTS.CELL_SIZE;
+        const playerGridZ = this.player.position.z / CONSTANTS.CELL_SIZE;
 
         // Clear canvas
         this.ctx.clearRect(0, 0, this.size, this.size);
@@ -40,36 +36,30 @@ export class Minimap {
 
         // ----- Draw rotating map -----
         this.ctx.save();
-        // Translate to centre (player will be drawn at centre after restore)
         const cx = this.size / 2;
         const cz = this.size / 2;
         this.ctx.translate(cx, cz);
-        // Rotate opposite to player yaw so that forward is always up
         this.ctx.rotate(this.player.yaw);
 
         // Draw map cells relative to player
         for (let y = 0; y < mapHeight; y++) {
             for (let x = 0; x < mapWidth; x++) {
                 const index = y * mapWidth + x;
-                const isWall = this.levelManager.data[index] === 1;
-                if (isWall) {
-                    const offsetX = (x - playerGridPos.x) * this.scale;
-                    const offsetZ = (y - playerGridPos.z) * this.scale;
+                if (this.levelManager.data[index] === 1) {
+                    const offsetX = (x - playerGridX) * this.scale;
+                    const offsetZ = (y - playerGridZ) * this.scale;
                     this.ctx.fillStyle = '#555';
                     this.ctx.fillRect(offsetX, offsetZ, this.scale, this.scale);
                 }
             }
         }
 
-        // Draw enemies relative to player
-        for (const enemy of enemies) {
-            if (enemy.isDead) continue;
-            const enemyGridPos = {
-                x: enemy.position.x / CONSTANTS.CELL_SIZE,
-                z: enemy.position.z / CONSTANTS.CELL_SIZE
-            };
-            const offsetX = (enemyGridPos.x - playerGridPos.x) * this.scale;
-            const offsetZ = (enemyGridPos.z - playerGridPos.z) * this.scale;
+        // Draw enemies — filter inline (no .filter() allocation)
+        for (let i = 0; i < entities.length; i++) {
+            const entity = entities[i];
+            if (entity.entityType !== 'enemy' || entity.isDead) continue;
+            const offsetX = (entity.position.x / CONSTANTS.CELL_SIZE - playerGridX) * this.scale;
+            const offsetZ = (entity.position.z / CONSTANTS.CELL_SIZE - playerGridZ) * this.scale;
             this.ctx.fillStyle = 'orange';
             this.ctx.beginPath();
             this.ctx.arc(offsetX, offsetZ, this.scale * 1.2, 0, Math.PI * 2);

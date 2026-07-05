@@ -69,8 +69,8 @@ export class FloatingText {
             return;
         }
 
-        // Move up
-        this.mesh.position.add(this.velocity.clone().multiplyScalar(dt));
+        // Move up — zero-allocation: addScaledVector avoids velocity.clone()
+        this.mesh.position.addScaledVector(this.velocity, dt);
 
         // Fade out in the last half
         if (this.age > this.lifeTime * 0.5) {

@@ -2,8 +2,12 @@ import * as THREE from 'three';
 import { CONSTANTS } from '../core/Constants.js';
 import { soundManager } from '../systems/SoundManager.js';
 
-const _tempPos = new THREE.Vector3();
-const _tempDir = new THREE.Vector3();
+// Module-level scratch vectors — zero-allocation in Projectile.update() hot path
+const _tempPos    = new THREE.Vector3();
+const _tempDir    = new THREE.Vector3();
+const _tempLookAt = new THREE.Vector3(); // For mesh.lookAt() — avoids position.clone()
+const _tempCenter = new THREE.Vector3(); // For sky-island AABB center
+const _tempSize   = new THREE.Vector3(); // For sky-island AABB size
 
 export class Projectile {
     static geometry = new THREE.IcosahedronGeometry(0.15, 1); // Crystal shape
@@ -149,21 +153,23 @@ export class Projectile {
             }
         }
 
-        // Homing effect for Player projectiles
+        // Homing effect for Player projectiles — for loop avoids forEach closure allocation
         if (this.sourceId === -1 && this.homingLevel > 0 && this.distanceTraveled > 0.5) {
             let closestEnemy = null;
             let closestDist = Infinity;
-            
+
             if (window.game && window.game.entityManager && window.game.entityManager.entities) {
-                window.game.entityManager.entities.forEach(entity => {
+                const entities = window.game.entityManager.entities;
+                for (let _i = 0; _i < entities.length; _i++) {
+                    const entity = entities[_i];
                     if (entity.entityType === 'enemy' && !entity.isDead) {
                         const dist = this.position.distanceTo(entity.position);
-                        if (dist < closestDist && dist < 15.0) { // Only track within 15 units
+                        if (dist < closestDist && dist < 15.0) {
                             closestDist = dist;
                             closestEnemy = entity;
                         }
                     }
-                });
+                }
             }
 
             if (closestEnemy) {
@@ -220,8 +226,8 @@ export class Projectile {
                         }
                     }
                     
-                    // Move in new direction
-                    _tempPos.copy(this.position).add(this.direction.clone().multiplyScalar(moveDist));
+                    // Move in new direction — zero-allocation: addScaledVector avoids direction.clone()
+                    _tempPos.copy(this.position).addScaledVector(this.direction, moveDist);
                     this.distanceTraveled = 0;
                     this.damage *= 1.25;
                 } else {
@@ -260,27 +266,23 @@ export class Projectile {
                     mesh.geometry.computeBoundingBox();
                 }
                 const box = mesh.geometry.boundingBox.clone().applyMatrix4(mesh.matrixWorld);
-                
-                // Fast check if close
+
                 if (box.containsPoint(_tempPos)) {
                     if (this.ricochet > 0) {
                         this.ricochet--;
-                        
-                        // Determine reflection axis based on what part of the box we hit
-                        const center = new THREE.Vector3();
-                        box.getCenter(center);
-                        const size = new THREE.Vector3();
-                        box.getSize(size);
-                        
-                        const dx = (_tempPos.x - center.x) / size.x;
-                        const dy = (_tempPos.y - center.y) / size.y;
-                        const dz = (_tempPos.z - center.z) / size.z;
-                        
-                        // Find the dominant axis of collision
+
+                        // Determine reflection axis — zero-allocation: reuse _tempCenter/_tempSize
+                        box.getCenter(_tempCenter);
+                        box.getSize(_tempSize);
+
+                        const dx = (_tempPos.x - _tempCenter.x) / _tempSize.x;
+                        const dy = (_tempPos.y - _tempCenter.y) / _tempSize.y;
+                        const dz = (_tempPos.z - _tempCenter.z) / _tempSize.z;
+
                         const absX = Math.abs(dx);
                         const absY = Math.abs(dy);
                         const absZ = Math.abs(dz);
-                        
+
                         if (absX > absY && absX > absZ) {
                             this.direction.x *= -1;
                             if (this.velocity) this.velocity.x *= -1;
@@ -291,8 +293,8 @@ export class Projectile {
                             this.direction.z *= -1;
                             if (this.velocity) this.velocity.z *= -1;
                         }
-                        
-                        _tempPos.copy(this.position).add(this.direction.clone().multiplyScalar(moveDist));
+
+                        _tempPos.copy(this.position).addScaledVector(this.direction, moveDist);
                         this.distanceTraveled = 0;
                         this.damage *= 1.25;
                     } else {
@@ -320,19 +322,15 @@ export class Projectile {
         this.position.copy(_tempPos);
         this.mesh.position.copy(this.position);
 
-        // Rotate mesh to face direction
-        this.mesh.lookAt(this.position.clone().add(this.direction));
+        // Rotate mesh to face direction — zero-allocation: _tempLookAt avoids position.clone()
+        _tempLookAt.copy(this.position).add(this.direction);
+        this.mesh.lookAt(_tempLookAt);
 
-        this.lifeTime -= dt;
-        if (this.lifeTime <= 0) {
-            this.isDead = true;
-            return;
-        }
+        // NOTE: lifeTime is already decremented at L111 — no second decrement here.
 
         // Collision detection
         if (this.isPlayerProjectile) {
-            // Player projectile - check collision with enemies
-            // This is handled by EntityManager checking against enemy meshes
+            // Player projectile collisions handled by EntityManager
         } else {
             // Enemy projectile - check collision with player
             const dist = this.position.distanceTo(player.position);
