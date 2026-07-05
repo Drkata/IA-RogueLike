@@ -8,9 +8,13 @@
 
 Armé de votre bâton magique, progressez de salle en salle, éliminez les sentinelles magiques, esquivez les pièges mortels et personnalisez vos capacités pour descendre le plus profondément possible dans les tréfonds du donjon.
 
+![Aperçu du gameplay - Donjon et Îles Flottantes](public/screenshots/gameplay1.png)
+
 ---
 
 ## 🎮 Fonctionnalités Majeures
+
+![Interface du jeu et combats](public/screenshots/gameplay2.png)
 
 * **🎯 Système de Ricochet 3D & Ciel Ouvert** : Vos projectiles magiques rebondissent de manière réaliste sur le sol et sur un vaste archipel d'**îles célestes flottantes**. Ces îles, suspendues entre 8 et 40 mètres d'altitude, vous permettent d'atteindre des ennemis cachés derrière des abris par des tirs en cloche indirects.
 * **🗺️ Génération Procedurale Alignée** : Chaque niveau est généré dynamiquement et décoré selon 4 biomes uniques (Forêt Enchantée, Cité Médiévale, Cavernes Profondes et Base Abyssale). Les îles flottantes dans le ciel s'adaptent visuellement au biome en temps réel (herbe, pavés, roche volcanique).
