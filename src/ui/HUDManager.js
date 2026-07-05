@@ -83,6 +83,10 @@ export class HUDManager {
         this.gameInfo.updateEnemies(count);
     }
 
+    updateGold(gold) {
+        this.gameInfo.updateGold(gold);
+    }
+
     updateStats(player) {
         this.statsDisplay.update(player);
     }

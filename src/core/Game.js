@@ -9,6 +9,11 @@ import { BossSentinel } from '../entities/BossSentinel.js';
 import { Minimap } from '../systems/Minimap.js';
 import { HUDManager } from '../ui/HUDManager.js';
 import { LootChest } from '../entities/LootChest.js';
+import { SpikeTrap } from '../entities/SpikeTrap.js';
+import { MagicalSentinel } from '../entities/MagicalSentinel.js';
+import { MagicAltar } from '../entities/MagicAltar.js';
+import { HealingFountain } from '../entities/HealingFountain.js';
+import { MagicalShop } from '../entities/MagicalShop.js';
 
 export class Game {
     constructor() {
@@ -415,6 +420,9 @@ export class Game {
                     );
 
                     const chest = new LootChest(position, this.player, () => {
+                        const goldBonus = 25 + Math.floor(Math.random() * 16); // 25-40 Gold
+                        this.player.addGold(goldBonus);
+
                         // Loot Logic
                         const rand = Math.random();
                         let message = "";
@@ -449,6 +457,8 @@ export class Game {
                             message = "Upgrade Found!";
                         }
 
+                        message += ` (+${goldBonus} Or)`;
+
                         console.log("Loot Pickup: " + message);
                         // Show message on HUD (Need to implement HUD message)
                         if (this.hudManager) {
@@ -458,6 +468,38 @@ export class Game {
 
                     this.entityManager.add(chest);
                 });
+            }
+
+            // Spawn Spike Traps
+            if (this.levelManager.levelData.spikeTraps) {
+                this.levelManager.levelData.spikeTraps.forEach(pos => {
+                    const trap = new SpikeTrap(pos.x, pos.z, CONSTANTS.CELL_SIZE);
+                    this.entityManager.add(trap);
+                });
+            }
+
+            // Spawn Magical Sentinels
+            if (this.levelManager.levelData.sentinels) {
+                this.levelManager.levelData.sentinels.forEach(pos => {
+                    const sentinel = new MagicalSentinel(pos.x, pos.z, this.levelManager, this.entityManager, this.currentLevel);
+                    this.entityManager.add(sentinel);
+                });
+            }
+
+            // Spawn Event Altar, Shop or Fountain
+            if (this.levelManager.levelData.eventSpawn) {
+                const pos = this.levelManager.levelData.eventSpawn;
+                const type = this.levelManager.levelData.eventType;
+                if (type === 'altar') {
+                    const altar = new MagicAltar(pos.x, pos.z, CONSTANTS.CELL_SIZE);
+                    this.entityManager.add(altar);
+                } else if (type === 'fountain') {
+                    const fountain = new HealingFountain(pos.x, pos.z, CONSTANTS.CELL_SIZE);
+                    this.entityManager.add(fountain);
+                } else if (type === 'shop') {
+                    const shop = new MagicalShop(pos.x, pos.z, CONSTANTS.CELL_SIZE);
+                    this.entityManager.add(shop);
+                }
             }
         }
     }
@@ -644,14 +686,14 @@ export class Game {
         this.renderer.render(this.scene, this.camera);
     }
 
-    showUpgradeMenu(points = 3, isMidLevel = false) {
+    showUpgradeMenu(points = 2, isMidLevel = false) {
         // 1. Filter upgrades that are not maxed out
         const available = this.upgradeList.filter(item => {
             const sourceObj = item.source === 'weapon' ? this.player.weapon : this.player;
             return sourceObj.stats[item.id] < sourceObj.MAX_LEVEL;
         });
 
-        const choiceCount = 6;
+        const choiceCount = 3;
 
         // Show ALL available upgrades for level-up menu
         if (available.length === 0) {
@@ -1291,14 +1333,14 @@ export class Game {
         this.isMidLevelUpgrade = true; // Treat as mid-level to avoid level increment
         this.upgradePoints = 1;
 
-        // Select 3 random unique upgrades
+        // Select 2 random unique upgrades
         const available = this.upgradeList.filter(item => {
             const sObj = item.source === 'weapon' ? this.player.weapon : this.player;
             return sObj.stats[item.id] < sObj.MAX_LEVEL;
         });
 
         const options = [];
-        while (options.length < 3 && available.length > 0) {
+        while (options.length < 2 && available.length > 0) {
             const idx = Math.floor(Math.random() * available.length);
             options.push(available[idx]);
             available.splice(idx, 1);
@@ -1346,5 +1388,192 @@ export class Game {
             ricochet: '↩️'
         };
         return icons[stat] || '❓';
+    }
+
+    showAltarMenu(altar) {
+        this.currentAltar = altar;
+        this.isPaused = true;
+        this.isRunning = false;
+        document.exitPointerLock();
+        document.body.style.cursor = 'default';
+        document.getElementById('altar-menu').style.display = 'flex';
+    }
+
+    selectAltarPact(pact) {
+        if (!this.currentAltar) return;
+
+        if (pact === 'blood') {
+            const hpLoss = Math.round(this.player.maxHealth * 0.25);
+            this.player.pactHpReduction = (this.player.pactHpReduction || 0) + hpLoss;
+            this.player.recalculateStats();
+
+            this.player.weapon.baseDamage *= 1.4;
+            this.player.weapon.recalculateStats();
+
+            this.hudManager.showMessage("Pacte de Sang scellé : +40% dégâts, -25% PV max !");
+        } else if (pact === 'armor') {
+            this.player.pactSpeedMultiplier = (this.player.pactSpeedMultiplier || 1.0) * 0.85;
+            this.player.pactArmorBonus = (this.player.pactArmorBonus || 0) + 0.40;
+            this.player.recalculateStats();
+
+            this.hudManager.showMessage("Pacte d'Armure scellé : +40 Armure, -15% vitesse !");
+        }
+
+        this.player.updateHUD();
+        this.currentAltar.deactivate();
+        this.closeAltarMenu();
+    }
+
+    closeAltarMenu() {
+        this.isPaused = false;
+        this.isRunning = true;
+        document.getElementById('altar-menu').style.display = 'none';
+        document.body.requestPointerLock();
+        this.currentAltar = null;
+    }
+
+    showShopFeedback(message, isError = false) {
+        const el = document.getElementById('shop-feedback');
+        if (el) {
+            el.textContent = message;
+            el.style.color = isError ? '#ff3333' : '#00ff00';
+            el.style.textShadow = isError ? '0 0 8px rgba(255, 51, 51, 0.5)' : '0 0 8px rgba(0, 255, 0, 0.5)';
+            el.style.opacity = '1';
+            
+            if (this.shopFeedbackTimeout) {
+                clearTimeout(this.shopFeedbackTimeout);
+            }
+            
+            this.shopFeedbackTimeout = setTimeout(() => {
+                el.style.opacity = '0';
+            }, 3500);
+        }
+    }
+
+    showShopMenu(shop) {
+        console.log("DEBUG: showShopMenu called!");
+        this.currentShop = shop;
+        this.isPaused = true;
+        this.isRunning = false;
+        document.exitPointerLock();
+        document.body.style.cursor = 'default';
+        
+        const shopGoldDisplay = document.getElementById('shop-gold-value');
+        if (shopGoldDisplay) {
+            shopGoldDisplay.textContent = this.player.gold || 0;
+        }
+
+        const feedbackEl = document.getElementById('shop-feedback');
+        if (feedbackEl) {
+            feedbackEl.textContent = '';
+            feedbackEl.style.opacity = '0';
+        }
+
+        document.getElementById('shop-menu').style.display = 'flex';
+        console.log("DEBUG: shop-menu element style.display set to flex!");
+    }
+
+    buyShopItem(itemType) {
+        console.log("DEBUG: buyShopItem called with type:", itemType);
+        if (!this.player) {
+            console.error("DEBUG: Player is not defined!");
+            return;
+        }
+
+        const prices = {
+            potion: 20,
+            ammo: 15,
+            shield: 25,
+            upgrade: 50
+        };
+
+        const cost = prices[itemType];
+        console.log("DEBUG: Player gold:", this.player.gold, "Cost:", cost);
+
+        if (this.player.gold < cost) {
+            this.showShopFeedback("Pas assez d'or pour cet achat !", true);
+            return;
+        }
+
+        if (itemType === 'potion') {
+            if (this.player.health >= this.player.maxHealth) {
+                this.showShopFeedback("Vie déjà au maximum !", true);
+                return;
+            }
+            this.player.spendGold(cost);
+            this.player.heal(50);
+            this.showShopFeedback("Achat réussi : +50 PV !");
+        } else if (itemType === 'ammo') {
+            this.player.spendGold(cost);
+            this.player.weapon.reserveAmmo = Math.min(400, this.player.weapon.reserveAmmo + 150);
+            this.player.updateHUD();
+            this.showShopFeedback("Achat réussi : +150 Munitions !");
+        } else if (itemType === 'shield') {
+            this.player.spendGold(cost);
+            this.player.addShield(30);
+            this.showShopFeedback("Achat réussi : +30 Bouclier !");
+        } else if (itemType === 'upgrade') {
+            const available = this.upgradeList.filter(item => {
+                const sObj = item.source === 'weapon' ? this.player.weapon : this.player;
+                return sObj.stats[item.id] < sObj.MAX_LEVEL;
+            });
+            console.log("DEBUG: Available upgrades:", available);
+
+            if (available.length === 0) {
+                this.showShopFeedback("Toutes les améliorations sont déjà au maximum !", true);
+                return;
+            }
+
+            const randomUpgrade = available[Math.floor(Math.random() * available.length)];
+            const sObj = randomUpgrade.source === 'weapon' ? this.player.weapon : this.player;
+            console.log("DEBUG: Selected random upgrade:", randomUpgrade);
+            
+            if (sObj.upgrade(randomUpgrade.id)) {
+                this.player.spendGold(cost);
+                
+                const labels = {
+                    damage: 'Dégâts',
+                    fireRate: 'Cadence de tir',
+                    arc: 'Dispersion des tirs',
+                    reload: 'Vitesse de rechargement',
+                    ammo: 'Munitions max',
+                    range: 'Portée',
+                    projectileSpeed: 'Vitesse des projectiles',
+                    maxHealth: 'Points de vie max',
+                    armor: 'Armure',
+                    vampirism: 'Vol de vie',
+                    regen: 'Régénération de vie',
+                    bulletCount: 'Tir multiple',
+                    formatting: 'Transpercement',
+                    piercing: 'Transpercement',
+                    critChance: 'Chances de critique',
+                    critDamage: 'Dégâts des critiques',
+                    speed: 'Vitesse',
+                    knockback: 'Recul',
+                    explosion: 'Explosions'
+                };
+                const upgradeName = labels[randomUpgrade.id] || randomUpgrade.id;
+                this.showShopFeedback(`Achat réussi : Amélioration obtenue ➔ +1 ${upgradeName} !`);
+            } else {
+                console.error("DEBUG: sObj.upgrade failed for stat:", randomUpgrade.id);
+                this.showShopFeedback("Erreur lors de l'application de l'amélioration.", true);
+            }
+        }
+
+        // Always update gold display inside shop UI
+        const shopGoldDisplay = document.getElementById('shop-gold-value');
+        if (shopGoldDisplay) {
+            console.log("DEBUG: Updating shop UI gold value to:", this.player.gold);
+            shopGoldDisplay.textContent = this.player.gold || 0;
+        }
+    }
+
+    closeShopMenu() {
+        console.log("DEBUG: closeShopMenu called!");
+        this.isPaused = false;
+        this.isRunning = true;
+        document.getElementById('shop-menu').style.display = 'none';
+        document.body.requestPointerLock();
+        this.currentShop = null;
     }
 }

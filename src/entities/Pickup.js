@@ -7,7 +7,8 @@ export class Pickup {
     static materials = {
         health: new THREE.MeshLambertMaterial({ color: 0xff0000, emissive: 0xaa0000, emissiveIntensity: 1.0 }),
         ammo: new THREE.MeshLambertMaterial({ color: 0x00ff00, emissive: 0x00aa00, emissiveIntensity: 1.0 }),
-        upgrade: new THREE.MeshLambertMaterial({ color: 0x9933ff, emissive: 0x6600cc, emissiveIntensity: 1.0 }) // Purple
+        upgrade: new THREE.MeshLambertMaterial({ color: 0x9933ff, emissive: 0x6600cc, emissiveIntensity: 1.0 }), // Purple
+        gold: new THREE.MeshLambertMaterial({ color: 0xffd700, emissive: 0x886600, emissiveIntensity: 1.0 }) // Gold
     };
 
     constructor(position, type, value) {
@@ -55,6 +56,11 @@ export class Pickup {
             if (window.game) {
                 window.game.showUpgradeMenu(1, true); // 1 point, mid-level
             }
+        } else if (this.type === 'gold') {
+            player.addGold(this.value);
+            this.isDead = true;
+            soundManager.playPickup();
+            console.log("Picked up Gold: " + this.value);
         }
     }
 }

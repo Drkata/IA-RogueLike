@@ -31,6 +31,15 @@ export class Player {
         this.vampirism = 0; // Life steal percentage
         this.regen = 0; // HP per second
         this.speed = CONSTANTS.PLAYER_SPEED;
+        this.slowMultiplier = 1.0;
+        this.slowTimer = 0;
+
+        // Pact permanent modifiers
+        this.pactHpReduction = 0;
+        this.pactSpeedMultiplier = 1.0;
+        this.pactArmorBonus = 0;
+
+        this.gold = 0;
 
         // Buff States
         this.isBerserk = false;
@@ -89,8 +98,8 @@ export class Player {
             if (remainingDamage <= 0) return; // All absorbed
         }
 
-        // Apply armor reduction (max 50%)
-        const reduction = Math.min(0.5, this.armor); // 5% per armor level
+        // Apply armor reduction (max 80%)
+        const reduction = Math.min(0.8, this.armor);
         const finalDamage = remainingDamage * (1 - reduction);
         this.sessionStats.damageTaken += finalDamage;
 
@@ -190,6 +199,21 @@ export class Player {
         this.updateHUD();
     }
 
+    applySlow(multiplier, duration) {
+        this.slowMultiplier = multiplier;
+        this.slowTimer = duration;
+    }
+
+    addGold(amount) {
+        this.gold = (this.gold || 0) + amount;
+        this.updateHUD();
+    }
+
+    spendGold(amount) {
+        this.gold = Math.max(0, (this.gold || 0) - amount);
+        this.updateHUD();
+    }
+
     activateBerserk(duration) {
         this.isBerserk = true;
         this.berserkTimer = duration;
@@ -233,6 +257,7 @@ export class Player {
             this.hudManager.updateHealth(this.health, this.maxHealth, this.shield);
             this.hudManager.updateAmmo(this.weapon.currentAmmo, this.weapon.reserveAmmo);
             this.hudManager.updateStats(this);
+            this.hudManager.updateGold(this.gold || 0);
             this.hudManager.updateBuffs({
                 berserk: {
                     active: this.isBerserk,
@@ -245,6 +270,14 @@ export class Player {
 
     update(dt) {
         if (this.invulnerabilityTimer > 0) this.invulnerabilityTimer -= dt;
+
+        // Slow Timer
+        if (this.slowTimer > 0) {
+            this.slowTimer -= dt;
+            if (this.slowTimer <= 0) {
+                this.slowMultiplier = 1.0;
+            }
+        }
 
         // Berserk Timer
         if (this.isBerserk) {
@@ -426,7 +459,7 @@ export class Player {
     }
 
     handleMovement(dt) {
-        const speed = this.speed;
+        const speed = this.speed * (this.slowMultiplier || 1.0);
         const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
         const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
 
@@ -529,15 +562,18 @@ export class Player {
     recalculateStats() {
         // Max Health: +25 per level (Buffed from 20)
         const oldMax = this.maxHealth;
-        this.maxHealth = 100 + (this.stats.maxHealth * 25);
+        this.maxHealth = Math.max(25, 100 + (this.stats.maxHealth * 25) - (this.pactHpReduction || 0));
 
         // Heal the difference so upgrade feels good immediately
         if (this.maxHealth > oldMax) {
             this.health += (this.maxHealth - oldMax);
         }
+        if (this.health > this.maxHealth) {
+            this.health = this.maxHealth;
+        }
 
-        // Armor: +3.0% per level (Nerfed from 4%)
-        this.armor = this.stats.armor * 0.03;
+        // Armor: +3.0% per level (Nerfed from 4%) + pact bonus
+        this.armor = this.stats.armor * 0.03 + (this.pactArmorBonus || 0);
 
         // Vampirism: +2% per level (max 20%)
         this.vampirism = this.stats.vampirism * 0.02;
@@ -545,8 +581,8 @@ export class Player {
         // Regeneration: +0.3 HP/s per level (Nerfed from 0.5)
         this.regen = this.stats.regen * 0.3;
 
-        // Speed: +8% per level (Buffed from 5%)
-        this.speed = CONSTANTS.PLAYER_SPEED * (1 + this.stats.speed * 0.08);
+        // Speed: +8% per level (Buffed from 5%) * pact speed multiplier
+        this.speed = CONSTANTS.PLAYER_SPEED * (1 + this.stats.speed * 0.08) * (this.pactSpeedMultiplier || 1.0);
 
         this.updateHUD();
     }

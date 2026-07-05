@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CONSTANTS } from '../core/Constants.js';
 import { soundManager } from '../systems/SoundManager.js';
 
 export class Projectile {
@@ -143,6 +144,64 @@ export class Projectile {
                 } else {
                     this.isDead = true;
                     return;
+                }
+            }
+        }
+
+        // Floor Collision & Ricochet
+        const floorHeight = 0.05;
+
+        if (nextPos.y <= floorHeight) {
+            if (this.ricochet > 0) {
+                this.ricochet--;
+                
+                // Reflect vertical direction and velocity
+                this.direction.y *= -1;
+                if (this.velocity) this.velocity.y *= -1;
+
+                // Move back to safe boundary
+                nextPos.y = floorHeight + 0.01;
+
+                this.distanceTraveled = 0;
+                this.damage *= 1.25;
+            } else {
+                this.isDead = true;
+                return;
+            }
+        }
+
+        // Bounding Box (AABB) Sky Structures Collision & Ricochet
+        if (this.levelManager && this.levelManager.skyStructures) {
+            for (const box of this.levelManager.skyStructures) {
+                if (box.containsPoint(nextPos)) {
+                    if (this.ricochet > 0) {
+                        this.ricochet--;
+
+                        const currentInX = this.position.x >= box.min.x && this.position.x <= box.max.x;
+                        const currentInY = this.position.y >= box.min.y && this.position.y <= box.max.y;
+                        const currentInZ = this.position.z >= box.min.z && this.position.z <= box.max.z;
+
+                        if (!currentInX) {
+                            this.direction.x *= -1;
+                            if (this.velocity) this.velocity.x *= -1;
+                        }
+                        if (!currentInY) {
+                            this.direction.y *= -1;
+                            if (this.velocity) this.velocity.y *= -1;
+                        }
+                        if (!currentInZ) {
+                            this.direction.z *= -1;
+                            if (this.velocity) this.velocity.z *= -1;
+                        }
+
+                        nextPos.copy(this.position);
+                        this.distanceTraveled = 0;
+                        this.damage *= 1.25;
+                        break;
+                    } else {
+                        this.isDead = true;
+                        return;
+                    }
                 }
             }
         }

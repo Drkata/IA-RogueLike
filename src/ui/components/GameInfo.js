@@ -18,6 +18,10 @@ export class GameInfo {
                 <span>HOSTILES</span>
                 <span id="enemies-display" style="color: #ff3333">0</span>
             </div>
+            <div class="info-row">
+                <span>GOLD</span>
+                <span id="gold-display" style="color: #ffd700">0</span>
+            </div>
         `;
         this.element.appendChild(this.infoContainer);
 
@@ -25,6 +29,7 @@ export class GameInfo {
 
         this.levelEl = this.element.querySelector('#level-display');
         this.enemiesEl = this.element.querySelector('#enemies-display');
+        this.goldEl = this.element.querySelector('#gold-display');
     }
 
     updateLevel(level) {
@@ -33,6 +38,10 @@ export class GameInfo {
 
     updateEnemies(count) {
         this.enemiesEl.textContent = count;
+    }
+
+    updateGold(gold) {
+        this.goldEl.textContent = gold;
     }
 
     getMinimapContainer() {

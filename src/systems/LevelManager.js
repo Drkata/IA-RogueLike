@@ -17,6 +17,7 @@ export class LevelManager {
         this.currentTheme = 0;
         this.currentLevelIndex = 1;
         this.decorationPositions = []; // Track decoration positions
+        this.skyStructures = []; // Bounding boxes for sky platforms
         this.themeManager = new ThemeManager();
     }
 
@@ -36,28 +37,10 @@ export class LevelManager {
 
         this.loadLevelData(levelData);
 
-        // Generate Chest Positions (2-3 per level, excluding Arena)
+        // Generate Chest Positions (using the dedicated treasure spawn room)
         this.chestPositions = [];
-        if (levelIndex % 10 !== 0 && levelData.rooms) {
-            const roomCount = levelData.rooms.length;
-            if (roomCount > 1) {
-                const numChests = Math.floor(Math.random() * 2) + 2; // 2 or 3
-                // Shuffle rooms (excluding first/safe room)
-                const availableRooms = levelData.rooms.slice(1).sort(() => 0.5 - Math.random());
-
-                for (let i = 0; i < Math.min(numChests, availableRooms.length); i++) {
-                    const room = availableRooms[i];
-                    // Pick a random corner
-                    const corners = [
-                        { x: room.x + 1, z: room.z + 1 },
-                        { x: room.x + room.w - 2, z: room.z + 1 },
-                        { x: room.x + 1, z: room.z + room.h - 2 },
-                        { x: room.x + room.w - 2, z: room.z + room.h - 2 }
-                    ];
-                    const corner = corners[Math.floor(Math.random() * corners.length)];
-                    this.chestPositions.push(corner);
-                }
-            }
+        if (levelIndex % 10 !== 0 && levelData.treasureSpawn) {
+            this.chestPositions.push(levelData.treasureSpawn);
         }
 
         return levelData.playerStart;
@@ -139,20 +122,20 @@ export class LevelManager {
     buildLevel() {
         // Clear previous level
         this.levelMeshGroup.clear();
+        this.skyStructures = [];
 
         const mats = this.getThemeMaterials();
         const wallGeo = new THREE.BoxGeometry(this.cellSize, CONSTANTS.WALL_HEIGHT, this.cellSize);
 
         // Prepare instance data
         const wallInstances = mats.walls.map(() => []);
+        const eventWallMatrices = [];
+        const treasureWallMatrices = [];
 
         for (let y = 0; y < this.height; y++) {
             for (let x = 0; x < this.width; x++) {
                 const index = y * this.width + x;
                 if (this.data[index] === 1) {
-                    // Pick random wall material index
-                    const matIndex = Math.floor(Math.random() * mats.walls.length);
-
                     const posX = x * this.cellSize + this.cellSize / 2;
                     const posY = CONSTANTS.WALL_HEIGHT / 2;
                     const posZ = y * this.cellSize + this.cellSize / 2;
@@ -161,12 +144,20 @@ export class LevelManager {
                     dummy.position.set(posX, posY, posZ);
                     dummy.updateMatrix();
 
-                    wallInstances[matIndex].push(dummy.matrix.clone());
+                    const roomType = this.getRoomTypeForWall(x, y);
+                    if (roomType === 'event') {
+                        eventWallMatrices.push(dummy.matrix.clone());
+                    } else if (roomType === 'treasure') {
+                        treasureWallMatrices.push(dummy.matrix.clone());
+                    } else {
+                        const matIndex = Math.floor(Math.random() * mats.walls.length);
+                        wallInstances[matIndex].push(dummy.matrix.clone());
+                    }
                 }
             }
         }
 
-        // Create InstancedMeshes
+        // Create standard InstancedMeshes
         wallInstances.forEach((matrices, i) => {
             if (matrices.length === 0) return;
 
@@ -181,6 +172,44 @@ export class LevelManager {
             mesh.receiveShadow = true;
             this.levelMeshGroup.add(mesh);
         });
+
+        // Create Event Room InstancedMesh (glowing purple obsidian walls)
+        if (eventWallMatrices.length > 0) {
+            const eventWallMat = new THREE.MeshStandardMaterial({
+                color: 0x180c26, // Very dark purple
+                emissive: 0x8a2be2, // Purple glow
+                emissiveIntensity: 0.25,
+                roughness: 0.3,
+                metalness: 0.8
+            });
+            const eventMesh = new THREE.InstancedMesh(wallGeo, eventWallMat, eventWallMatrices.length);
+            for (let j = 0; j < eventWallMatrices.length; j++) {
+                eventMesh.setMatrixAt(j, eventWallMatrices[j]);
+            }
+            eventMesh.instanceMatrix.needsUpdate = true;
+            eventMesh.castShadow = true;
+            eventMesh.receiveShadow = true;
+            this.levelMeshGroup.add(eventMesh);
+        }
+
+        // Create Treasure Room InstancedMesh (glimmering golden brass walls)
+        if (treasureWallMatrices.length > 0) {
+            const treasureWallMat = new THREE.MeshStandardMaterial({
+                color: 0x3d290d, // Golden brown
+                emissive: 0xd4af37, // Gold glow
+                emissiveIntensity: 0.2,
+                roughness: 0.2,
+                metalness: 0.9
+            });
+            const treasureMesh = new THREE.InstancedMesh(wallGeo, treasureWallMat, treasureWallMatrices.length);
+            for (let j = 0; j < treasureWallMatrices.length; j++) {
+                treasureMesh.setMatrixAt(j, treasureWallMatrices[j]);
+            }
+            treasureMesh.instanceMatrix.needsUpdate = true;
+            treasureMesh.castShadow = true;
+            treasureMesh.receiveShadow = true;
+            this.levelMeshGroup.add(treasureMesh);
+        }
 
         // Floor
         const floorGeo = new THREE.PlaneGeometry(this.width * this.cellSize, this.height * this.cellSize);
@@ -200,6 +229,190 @@ export class LevelManager {
         // Decorations
         if (this.levelData.rooms) {
             this.addDecorations(this.levelData.rooms, this.levelData.playerStart);
+        }
+
+        // Spawn Floating Sky Structures in rooms
+        if (this.levelData.rooms) {
+            const theme = this.themeManager.getTheme(this.currentLevelIndex);
+            const capColor = theme.floorColor;
+
+            const capMat = new THREE.MeshStandardMaterial({
+                color: capColor,
+                roughness: 0.8,
+                metalness: 0.1
+            });
+
+            const stoneMat = new THREE.MeshStandardMaterial({
+                color: 0x2b2e33, // Slate grey rock
+                roughness: 0.9,
+                metalness: 0.15
+            });
+
+            const vineMat = new THREE.MeshStandardMaterial({
+                color: this.currentTheme === 3 ? 0x8b0000 : 0x2e8b57, // Crimson for Demonic, Forest Green for others
+                roughness: 0.9,
+                metalness: 0.1
+            });
+            
+            const runeMat = new THREE.MeshStandardMaterial({
+                color: 0x051a24,
+                emissive: this.currentTheme === 1 ? 0x9400d3 : 0x00dfff, // Purple or Cyan glow
+                emissiveIntensity: 1.8,
+                roughness: 0.2,
+                metalness: 0.9
+            });
+
+            const mapW = this.width * this.cellSize;
+            const mapH = this.height * this.cellSize;
+
+            // Spawn 60 to 90 floating islands across the expanded map surface (including the outer sky)
+            const totalIslands = 60 + Math.floor(Math.random() * 30);
+            for (let k = 0; k < totalIslands; k++) {
+                const blockW = 2.0 + Math.random() * 4.0;
+                const blockH = 1.0 + Math.random() * 2.0;
+                const blockD = 2.0 + Math.random() * 4.0;
+
+                // Spawns with +100% margin around the map boundaries
+                const posX = -mapW / 2 + Math.random() * (mapW * 2);
+                const posZ = -mapH / 2 + Math.random() * (mapH * 2);
+                const posY = 8.0 + Math.random() * 32.0;
+
+                    // Create group for the entire sky structure
+                    const structureGroup = new THREE.Group();
+                    structureGroup.position.set(posX, posY, posZ);
+
+                    // 1. Central Platform (The rocky base)
+                    const blockGeo = new THREE.BoxGeometry(blockW, blockH, blockD);
+                    const mainMesh = new THREE.Mesh(blockGeo, stoneMat);
+                    mainMesh.castShadow = true;
+                    mainMesh.receiveShadow = true;
+                    structureGroup.add(mainMesh);
+
+                    // 2. Top Grass/Cobblestone Cap (Matching the map style)
+                    const capGeo = new THREE.BoxGeometry(blockW + 0.1, 0.15, blockD + 0.1);
+                    const capMesh = new THREE.Mesh(capGeo, capMat);
+                    capMesh.position.y = blockH / 2 + 0.055;
+                    capMesh.castShadow = true;
+                    capMesh.receiveShadow = true;
+                    structureGroup.add(capMesh);
+
+                    // 3. Tapered Rocky Underside (Cone/Pyramid underneath to form the floating island V-shape)
+                    const undersideW = blockW * 0.7;
+                    const undersideD = blockD * 0.7;
+                    const undersideH = blockH * 1.5;
+                    
+                    const coneGeo = new THREE.ConeGeometry((undersideW + undersideD) / 4, undersideH, 4);
+                    const coneMesh = new THREE.Mesh(coneGeo, stoneMat);
+                    coneMesh.rotation.x = Math.PI;
+                    coneMesh.position.y = -(blockH / 2 + undersideH / 2);
+                    coneMesh.castShadow = true;
+                    coneMesh.receiveShadow = true;
+                    structureGroup.add(coneMesh);
+
+                    // Add 1-2 smaller auxiliary cones underneath for jagged realism
+                    const subConesCount = 1 + Math.floor(Math.random() * 2);
+                    for (let sc = 0; sc < subConesCount; sc++) {
+                        const scR = (blockW + blockD) * 0.15;
+                        const scH = undersideH * (0.5 + Math.random() * 0.5);
+                        const scGeo = new THREE.ConeGeometry(scR, scH, 4);
+                        const scMesh = new THREE.Mesh(scGeo, stoneMat);
+                        scMesh.rotation.x = Math.PI;
+                        
+                        scMesh.position.set(
+                            (Math.random() - 0.5) * blockW * 0.4,
+                            -(blockH / 2 + scH / 2),
+                            (Math.random() - 0.5) * blockD * 0.4
+                        );
+                        scMesh.castShadow = true;
+                        scMesh.receiveShadow = true;
+                        structureGroup.add(scMesh);
+                    }
+
+                    // 4. Satellite Floating Rocks (small debris orbiting)
+                    const shardCount = 1 + Math.floor(Math.random() * 2);
+                    for (let s = 0; s < shardCount; s++) {
+                        const sw = blockW * (0.25 + Math.random() * 0.2);
+                        const sh = blockH * (0.3 + Math.random() * 0.3);
+                        const sd = blockD * (0.25 + Math.random() * 0.2);
+
+                        const shardGeo = new THREE.BoxGeometry(sw, sh, sd);
+                        const shard = new THREE.Mesh(shardGeo, stoneMat);
+                        
+                        const shardCapGeo = new THREE.BoxGeometry(sw + 0.05, 0.05, sd + 0.05);
+                        const shardCap = new THREE.Mesh(shardCapGeo, capMat);
+                        shardCap.position.y = sh / 2 + 0.02;
+                        shard.add(shardCap);
+
+                        const angle = Math.random() * Math.PI * 2;
+                        const dist = (blockW + blockD) / 4 + 0.5 + Math.random() * 0.5;
+                        shard.position.set(
+                            Math.sin(angle) * dist,
+                            (Math.random() - 0.5) * 0.5,
+                            Math.cos(angle) * dist
+                        );
+                        shard.rotation.set(
+                            (Math.random() - 0.5) * 0.5,
+                            (Math.random() - 0.5) * 0.5,
+                            (Math.random() - 0.5) * 0.5
+                        );
+                        shard.castShadow = true;
+                        shard.receiveShadow = true;
+                        structureGroup.add(shard);
+                    }
+
+                    // 5. Hanging Vines/Roots from the sides
+                    const vineCount = 3 + Math.floor(Math.random() * 4);
+                    for (let v = 0; v < vineCount; v++) {
+                        const vineH = 0.5 + Math.random() * 1.5;
+                        const vineGeo = new THREE.CylinderGeometry(0.03, 0.015, vineH, 4);
+                        const vine = new THREE.Mesh(vineGeo, vineMat);
+                        
+                        const edgeAngle = Math.random() * Math.PI * 2;
+                        const edgeX = Math.sin(edgeAngle) * (blockW / 2 + 0.05);
+                        const edgeZ = Math.cos(edgeAngle) * (blockD / 2 + 0.05);
+                        
+                        vine.position.set(edgeX, -vineH / 2, edgeZ);
+                        vine.rotation.z = (Math.random() - 0.5) * 0.3;
+                        vine.rotation.x = (Math.random() - 0.5) * 0.3;
+                        
+                        vine.castShadow = true;
+                        structureGroup.add(vine);
+                    }
+
+                    // 6. Glowing Magical Core (Crystal powering the island)
+                    const coreGeo = new THREE.OctahedronGeometry(0.18 + Math.random() * 0.08, 0);
+                    const core = new THREE.Mesh(coreGeo, runeMat);
+                    core.position.set(0, blockH / 2 + 0.2, 0);
+                    core.rotation.y = Math.random() * Math.PI;
+                    structureGroup.add(core);
+
+                    // 7. Glowing Runic Engravings
+                    const sideRunesCount = 2 + Math.floor(Math.random() * 2);
+                    for (let r = 0; r < sideRunesCount; r++) {
+                        const runeGeo = new THREE.BoxGeometry(0.04, blockH * 0.5, 0.015);
+                        const rune = new THREE.Mesh(runeGeo, runeMat);
+                        
+                        const face = Math.floor(Math.random() * 4);
+                        if (face === 0) {
+                            rune.position.set((Math.random() - 0.5) * blockW * 0.6, 0, blockD / 2 + 0.01);
+                        } else if (face === 1) {
+                            rune.position.set((Math.random() - 0.5) * blockW * 0.6, 0, -blockD / 2 - 0.01);
+                        } else if (face === 2) {
+                            rune.position.set(blockW / 2 + 0.01, 0, (Math.random() - 0.5) * blockD * 0.6);
+                            rune.rotation.y = Math.PI / 2;
+                        } else {
+                            rune.position.set(-blockW / 2 - 0.01, 0, (Math.random() - 0.5) * blockD * 0.6);
+                            rune.rotation.y = Math.PI / 2;
+                        }
+                        structureGroup.add(rune);
+                    }
+
+                    this.levelMeshGroup.add(structureGroup);
+
+                    // Physical Bounding Box
+                    const box = new THREE.Box3().setFromObject(structureGroup);
+                    this.skyStructures.push(box);
+            }
         }
     }
 
@@ -416,5 +629,31 @@ export class LevelManager {
             }
         }
         return false;
+    }
+
+    getRoomTypeForWall(x, z) {
+        if (!this.levelData || !this.levelData.rooms) return null;
+
+        // Check 8 neighbors for adjacent floor cells of special rooms
+        for (let dz = -1; dz <= 1; dz++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                const nx = x + dx;
+                const nz = z + dz;
+                if (nx >= 0 && nx < this.width && nz >= 0 && nz < this.height) {
+                    const idx = nz * this.width + nx;
+                    if (this.data[idx] === 0) {
+                        for (const room of this.levelData.rooms) {
+                            if (nx >= room.x && nx < room.x + room.w &&
+                                nz >= room.z && nz < room.z + room.h) {
+                                if (room.type === 'event' || room.type === 'treasure') {
+                                    return room.type;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return null;
     }
 }

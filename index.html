@@ -54,9 +54,6 @@
       pointer-events: none;
     }
 
-    #upgrade-menu {
-      /* Handled in hud.css */
-    }
 
     /* Force cursor to be visible when menu is shown */
     body:has(#upgrade-menu[style*="display: flex"]) {
@@ -235,6 +232,74 @@
       </div>
 
       <button id="next-level-btn" disabled>Next Level</button>
+    </div>
+  </div>
+
+  <div id="altar-menu" style="display: none;">
+    <div id="altar-content-wrapper">
+      <h2 style="font-family: 'MedievalSharp', serif; color: #9400d3; font-size: 2.2em; text-shadow: 0 0 10px rgba(148, 0, 211, 0.5); margin-bottom: 5px;">Autel du Chaos</h2>
+      <p style="font-family: 'Courier New', monospace; color: #ddd; font-size: 14px; margin-bottom: 20px;">Proposez une offrande pour sceller un pacte magique :</p>
+      
+      <div class="altar-grid">
+        <div class="altar-card" id="altar-card-blood">
+          <div class="altar-card-icon">🩸</div>
+          <h3>Pacte de Sang</h3>
+          <p class="desc">Sacrifiez 25% de vos PV maximum pour augmenter de 40% les dégâts de votre bâton magique.</p>
+          <button onclick="window.game.selectAltarPact('blood')">Accepter le Pacte</button>
+        </div>
+        <div class="altar-card" id="altar-card-armor">
+          <div class="altar-card-icon">🛡️</div>
+          <h3>Pacte d'Armure</h3>
+          <p class="desc">Réduisez votre vitesse de déplacement de 15% pour obtenir +40 d'Armure de manière permanente.</p>
+          <button onclick="window.game.selectAltarPact('armor')">Accepter le Pacte</button>
+        </div>
+      </div>
+      
+      <button id="close-altar-btn" onclick="window.game.closeAltarMenu()">Refuser et Partir</button>
+    </div>
+  </div>
+
+  <div id="shop-menu" style="display: none;">
+    <div id="shop-content-wrapper">
+      <h2 style="font-family: 'MedievalSharp', serif; color: #00bfff; font-size: 2.2em; text-shadow: 0 0 10px rgba(0, 191, 255, 0.5); margin-bottom: 5px;">Marchand Mystique</h2>
+      <p style="font-family: 'Courier New', monospace; color: #ddd; font-size: 14px; margin-bottom: 10px;">Échangez votre or contre des reliques et des élixirs :</p>
+      <div id="shop-gold-container" style="font-family: 'Courier New', monospace; font-size: 1.1em; color: #ffd700; font-weight: bold; margin-bottom: 10px; text-shadow: 1px 1px 0 #000;">
+        Votre Or : <span id="shop-gold-value">0</span> 🪙
+      </div>
+      <div id="shop-feedback" style="font-family: 'Courier New', monospace; font-size: 1.2em; min-height: 24px; color: #00ff00; font-weight: bold; margin-bottom: 15px; text-shadow: 0 0 8px rgba(0, 255, 0, 0.5); opacity: 0; transition: opacity 0.3s;"></div>
+      
+      <div class="shop-grid">
+        <div class="shop-card" id="shop-card-potion">
+          <div class="shop-card-icon">🧪</div>
+          <h3>Élixir de Vie</h3>
+          <p class="desc">Restaure instantanément 50 points de vie.</p>
+          <div class="shop-price">Prix : 20 🪙</div>
+          <button onclick="window.game.buyShopItem('potion')">Acheter</button>
+        </div>
+        <div class="shop-card" id="shop-card-ammo">
+          <div class="shop-card-icon">🎒</div>
+          <h3>Sac de Munitions</h3>
+          <p class="desc">Restaure 150 projectiles magiques de réserve.</p>
+          <div class="shop-price">Prix : 15 🪙</div>
+          <button onclick="window.game.buyShopItem('ammo')">Acheter</button>
+        </div>
+        <div class="shop-card" id="shop-card-shield">
+          <div class="shop-card-icon">🛡️</div>
+          <h3>Sceau de Protection</h3>
+          <p class="desc">Confère un bouclier d'énergie de 30 points.</p>
+          <div class="shop-price">Prix : 25 🪙</div>
+          <button onclick="window.game.buyShopItem('shield')">Acheter</button>
+        </div>
+        <div class="shop-card" id="shop-card-upgrade">
+          <div class="shop-card-icon">⚡</div>
+          <h3>Fragment d'Âme</h3>
+          <p class="desc">Gagnez immédiatement 1 point d'amélioration.</p>
+          <div class="shop-price">Prix : 50 🪙</div>
+          <button onclick="window.game.buyShopItem('upgrade')">Acheter</button>
+        </div>
+      </div>
+      
+      <button id="close-shop-btn" onclick="window.game.closeShopMenu()">Fermer la Boutique</button>
     </div>
   </div>
 

@@ -217,9 +217,24 @@ export class SoundManager {
 
             osc.connect(gain);
             gain.connect(this.ctx.destination);
-            osc.start(now + i * 0.05);
-            osc.stop(now + i * 0.05 + 0.3);
         });
+    }
+
+    playExplosion() {
+        this.ensureContext();
+        const buffer = this.createNoiseBuffer();
+        const noise = this.ctx.createBufferSource();
+        noise.buffer = buffer;
+
+        const noiseGain = this.ctx.createGain();
+        noiseGain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+        noiseGain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
+
+        noise.connect(noiseGain);
+        noiseGain.connect(this.ctx.destination);
+
+        noise.start();
+        noise.stop(this.ctx.currentTime + 0.5);
     }
 }
 

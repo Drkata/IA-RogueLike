@@ -225,17 +225,38 @@ export class EntityManager {
 
                 const dist = enemy1.position.distanceTo(enemy2.position);
 
-                if (dist < separationRadius && dist > 0) {
+                if (dist < separationRadius && dist > 0.01) {
                     const separation = enemy1.position.clone().sub(enemy2.position);
                     separation.y = 0;
-                    separation.normalize();
+                    if (separation.lengthSq() > 0) {
+                        separation.normalize();
+                    } else {
+                        separation.set(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
+                    }
 
                     const pushForce = (separationRadius - dist) * 0.5;
 
                     const newPos1 = enemy1.position.clone().add(separation.clone().multiplyScalar(pushForce));
                     const newPos2 = enemy2.position.clone().sub(separation.clone().multiplyScalar(pushForce));
 
-                    // Only push if valid (check walls)
+                    if (enemy1.ai && enemy1.ai.canMoveTo(newPos1)) {
+                        enemy1.position.copy(newPos1);
+                        enemy1.mesh.position.copy(enemy1.position);
+                        enemy1.mesh.position.y -= 0.85;
+                    }
+
+                    if (enemy2.ai && enemy2.ai.canMoveTo(newPos2)) {
+                        enemy2.position.copy(newPos2);
+                        enemy2.mesh.position.copy(enemy2.position);
+                        enemy2.mesh.position.y -= 0.85;
+                    }
+                } else if (dist <= 0.01) {
+                    const separation = new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
+                    const pushForce = separationRadius * 0.5;
+
+                    const newPos1 = enemy1.position.clone().add(separation.clone().multiplyScalar(pushForce));
+                    const newPos2 = enemy2.position.clone().sub(separation.clone().multiplyScalar(pushForce));
+
                     if (enemy1.ai && enemy1.ai.canMoveTo(newPos1)) {
                         enemy1.position.copy(newPos1);
                         enemy1.mesh.position.copy(enemy1.position);

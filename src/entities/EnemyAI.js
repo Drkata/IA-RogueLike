@@ -70,10 +70,15 @@ export class EnemyAI {
                     for (const other of entities) {
                         if (other !== this.enemy && other.entityType === 'enemy' && !other.isDead) {
                             const dist = position.distanceTo(other.position);
-                            if (dist < 1.5) { // Check neighbors within 1.5m
+                            if (dist < 1.5 && dist > 0.01) { // Check neighbors within 1.5m
                                 const push = new THREE.Vector3().subVectors(position, other.position);
                                 push.y = 0;
                                 push.normalize().divideScalar(dist); // Weight by distance
+                                separation.add(push);
+                                count++;
+                            } else if (dist <= 0.01) {
+                                // Add random small separation force to avoid overlapping stuck enemies
+                                const push = new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
                                 separation.add(push);
                                 count++;
                             }
@@ -81,9 +86,14 @@ export class EnemyAI {
                     }
 
                     if (count > 0) {
-                        separation.divideScalar(count).normalize();
-                        // Blend path direction (70%) with separation (30%)
-                        moveDir.add(separation.multiplyScalar(0.8)).normalize();
+                        separation.divideScalar(count);
+                        if (separation.lengthSq() > 0) {
+                            separation.normalize();
+                        }
+                        const finalDir = moveDir.clone().add(separation.multiplyScalar(0.8));
+                        if (finalDir.lengthSq() > 0) {
+                            moveDir.copy(finalDir).normalize();
+                        }
                     }
                 }
 
@@ -134,7 +144,12 @@ export class EnemyAI {
     shoot(player, position) {
         if (!this.entityManager) return;
 
-        const dir = new THREE.Vector3().subVectors(player.position, position).normalize();
+        const dir = new THREE.Vector3().subVectors(player.position, position);
+        if (dir.lengthSq() > 0) {
+            dir.normalize();
+        } else {
+            dir.set(0, 0, -1);
+        }
 
         // Spawn projectile slightly in front of enemy to avoid clipping
         const spawnPos = position.clone().add(dir.clone().multiplyScalar(0.5));

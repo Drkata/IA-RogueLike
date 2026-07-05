@@ -75,6 +75,13 @@ export class Enemy {
                 this.ai.entityManager.add(pickup);
             }
         }
+
+        // Gold Drop (70% chance)
+        if (Math.random() < 0.7 && this.ai.entityManager) {
+            const goldVal = 5 + Math.floor(Math.random() * 6) + Math.floor(this.level * 0.5);
+            const goldPickup = new Pickup(this.position, 'gold', goldVal);
+            this.ai.entityManager.add(goldPickup);
+        }
     }
 
     update(dt, player) {
