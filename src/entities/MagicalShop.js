@@ -1,19 +1,16 @@
 import * as THREE from 'three';
-import { CONSTANTS } from '../core/Constants.js';
 import { soundManager } from '../systems/SoundManager.js';
+import { PALETTE } from '../core/Palette.js';
+
+const SHOP_LIGHT = 8;
+const _lit = new THREE.Color(PALETTE.giltBright);
+const _spent = new THREE.Color(0x646464);
 
 export class MagicalShop {
-    constructor(gridX, gridZ, cellSize) {
-        this.gridX = gridX;
-        this.gridZ = gridZ;
-        this.cellSize = cellSize || CONSTANTS.CELL_SIZE;
+    // `checkY` selects the floor the entity stands on (0, WALL_HEIGHT or 2 * WALL_HEIGHT)
+    constructor(gridX, gridZ, levelManager, checkY = 0) {
         this.entityType = 'shop';
-
-        this.position = new THREE.Vector3(
-            gridX * this.cellSize + this.cellSize / 2,
-            0,
-            gridZ * this.cellSize + this.cellSize / 2
-        );
+        this.position = levelManager.floorPositionAt(gridX, gridZ, checkY);
         this.isDead = false;
         this.radius = 1.8; // Interaction radius
 
@@ -30,15 +27,13 @@ export class MagicalShop {
         });
         const table = new THREE.Mesh(tableGeo, tableMat);
         table.position.y = 0.35;
-        table.castShadow = true;
-        table.receiveShadow = true;
         this.mesh.add(table);
 
         // 2. Magic Floating Crystal (Shop sign)
         const crystalGeo = new THREE.IcosahedronGeometry(0.12, 1);
         this.crystalMat = new THREE.MeshStandardMaterial({
-            color: 0x00bfff, // Deep Sky Blue
-            emissive: 0x00bfff,
+            color: PALETTE.gilt,
+            emissive: PALETTE.giltBright,
             emissiveIntensity: 0.7,
             roughness: 0.1,
             metalness: 0.9
@@ -48,7 +43,7 @@ export class MagicalShop {
         this.mesh.add(this.crystal);
 
         // 3. Blue Light Source
-        this.light = new THREE.PointLight(0x00bfff, 1.2, 5);
+        this.light = new THREE.PointLight(PALETTE.giltBright, SHOP_LIGHT, 6);
         this.light.position.y = 1.1;
         this.mesh.add(this.light);
 
@@ -61,18 +56,16 @@ export class MagicalShop {
             const t = Math.min(1, this.deathProgress / 1.5); // 1.5 seconds transition
             
             // Dim light from 1.2 to 0.2 (so it remains faintly visible)
-            this.light.intensity = 1.2 * (1 - t) + 0.2 * t;
+            this.light.intensity = SHOP_LIGHT * (1 - t * 0.85);
             
             // Dim emissive intensity
             this.crystalMat.emissiveIntensity = 0.7 * (1 - t) + 0.2 * t;
             
             // Interpolate color from DeepSkyBlue (0, 191, 255) to Grey (100, 100, 100)
-            const r = 0 * (1 - t) + 100 * t;
-            const g = 191 * (1 - t) + 100 * t;
-            const b = 255 * (1 - t) + 100 * t;
-            this.crystalMat.color.setRGB(r / 255, g / 255, b / 255);
-            this.crystalMat.emissive.setRGB(r / 255, g / 255, b / 255);
-            this.light.color.setRGB(r / 255, g / 255, b / 255);
+            // Fades from gold to grey once the shop is used
+            this.crystalMat.color.lerpColors(_lit, _spent, t);
+            this.crystalMat.emissive.copy(this.crystalMat.color);
+            this.light.color.copy(this.crystalMat.color);
             
             // It stays floating, but drops just slightly and spins slower
             const time = performance.now() / 1000;
@@ -97,26 +90,15 @@ export class MagicalShop {
 
         if (this.isDisabled || this.isDying) return;
 
-        // Interaction check
-        const dx = player.position.x - this.position.x;
-        const dz = player.position.z - this.position.z;
-        const dist = Math.sqrt(dx * dx + dz * dz);
-
-        if (dist < this.radius) {
-            player.hudManager.showMessage("Pressez [E] pour commercer avec le Marchand Magique", 100);
-
-            if (player.input.keys['KeyE']) {
-                player.input.keys['KeyE'] = false; // Consume key
-                this.interact(player);
-            }
+        if (player.isNear(this.position, this.radius)) {
+            player.hudManager.showMessage(player.input.prompt('commercer avec le marchand'));
+            if (player.input.consumeKey('KeyE')) this.interact();
         }
     }
 
-    interact(player) {
-        soundManager.playPowerup();
-        if (window.game) {
-            window.game.showShopMenu(this);
-        }
+    interact() {
+        soundManager.play('shopOpen');
+        window.game.showShopMenu(this);
     }
 
     disable() {

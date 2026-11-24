@@ -1,119 +1,67 @@
 import { CONSTANTS } from '../../core/Constants.js';
 import { SVG_ICONS } from '../SVGIcons.js';
+import { num, pct, unit } from '../format.js';
+
+// Pact modifier badge: higher is always better, so > 1 (or > 0) reads as a boon
+const multBadge = (m) => (m === 1 ? '' : `<small class="stat__mod stat__mod--${m > 1 ? 'good' : 'bad'}">×${num(m)}</small>`);
+const flatBadge = (v, fmt) => (v === 0 ? '' : `<small class="stat__mod stat__mod--${v > 0 ? 'good' : 'bad'}">${v > 0 ? '+' : '−'}${fmt(Math.abs(v))}</small>`);
+const rankBadge = (level) => (level > 0 ? `<small class="stat__rank">+${level}</small>` : '');
+
+const row = (category, icon, label, value) =>
+    `<div class="stat stat--${category}"><dt>${icon}<span>${label}</span></dt><dd>${value}</dd></div>`;
 
 export class StatsDisplay {
     constructor(container) {
         this.element = document.createElement('div');
         this.element.id = 'stats-display';
-        this.element.className = 'medieval-panel';
+        this.element.className = 'ledger ledger--hud';
         container.appendChild(this.element);
+    }
+
+    // Player + weapon stats as definition lists, used by the HUD and the upgrade menu
+    static render(player) {
+        const w = player.weapon;
+        const s = w.stats;
+        const p = player.stats;
+
+        const body = [
+            row('vitality', SVG_ICONS.maxHealth, 'Vie max', Math.round(player.maxHealth) + rankBadge(p.maxHealth) + multBadge(player.pactHpMultiplier)),
+            row('vitality', SVG_ICONS.armor, 'Armure', pct(player.armor * 100) + rankBadge(p.armor) + flatBadge(player.pactArmorBonus * 100, pct)),
+            row('vitality', SVG_ICONS.regen, 'Régénération', unit(player.regen + player.healthRegen, 'PV/s') + rankBadge(p.regen) + flatBadge(player.healthRegen, num)),
+            row('vitality', SVG_ICONS.vampirism, 'Vol de vie', pct(player.vampirism * 100) + rankBadge(p.vampirism) + flatBadge(player.pactVampirism * 100, pct)),
+            row('vitality', SVG_ICONS.speed, 'Vitesse', pct((player.speed / CONSTANTS.PLAYER_SPEED) * 100) + rankBadge(p.speed) + multBadge(player.pactSpeedMultiplier))
+        ];
+        const weapon = [
+            row('offense', SVG_ICONS.damage, 'Dégâts', num(w.damage * w.bulletCount) + rankBadge(s.damage) + multBadge(w.pactDamageMultiplier)),
+            row('offense', SVG_ICONS.fireRate, 'Cadence', unit(1 / w.fireRate, 'tirs/s') + rankBadge(s.fireRate) + multBadge(w.pactFireRateMultiplier)),
+            row('offense', SVG_ICONS.ammo, 'Mana max', w.maxAmmo + rankBadge(s.ammo)),
+            row('offense', SVG_ICONS.reload, 'Rechargement', unit(w.reloadTime, 's') + rankBadge(s.reload))
+        ];
+        const precision = [
+            row('offense', SVG_ICONS.critChance, 'Critique', pct(w.critChance * 100) + rankBadge(s.critChance)),
+            row('offense', SVG_ICONS.critDamage, 'Dégâts crit.', pct(w.critDamage * 100) + rankBadge(s.critDamage)),
+            row('offense', SVG_ICONS.range, 'Portée', num(w.range) + rankBadge(s.range)),
+            row('offense', SVG_ICONS.projectileSpeed, 'Vit. projectiles', num(w.projectileSpeed) + rankBadge(s.projectileSpeed) + multBadge(w.pactProjectileSpeedMultiplier))
+        ];
+        const arcana = [
+            row('arcana', SVG_ICONS.bulletCount, 'Projectiles', w.bulletCount + rankBadge(s.bulletCount)),
+            row('arcana', SVG_ICONS.piercing, 'Perforation', w.piercing + rankBadge(s.piercing)),
+            row('arcana', SVG_ICONS.knockback, 'Recul', num(w.knockback) + rankBadge(s.knockback)),
+            row('arcana', SVG_ICONS.explosion, 'Explosion', pct(w.explosion * 100) + rankBadge(s.explosion)),
+            row('arcana', SVG_ICONS.ricochet, 'Ricochets', w.ricochet + rankBadge(s.ricochet)),
+            row('arcana', SVG_ICONS.magnet, 'Aimant', (player.magnetRange ? unit(player.magnetRange, 'm') : '—') + rankBadge(p.magnet))
+        ];
+
+        return [body, weapon, precision, arcana].map(rows => `<dl class="ledger__col">${rows.join('')}</dl>`).join('');
     }
 
     update(player) {
         if (!player || !player.weapon) return;
-
-        const w = player.weapon;
-        const s = w.stats; // Access upgrade levels
-
-        // Helper to format: Total (+Level) [Pact]
-        const fmt = (val, level, pactMult = 1.0, suffix = '') => {
-            const valStr = Number.isInteger(val) ? val : val.toFixed(1);
-            let str = valStr + suffix;
-            if (level > 0) {
-                str += ` <span style="color: #00ff00; font-size: 0.9em;">(+${level})</span>`;
-            }
-            if (pactMult !== 1.0) {
-                const color = pactMult > 1.0 ? '#ff8888' : '#8888ff';
-                str += ` <span style="color: ${color}; font-size: 0.8em;">(x${pactMult.toFixed(2)})</span>`;
-            }
-            return str;
-        };
-
-        // Helper for simple flat pacts
-        const fmtFlat = (val, pactFlat = 0, suffix = '') => {
-            const valStr = Number.isInteger(val) ? val : val.toFixed(1);
-            let str = valStr + suffix;
-            if (pactFlat !== 0) {
-                const color = pactFlat > 0 ? '#ff8888' : '#8888ff';
-                const sign = pactFlat > 0 ? '+' : '';
-                str += ` <span style="color: ${color}; font-size: 0.8em;">(${sign}${pactFlat.toFixed(1)})</span>`;
-            }
-            return str;
-        };
-
-        // Safe fallbacks for pact variables
-        const pactHpMultiplier = player.pactHpMultiplier !== undefined ? player.pactHpMultiplier : 1.0;
-        const pactSpeedMultiplier = player.pactSpeedMultiplier !== undefined ? player.pactSpeedMultiplier : 1.0;
-        const pactArmorBonus = player.pactArmorBonus !== undefined ? player.pactArmorBonus : 0.0;
-        const healthRegen = player.healthRegen !== undefined ? player.healthRegen : 0.0;
-        const pactVampirism = player.pactVampirism !== undefined ? player.pactVampirism : 0.0;
-
-        const pactDamageMultiplier = w.pactDamageMultiplier !== undefined ? w.pactDamageMultiplier : 1.0;
-        const pactFireRateMultiplier = w.pactFireRateMultiplier !== undefined ? w.pactFireRateMultiplier : 1.0;
-        const pactProjectileSpeedMultiplier = w.pactProjectileSpeedMultiplier !== undefined ? w.pactProjectileSpeedMultiplier : 1.0;
-
-        // Calculations
-        const currentDamage = w.bulletCount > 1 ? w.damage * w.bulletCount : w.damage;
-        const currentFireRate = 1 / w.fireRate;
-        const currentCritChance = w.critChance * 100;
-        const currentCritDamage = w.critDamage * 100;
-
-        const totalRegen = player.regen + healthRegen;
-
-        const makeRow = (icon, color, label, valueHtml) => `
-            <div style="display: flex; align-items: center; gap: 4px; color: ${color};">
-                <span class="icon-wrapper" style="width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center;">${icon}</span>
-                <span>${label}</span>
-            </div>
-            <div style="text-align: right; color: #fff;">${valueHtml}</div>
-        `;
-
-        this.element.innerHTML = `
-            <div class="panel-header">STATISTIQUES</div>
-            <div style="display: flex; gap: 15px; align-items: flex-start;">
-                <!-- Column 1: Defense & Mobility -->
-                <div style="display: grid; grid-template-columns: auto auto; gap: 4px 8px; align-items: center; min-width: 145px;">
-                    ${makeRow(SVG_ICONS.maxHealth, '#88ff88', 'Vie Max:', `${Math.round(player.maxHealth)} <span style="color: ${pactHpMultiplier !== 1.0 ? '#ff8888' : 'transparent'}; font-size: 0.8em;">${pactHpMultiplier !== 1.0 ? '(x' + pactHpMultiplier.toFixed(2) + ')' : ''}</span>`)}
-                    ${makeRow(SVG_ICONS.armor, '#88ff88', 'Armure:', `${Math.round(player.armor * 100)}% <span style="color: ${pactArmorBonus !== 0.0 ? '#ff8888' : 'transparent'}; font-size: 0.8em;">${pactArmorBonus !== 0.0 ? '(' + (pactArmorBonus > 0 ? '+' : '') + (pactArmorBonus * 100).toFixed(0) + '%)' : ''}</span>`)}
-                    ${makeRow(SVG_ICONS.regen, '#88ff88', 'Régén.:', fmtFlat(totalRegen, healthRegen, '/s'))}
-                    ${makeRow(SVG_ICONS.vampirism, '#88ff88', 'Vol de Vie:', fmtFlat(player.vampirism * 100, pactVampirism * 100, '%'))}
-                    ${makeRow(SVG_ICONS.speed, '#88ff88', 'Vitesse:', `${Math.round((player.speed / CONSTANTS.PLAYER_SPEED) * 100)}% <span style="color: ${pactSpeedMultiplier !== 1.0 ? '#ff8888' : 'transparent'}; font-size: 0.8em;">${pactSpeedMultiplier !== 1.0 ? '(x' + pactSpeedMultiplier.toFixed(2) + ')' : ''}</span>`)}
-                </div>
-
-                <!-- Vertical Separator -->
-                <div style="width: 1px; align-self: stretch; background: rgba(212, 175, 55, 0.2);"></div>
-
-                <!-- Column 2: Weapon Core -->
-                <div style="display: grid; grid-template-columns: auto auto; gap: 4px 8px; align-items: center; min-width: 145px;">
-                    ${makeRow(SVG_ICONS.damage, '#ff8888', 'Dégâts:', fmt(currentDamage, s.damage, pactDamageMultiplier))}
-                    ${makeRow(SVG_ICONS.fireRate, '#ff8888', 'Cadence:', fmt(currentFireRate, s.fireRate, pactFireRateMultiplier, '/s'))}
-                    ${makeRow(SVG_ICONS.ammo, '#ff8888', 'Max Mana:', fmt(w.maxAmmo, s.ammo))}
-                    ${makeRow(SVG_ICONS.reload, '#ff8888', 'Recharge:', fmt(w.reloadTime, s.reload, 1.0, 's'))}
-                </div>
-
-                <!-- Vertical Separator -->
-                <div style="width: 1px; align-self: stretch; background: rgba(212, 175, 55, 0.2);"></div>
-
-                <!-- Column 3: Criticals & Projectiles -->
-                <div style="display: grid; grid-template-columns: auto auto; gap: 4px 8px; align-items: center; min-width: 145px;">
-                    ${makeRow(SVG_ICONS.critChance, '#ff8888', 'Crit %:', fmt(currentCritChance, s.critChance, 1.0, '%'))}
-                    ${makeRow(SVG_ICONS.critDamage, '#ff8888', 'Crit Dég.:', fmt(currentCritDamage, s.critDamage, 1.0, '%'))}
-                    ${makeRow(SVG_ICONS.range, '#ff8888', 'Portée:', fmt(w.range, s.range))}
-                    ${makeRow(SVG_ICONS.projectileSpeed, '#ff8888', 'Vit. Proj.:', fmt(w.projectileSpeed, s.projectileSpeed, pactProjectileSpeedMultiplier))}
-                </div>
-
-                <!-- Vertical Separator -->
-                <div style="width: 1px; align-self: stretch; background: rgba(212, 175, 55, 0.2);"></div>
-
-                <!-- Column 4: Specials & Utilities -->
-                <div style="display: grid; grid-template-columns: auto auto; gap: 4px 8px; align-items: center; min-width: 145px;">
-                    ${makeRow(SVG_ICONS.arc, '#aaaaff', 'Proj. Nbr:', fmt(w.bulletCount, s.bulletCount))}
-                    ${makeRow(SVG_ICONS.piercing, '#aaaaff', 'Perforation:', fmt(w.piercing, s.piercing))}
-                    ${makeRow(SVG_ICONS.knockback, '#aaaaff', 'Recul Cible:', fmt(w.knockback, s.knockback))}
-                    ${makeRow(SVG_ICONS.explosion, '#aaaaff', 'Explosion:', fmt(w.explosion * 100, s.explosion, 1.0, '%'))}
-                    ${makeRow(SVG_ICONS.ricochet, '#aaaaff', 'Rebonds:', fmt(w.ricochet, s.ricochet))}
-                </div>
-            </div>
-        `;
+        const html = StatsDisplay.render(player);
+        // Called every frame: re-parsing this panel is expensive, so only do it when it changed
+        if (html !== this._lastHtml) {
+            this._lastHtml = html;
+            this.element.innerHTML = html;
+        }
     }
 }

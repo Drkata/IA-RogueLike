@@ -4,66 +4,44 @@ import { GameInfo } from './components/GameInfo.js';
 import { StatsDisplay } from './components/StatsDisplay.js';
 import { BuffDisplay } from './components/BuffDisplay.js';
 import { SVG_ICONS } from './SVGIcons.js';
+import { soundManager } from '../systems/SoundManager.js';
 
 export class HUDManager {
     constructor() {
         this.container = document.getElementById('hud-container');
-        if (!this.container) {
-            console.error('HUD container not found!');
-            return;
-        }
-
-        // Clear existing content if any
         this.container.innerHTML = '';
 
-        // Initialize components
         this.healthBar = new HealthBar(this.container);
         this.ammoDisplay = new AmmoDisplay(this.container);
         this.gameInfo = new GameInfo(this.container);
         this.statsDisplay = new StatsDisplay(this.container);
         this.buffDisplay = new BuffDisplay(this.container);
 
-        // Crosshair is separate in CSS but we can manage it if needed
-        this.createCrosshair();
-
-        // Audio Mute Toggle
-        this.createAudioToggle();
+        this.container.insertAdjacentHTML('beforeend', `
+            <div id="crosshair" aria-hidden="true"></div>
+            <p class="herald" role="status"></p>
+            <p class="countdown" hidden></p>
+            <button class="audio-toggle" type="button"></button>
+        `);
+        this.message = this.container.querySelector('.herald');
+        this.countdown = this.container.querySelector('.countdown');
+        this.bossBar = document.getElementById('boss-health-container');
+        this._setupAudioToggle(this.container.querySelector('.audio-toggle'));
     }
 
-    createAudioToggle() {
-        this.audioBtn = document.createElement('div');
-        this.audioBtn.id = 'audio-toggle-btn';
-        this.audioBtn.innerHTML = SVG_ICONS.audioOn;
-        this.audioBtn.style.position = 'absolute';
-        this.audioBtn.style.top = '15px';
-        this.audioBtn.style.right = '15px';
-        this.audioBtn.style.width = '30px';
-        this.audioBtn.style.height = '30px';
-        this.audioBtn.style.color = '#d4af37'; // Gold color to match theme
-        this.audioBtn.style.cursor = 'pointer';
-        this.audioBtn.style.pointerEvents = 'auto'; // allow clicking
-        this.audioBtn.style.zIndex = '1000';
-
-        import('../systems/SoundManager.js').then(({ soundManager }) => {
-            const isMuted = soundManager.isMuted;
-            this.audioBtn.innerHTML = isMuted ? SVG_ICONS.audioOff : SVG_ICONS.audioOn;
-            this.audioBtn.style.opacity = isMuted ? '0.5' : '1.0';
-
-            this.audioBtn.addEventListener('click', (e) => {
-                e.stopPropagation(); // Prevent triggering pointer lock
-                const isMuted = soundManager.toggleMute();
-                this.audioBtn.innerHTML = isMuted ? SVG_ICONS.audioOff : SVG_ICONS.audioOn;
-                this.audioBtn.style.opacity = isMuted ? '0.5' : '1.0';
-            });
+    _setupAudioToggle(button) {
+        const render = () => {
+            const muted = soundManager.isMuted;
+            button.innerHTML = muted ? SVG_ICONS.audioOff : SVG_ICONS.audioOn;
+            button.setAttribute('aria-label', muted ? 'Activer la musique' : 'Couper la musique');
+            button.classList.toggle('is-muted', muted);
+        };
+        button.addEventListener('click', (e) => {
+            e.stopPropagation(); // Don't grab the pointer lock
+            soundManager.toggleMute();
+            render();
         });
-
-        this.container.appendChild(this.audioBtn);
-    }
-
-    createCrosshair() {
-        const crosshair = document.createElement('div');
-        crosshair.id = 'crosshair';
-        this.container.appendChild(crosshair);
+        render();
     }
 
     updateHealth(current, max, shield = 0) {
@@ -71,75 +49,33 @@ export class HUDManager {
     }
 
     showMessage(text) {
-        // Find or create message container
-        let msgContainer = document.getElementById('hud-message');
-        if (!msgContainer) {
-            msgContainer = document.createElement('div');
-            msgContainer.id = 'hud-message';
-            msgContainer.style.position = 'absolute';
-            msgContainer.style.top = '25%';
-            msgContainer.style.left = '50%';
-            msgContainer.style.transform = 'translate(-50%, -50%)';
-            msgContainer.style.color = '#fff';
-            msgContainer.style.fontSize = '24px';
-            msgContainer.style.fontWeight = 'bold';
-            msgContainer.style.textShadow = '0 0 10px #000, 0 0 20px #000';
-            msgContainer.style.pointerEvents = 'none';
-            msgContainer.style.opacity = '0';
-            msgContainer.style.transition = 'opacity 0.3s ease-in-out';
-            msgContainer.style.zIndex = '1000';
-            msgContainer.style.textAlign = 'center';
-            this.container.appendChild(msgContainer);
-        }
-
-        msgContainer.innerHTML = text;
-        msgContainer.style.opacity = '1';
-
-        // Clear previous timeout if exists
-        if (this.messageTimeout) {
-            clearTimeout(this.messageTimeout);
-        }
-
-        // Hide after 3 seconds
+        clearTimeout(this.messageTimeout);
         this.messageTimeout = setTimeout(() => {
-            msgContainer.style.opacity = '0';
+            this.message.classList.remove('is-visible');
+            this._lastMessage = null;
         }, 3000);
+        // Prompts are re-sent every frame while in range: only touch the DOM when the text changes
+        if (text === this._lastMessage) return;
+        this._lastMessage = text;
+        this.message.textContent = text;
+        this.message.classList.add('is-visible');
     }
 
     showCountdown(seconds) {
-        let cdContainer = document.getElementById('hud-countdown');
-        if (!cdContainer) {
-            cdContainer = document.createElement('div');
-            cdContainer.id = 'hud-countdown';
-            cdContainer.style.position = 'absolute';
-            cdContainer.style.top = '35%';
-            cdContainer.style.left = '50%';
-            cdContainer.style.transform = 'translate(-50%, -50%)';
-            cdContainer.style.color = '#ffeb3b';
-            cdContainer.style.fontSize = '32px';
-            cdContainer.style.fontWeight = 'bold';
-            cdContainer.style.textShadow = '0 0 15px #000, 0 0 25px #000';
-            cdContainer.style.pointerEvents = 'none';
-            cdContainer.style.zIndex = '1000';
-            cdContainer.style.textAlign = 'center';
-            this.container.appendChild(cdContainer);
-        }
-        cdContainer.innerHTML = `Niveau suivant dans : ${seconds}...`;
-        cdContainer.style.display = 'block';
+        this.countdown.hidden = false;
+        this.updateCountdown(seconds);
     }
 
     updateCountdown(seconds) {
-        const cdContainer = document.getElementById('hud-countdown');
-        if (cdContainer) {
-            cdContainer.innerHTML = `Niveau suivant dans : ${seconds}...`;
-        }
+        this.countdown.innerHTML = `Niveau suivant dans <span class="countdown__n">${seconds}</span>`;
     }
 
     hideCountdown() {
-        const cdContainer = document.getElementById('hud-countdown');
-        if (cdContainer) {
-            cdContainer.style.display = 'none';
-        }
+        this.countdown.hidden = true;
+    }
+
+    setBossVisible(visible) {
+        this.bossBar.hidden = !visible;
     }
 
     onDamage() {
@@ -166,19 +102,13 @@ export class HUDManager {
         this.statsDisplay.update(player);
     }
 
-    updateBuffs(buffs) {
-        this.buffDisplay.update(buffs);
+    updateBerserk(active, time, max) {
+        this.buffDisplay.updateBerserk(active, time, max);
     }
 
-    setReloadCallback(callback) {
-        this.ammoDisplay.setReloadCallback(callback);
-    }
-
-    // Helper to attach minimap canvas
     attachMinimap(canvas) {
         const container = this.gameInfo.getMinimapContainer();
-        container.innerHTML = ''; // Clear old minimap
-        canvas.id = 'minimap-frame'; // Apply CSS style
-        container.appendChild(canvas);
+        canvas.id = 'minimap-frame';
+        container.replaceChildren(canvas);
     }
 }

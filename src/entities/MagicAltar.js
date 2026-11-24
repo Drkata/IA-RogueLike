@@ -1,19 +1,12 @@
 import * as THREE from 'three';
-import { CONSTANTS } from '../core/Constants.js';
 import { soundManager } from '../systems/SoundManager.js';
+import { PALETTE } from '../core/Palette.js';
 
 export class MagicAltar {
-    constructor(gridX, gridZ, cellSize) {
-        this.gridX = gridX;
-        this.gridZ = gridZ;
-        this.cellSize = cellSize || CONSTANTS.CELL_SIZE;
+    // `checkY` selects the floor the entity stands on (0, WALL_HEIGHT or 2 * WALL_HEIGHT)
+    constructor(gridX, gridZ, levelManager, checkY = 0) {
         this.entityType = 'altar';
-
-        this.position = new THREE.Vector3(
-            gridX * this.cellSize + this.cellSize / 2,
-            0,
-            gridZ * this.cellSize + this.cellSize / 2
-        );
+        this.position = levelManager.floorPositionAt(gridX, gridZ, checkY);
         this.isDead = false;
         this.isUsed = false;
         this.radius = 1.5; // Interaction radius
@@ -31,15 +24,13 @@ export class MagicAltar {
         });
         const base = new THREE.Mesh(baseGeo, baseMat);
         base.position.y = 0.45;
-        base.castShadow = true;
-        base.receiveShadow = true;
         this.mesh.add(base);
 
         // 2. Crystal (Floating Octahedron)
         const crystalGeo = new THREE.OctahedronGeometry(0.18, 0);
         this.crystalMat = new THREE.MeshStandardMaterial({
-            color: 0x9400d3, // Dark Violet
-            emissive: 0x9400d3,
+            color: PALETTE.hex,
+            emissive: PALETTE.hexBright,
             emissiveIntensity: 0.6,
             roughness: 0.1,
             metalness: 0.9,
@@ -51,7 +42,7 @@ export class MagicAltar {
         this.mesh.add(this.crystal);
 
         // 3. Purple Light
-        this.light = new THREE.PointLight(0x9400d3, 1.2, 5);
+        this.light = new THREE.PointLight(PALETTE.hexBright, 8, 6);
         this.light.position.y = 1.2;
         this.mesh.add(this.light);
 
@@ -73,31 +64,16 @@ export class MagicAltar {
             this.crystal.rotation.set(0, 0, 0);
         }
 
-        // Distance Check for player interaction
-        const dx = player.position.x - this.position.x;
-        const dz = player.position.z - this.position.z;
-        const dist = Math.sqrt(dx * dx + dz * dz);
-
-        if (dist < this.radius && !this.isUsed) {
-            // Show prompt
-            player.hudManager.showMessage("Pressez [E] pour communier avec l'Autel du Chaos", 100);
-
-            // Check Key Press E
-            if (player.input.keys['KeyE']) {
-                player.input.keys['KeyE'] = false; // Consume key
-                this.interact(player);
-            }
+        if (!this.isUsed && player.isNear(this.position, this.radius)) {
+            player.hudManager.showMessage(player.input.prompt("communier avec l'autel du Chaos"));
+            if (player.input.consumeKey('KeyE')) this.interact();
         }
     }
 
-    interact(player) {
+    interact() {
         if (this.isUsed) return;
-
-        soundManager.playPowerup();
-
-        if (window.game) {
-            window.game.showAltarMenu(this);
-        }
+        soundManager.play('altar');
+        window.game.showAltarMenu(this);
     }
 
     deactivate() {

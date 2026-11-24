@@ -2,57 +2,24 @@ export class BuffDisplay {
     constructor(container) {
         this.element = document.createElement('div');
         this.element.id = 'buff-container';
-        this.element.style.position = 'absolute';
-        this.element.style.bottom = '120px'; // Above health/ammo
-        this.element.style.left = '50%';
-        this.element.style.transform = 'translateX(-50%)';
-        this.element.style.display = 'flex';
-        this.element.style.flexDirection = 'column';
-        this.element.style.alignItems = 'center';
-        this.element.style.gap = '5px';
-        this.element.style.pointerEvents = 'none';
+        this.element.className = 'buffs';
+        this.element.innerHTML = `
+            <div class="buff buff--berserk" hidden>
+                <span class="buff__name">Furie berserk</span>
+                <span class="buff__track"><span class="buff__fill"></span></span>
+            </div>
+        `;
         container.appendChild(this.element);
-
-        // Berserk Bar
-        this.berserkBar = document.createElement('div');
-        this.berserkBar.id = 'berserk-bar';
-        this.berserkBar.style.width = '300px';
-        this.berserkBar.style.height = '10px';
-        this.berserkBar.style.backgroundColor = '#440000';
-        this.berserkBar.style.border = '1px solid #ff0000';
-        this.berserkBar.style.display = 'none'; // Hidden by default
-
-        this.berserkFill = document.createElement('div');
-        this.berserkFill.style.width = '100%';
-        this.berserkFill.style.height = '100%';
-        this.berserkFill.style.backgroundColor = '#ff0000';
-        this.berserkFill.style.boxShadow = '0 0 10px #ff0000';
-        this.berserkFill.style.transition = 'width 0.1s linear';
-
-        this.berserkLabel = document.createElement('div');
-        this.berserkLabel.textContent = 'BERSERK';
-        this.berserkLabel.style.color = '#ff0000';
-        this.berserkLabel.style.fontSize = '14px';
-        this.berserkLabel.style.fontWeight = 'bold';
-        this.berserkLabel.style.marginBottom = '2px';
-        this.berserkLabel.style.textShadow = '0 0 5px black';
-
-        this.berserkBar.appendChild(this.berserkFill);
-        this.element.appendChild(this.berserkLabel);
-        this.element.appendChild(this.berserkBar);
+        this.berserk = this.element.querySelector('.buff--berserk');
+        this.berserkFill = this.berserk.querySelector('.buff__fill');
     }
 
-    update(buffs) {
-        // Berserk
-        if (buffs.berserk && buffs.berserk.active) {
-            this.berserkBar.style.display = 'block';
-            this.berserkLabel.style.display = 'block';
+    updateBerserk(active, time, max) {
+        const ratio = active ? Math.round((time / max) * 100) / 100 : -1; // -1 = hidden
+        if (ratio === this._lastRatio) return; // Called every frame
+        this._lastRatio = ratio;
 
-            const pct = (buffs.berserk.time / buffs.berserk.max) * 100;
-            this.berserkFill.style.width = `${pct}%`;
-        } else {
-            this.berserkBar.style.display = 'none';
-            this.berserkLabel.style.display = 'none';
-        }
+        this.berserk.hidden = !active;
+        if (active) this.berserkFill.style.transform = `scaleX(${ratio})`;
     }
 }

@@ -3,6 +3,39 @@ import { CONSTANTS } from '../core/Constants.js';
 import { Weapon } from './Weapon.js';
 import { Projectile } from './Projectile.js';
 import { soundManager } from '../systems/SoundManager.js';
+import { PALETTE } from '../core/Palette.js';
+
+const EYE_HEIGHT = 1.6; // Player position is the camera, 1.6 above the feet
+const MAX_LEVEL = 10;
+const IMMOLATION_RANGE = 9; // Metres
+
+// Zero-allocation scratch vectors for the per-frame code
+const _forward = new THREE.Vector3();
+const _right = new THREE.Vector3();
+const _moveDir = new THREE.Vector3();
+const _nextPos = new THREE.Vector3();
+const _up = new THREE.Vector3();
+const _dir = new THREE.Vector3();
+const _toEnemy = new THREE.Vector3();
+const _startPos = new THREE.Vector3();
+const _yAxis = new THREE.Vector3(0, 1, 0);
+const _contact = { normal: new THREE.Vector3(), depth: 0 };
+// Body sample points (offsets from the eyes) tested against floating islands: feet, waist, head
+const BODY_POINTS = [-EYE_HEIGHT + 0.3, -0.8, 0];
+
+const newUpgradeStats = () => ({ maxHealth: 0, armor: 0, vampirism: 0, regen: 0, speed: 0, meleeDamage: 0, immolation: 0, magnet: 0 });
+
+const newSessionStats = () => ({
+    damageDealt: 0,
+    shotsFired: 0,
+    shotsHit: 0,
+    kills: 0,
+    startTime: Date.now(),
+    critCount: 0,
+    maxDamageHit: 0,
+    damageTaken: 0,
+    healingDone: 0
+});
 
 export class Player {
     constructor(camera, input, levelManager, entityManager, hudManager) {
@@ -11,7 +44,7 @@ export class Player {
         this.levelManager = levelManager;
         this.entityManager = entityManager;
         this.hudManager = hudManager;
-        this.position = new THREE.Vector3(0, 1.6, 0); // Eye level
+        this.position = new THREE.Vector3(0, EYE_HEIGHT, 0);
         this.velocity = new THREE.Vector3();
         this.camera.position.copy(this.position);
         this.radius = 0.3; // Player collision radius
@@ -22,176 +55,113 @@ export class Player {
         this.yaw = 0;
         this.pitch = 0;
 
-        this.weapon = new Weapon(this.camera); // Single scalable weapon
+        this.weapon = new Weapon(this.camera);
 
         this.maxHealth = 100;
         this.health = this.maxHealth;
-        this.shield = 0; // New Shield Stat
-        this.armor = 0; // Percentage reduction (0-50%)
-        this.vampirism = 0; // Life steal percentage
+        this.shield = 0;
+        this.armor = 0; // Damage reduction (0-1)
+        this.vampirism = 0; // Life steal ratio
         this.regen = 0; // HP per second
         this.speed = CONSTANTS.PLAYER_SPEED;
         this.slowMultiplier = 1.0;
         this.slowTimer = 0;
-
-        // Pact permanent modifiers
-        this.pactHpReduction = 0;
-        this.pactSpeedMultiplier = 1.0;
-        this.pactArmorBonus = 0;
-
         this.gold = 0;
+        this.magnetRange = 0; // No magnet until upgraded
 
-        // Buff States
         this.isBerserk = false;
         this.berserkTimer = 0;
+        this.berserkMaxDuration = 15;
 
-        // Upgrade Stats
-        this.stats = {
-            maxHealth: 0,
-            armor: 0,
-            vampirism: 0,
-            regen: 0,
-            speed: 0,
-            meleeDamage: 0,
-            immolation: 0
-        };
-
-        // Session Stats (for Game Over screen)
-        this.sessionStats = {
-            damageDealt: 0,
-            shotsFired: 0,
-            shotsHit: 0,
-            kills: 0,
-            startTime: Date.now(),
-            critCount: 0,
-            maxDamageHit: 0,
-            damageTaken: 0,
-            healingDone: 0
-        };
-
-        this.MAX_LEVEL = 10;
+        this.stats = newUpgradeStats();
+        this.sessionStats = newSessionStats();
+        this.damageLog = []; // Death Recap Log
+        this.isDeadCallbackTriggered = false;
+        this.MAX_LEVEL = MAX_LEVEL;
+        this.resetPacts();
 
         this.updateHUD();
+    }
 
-        // Connect reload button
-        if (this.hudManager) {
-            this.hudManager.setReloadCallback(() => {
-                this.weapon.reload();
-            });
-        }
+    // Permanent modifiers granted by altar pacts
+    resetPacts() {
+        this.pactHpMultiplier = 1.0;
+        this.pactSpeedMultiplier = 1.0;
+        this.pactArmorBonus = 0;
+        this.pactVampirism = 0;
+        this.healthRegen = 0; // Flat HP/s from pacts (negative = drain)
+    }
 
-        this.damageLog = []; // Death Recap Log
+    // True if the player is within `radius` horizontally of `pos` and on the same floor (pos.y = floor height)
+    isNear(pos, radius) {
+        const dx = this.position.x - pos.x;
+        const dz = this.position.z - pos.z;
+        return dx * dx + dz * dz < radius * radius && Math.abs(this.position.y - EYE_HEIGHT - pos.y) < 1.5;
     }
 
     takeDamage(amount, sourceName = 'Unknown', sourceId = -1) {
         if (this.invulnerabilityTimer > 0) return;
 
-        // Shield Absorption
-        let remainingDamage = amount;
-        if (this.shield > 0) {
-            if (this.shield >= remainingDamage) {
-                this.shield -= remainingDamage;
-                remainingDamage = 0;
-            } else {
-                remainingDamage -= this.shield;
-                this.shield = 0;
-            }
+        // Shield absorbs first
+        const absorbed = Math.min(this.shield, amount);
+        this.shield -= absorbed;
+        const remainingDamage = amount - absorbed;
+        if (remainingDamage <= 0) {
             this.updateHUD();
-            if (remainingDamage <= 0) return; // All absorbed
+            return;
         }
 
-        // Apply armor reduction (max 80%)
-        const reduction = Math.min(0.8, this.armor);
-        const finalDamage = remainingDamage * (1 - reduction);
+        // Armor reduction (max 80%)
+        const finalDamage = remainingDamage * (1 - Math.min(0.8, this.armor));
         this.sessionStats.damageTaken += finalDamage;
+        this.damageLog.push({ source: sourceName, id: sourceId, damage: finalDamage, timestamp: Date.now() });
 
-        // Log Damage
-        this.damageLog.push({
-            source: sourceName,
-            id: sourceId,
-            damage: finalDamage,
-            timestamp: Date.now()
-        });
-
-        this.health -= finalDamage;
-        if (this.health < 0) this.health = 0;
+        this.health = Math.max(0, this.health - finalDamage);
         this.updateHUD();
         if (this.hudManager) this.hudManager.onDamage();
-        soundManager.playPlayerHit();
-        this.invulnerabilityTimer = 0.5; // Increased to 0.5s
+        soundManager.play('playerHurt');
+        this.invulnerabilityTimer = 0.5;
 
         // Simple red flash effect
         document.body.style.backgroundColor = 'rgba(255, 0, 0, 0.2)';
         setTimeout(() => document.body.style.backgroundColor = 'black', 100);
 
-        if (this.health <= 0) {
-            console.log("GAME OVER");
-            if (window.game) {
-                window.game.gameOver(this.damageLog);
-            }
-        }
+        if (this.health <= 0) this._die();
+    }
+
+    _die() {
+        if (this.isDeadCallbackTriggered) return;
+        this.isDeadCallbackTriggered = true;
+        window.game.gameOver(this.damageLog);
     }
 
     reset() {
         this.health = 100;
-        this.position.set(0, 1.6, 0);
+        this.shield = 0;
+        this.gold = 0;
+        this.position.set(0, EYE_HEIGHT, 0);
         this.velocity.set(0, 0, 0);
         this.onGround = true;
         this.yaw = 0;
         this.pitch = 0;
         this.camera.rotation.set(0, 0, 0);
+        this.isDeadCallbackTriggered = false;
 
-        // Reset Stats
-        this.stats = {
-            maxHealth: 0,
-            armor: 0,
-            vampirism: 0,
-            regen: 0,
-            speed: 0,
-            meleeDamage: 0,
-            immolation: 0
-        };
+        this.stats = newUpgradeStats();
+        this.sessionStats = newSessionStats();
+        this.damageLog = [];
+        this.resetPacts();
 
-        // Reset Immolation Ring
         if (this.immolationRing) {
-            if (this.entityManager && this.entityManager.scene) {
-                this.entityManager.scene.remove(this.immolationRing);
-            }
+            this.entityManager.scene.remove(this.immolationRing);
+            this.immolationRing.geometry.dispose();
+            this.immolationRing.material.dispose();
             this.immolationRing = null;
         }
 
-        // Reset Pact Modifiers
-        this.lifeSteal = 0;
-        this.healthRegen = 0;
-        this.pactHpMultiplier = 1.0;
-        this.pactSpeedMultiplier = 1.0;
-        this.pactArmorBonus = 0;
-        this.pactVampirism = 0;
-
-        this.sessionStats = {
-            damageDealt: 0,
-            shotsFired: 0,
-            shotsHit: 0,
-            kills: 0,
-            startTime: Date.now(),
-            critCount: 0,
-            maxDamageHit: 0,
-            damageTaken: 0,
-            healingDone: 0
-        };
-
-        this.damageLog = []; // Clear log for new round
-
-        // Reset Buffs
-        this.isBerserk = false;
-        this.berserkTimer = 0;
-        this.weapon.infiniteAmmo = false;
-        this.weapon.fireRateMultiplier = 1.0;
-
-        this.recalculateStats();
-
         this.weapon.reset();
-        this.updateHUD();
+        this.resetBuffs();
+        this.recalculateStats();
     }
 
     resetBuffs() {
@@ -204,12 +174,9 @@ export class Player {
 
     heal(amount) {
         const oldHealth = this.health;
-        this.health += amount;
-        if (this.health > this.maxHealth) this.health = this.maxHealth;
-
+        this.health = Math.min(this.maxHealth, this.health + amount);
         const effectiveHeal = this.health - oldHealth;
         if (effectiveHeal > 0) this.sessionStats.healingDone += effectiveHeal;
-
         this.updateHUD();
     }
 
@@ -224,12 +191,12 @@ export class Player {
     }
 
     addGold(amount) {
-        this.gold = (this.gold || 0) + amount;
+        this.gold += amount;
         this.updateHUD();
     }
 
     spendGold(amount) {
-        this.gold = Math.max(0, (this.gold || 0) - amount);
+        this.gold = Math.max(0, this.gold - amount);
         this.updateHUD();
     }
 
@@ -242,63 +209,35 @@ export class Player {
         this.updateHUD();
     }
 
+    // Damage and push back every enemy within 15m
     triggerShockwave() {
-        // Visual Effect
-        if (this.entityManager) {
-            this.entityManager.createShockwave(this.position);
-        }
+        this.entityManager.createShockwave(this.position);
 
-        // Logic: Push all enemies away
-        if (this.entityManager && this.entityManager.entities) {
-            this.entityManager.entities.forEach(entity => {
-                if (entity.entityType === 'enemy' && !entity.isDead) {
-                    const dist = this.position.distanceTo(entity.position);
-                    if (dist < 15) { // 15m Radius
-                        entity.takeDamage(50); // Massive Damage
-
-                        // Knockback
-                        const pushDir = new THREE.Vector3().subVectors(entity.position, this.position).normalize();
-                        pushDir.y = 0.2; // Slight lift
-
-                        // Apply push (simple teleport for now, or velocity if they had physics)
-                        const newPos = entity.position.clone().add(pushDir.multiplyScalar(5));
-                        if (entity.ai && entity.ai.canMoveTo(newPos)) {
-                            entity.position.copy(newPos);
-                        }
-                    }
-                }
-            });
+        for (const entity of this.entityManager.entities) {
+            if (entity.entityType !== 'enemy' || entity.isDead) continue;
+            if (this.position.distanceTo(entity.position) >= 15) continue;
+            entity.takeDamage(50);
+            if (entity.ai) entity.ai.knockback(entity.position.x - this.position.x, entity.position.z - this.position.z, 5);
         }
     }
 
     updateHUD() {
-        if (this.hudManager) {
-            this.hudManager.updateHealth(this.health, this.maxHealth, this.shield);
-            this.hudManager.updateAmmo(this.weapon.currentAmmo, this.weapon.reserveAmmo);
-            this.hudManager.updateStats(this);
-            this.hudManager.updateGold(this.gold || 0);
-            this.hudManager.updateBuffs({
-                berserk: {
-                    active: this.isBerserk,
-                    time: this.berserkTimer,
-                    max: this.berserkMaxDuration || 15
-                }
-            });
-        }
+        if (!this.hudManager) return;
+        this.hudManager.updateHealth(this.health, this.maxHealth, this.shield);
+        this.hudManager.updateAmmo(this.weapon.currentAmmo, this.weapon.reserveAmmo);
+        this.hudManager.updateStats(this);
+        this.hudManager.updateGold(this.gold);
+        this.hudManager.updateBerserk(this.isBerserk, this.berserkTimer, this.berserkMaxDuration);
     }
 
     update(dt) {
         if (this.invulnerabilityTimer > 0) this.invulnerabilityTimer -= dt;
 
-        // Slow Timer
         if (this.slowTimer > 0) {
             this.slowTimer -= dt;
-            if (this.slowTimer <= 0) {
-                this.slowMultiplier = 1.0;
-            }
+            if (this.slowTimer <= 0) this.slowMultiplier = 1.0;
         }
 
-        // Berserk Timer
         if (this.isBerserk) {
             this.berserkTimer -= dt;
             if (this.berserkTimer <= 0) {
@@ -311,381 +250,263 @@ export class Player {
         this.handleRotation();
         this.handleMovement(dt);
 
-        // Shooting Input - Removed Space bar to allow jumping
-        if (this.input.keys['Mouse0']) { // Left Click only
-            this.handleShooting();
-        }
-
-        // Melee Input (Right Click)
-        if (this.input.keys['Mouse1']) {
-            this.handleMelee();
-        }
-
-        // Reload Input
-        if (this.input.keys['KeyR']) {
-            this.weapon.reload();
-        }
+        if (this.input.isKeyDown('Mouse0')) this.handleShooting();
+        if (this.input.isKeyDown('Mouse1')) this.handleMelee();
+        if (this.input.isKeyDown('KeyR')) this.weapon.reload();
 
         this.weapon.update(dt);
+        this.updateImmolation(dt);
 
-        // Immolation Aura Logic
-        if (this.stats.immolation > 0) {
-            if (!this.immolationRing) {
-                const ringGeom = new THREE.RingGeometry(4.4, 4.5, 64);
-                ringGeom.rotateX(-Math.PI / 2);
-                const ringMat = new THREE.MeshBasicMaterial({
-                    color: 0xff3300,
-                    side: THREE.DoubleSide,
-                    transparent: true,
-                    opacity: 0.6,
-                    depthWrite: false
-                });
-                this.immolationRing = new THREE.Mesh(ringGeom, ringMat);
-                if (this.entityManager && this.entityManager.scene) {
-                    this.entityManager.scene.add(this.immolationRing);
-                }
-                this.immolationTimer = 0;
-                this.immolationPulseTimer = 0;
-            }
-
-            this.immolationRing.visible = true;
-            this.immolationRing.position.set(this.position.x, 0.05, this.position.z);
-            
-            this.immolationPulseTimer += dt * 4.0;
-            const pulse = 1.0 + Math.sin(this.immolationPulseTimer) * 0.04;
-            this.immolationRing.scale.set(pulse, 1.0, pulse);
-            this.immolationRing.rotation.y += dt * 0.5;
-
-            this.immolationTimer += dt;
-            if (this.immolationTimer >= 0.5) {
-                this.immolationTimer = 0;
-                const range = 4.5;
-                const damage = this.stats.immolation * 2.5; // 5 damage/sec per level
-                const origin = this.position;
-
-                if (this.entityManager && this.entityManager.entities) {
-                    this.entityManager.entities.forEach(entity => {
-                        if (entity.entityType === 'enemy' && !entity.isDead) {
-                            const dist = origin.distanceTo(entity.position);
-                            if (dist < range) {
-                                entity.takeDamage(damage);
-                            }
-                        }
-                    });
-                }
-            }
-        } else {
-            if (this.immolationRing) {
-                this.immolationRing.visible = false;
-            }
-        }
-
-        // Regeneration / Drain
-        const totalRegen = this.regen + (this.healthRegen || 0);
+        // Regeneration / pact drain (the drain can kill)
+        const totalRegen = this.regen + this.healthRegen;
         if (totalRegen > 0 && this.health < this.maxHealth) {
             this.heal(totalRegen * dt);
         } else if (totalRegen < 0) {
-            // Drain health, but don't kill the player directly (leave at 1 HP or kill?)
-            // Let's let it kill the player!
-            this.health += totalRegen * dt;
-            if (this.health <= 0) {
-                this.health = 0;
-                if (!this.isDeadCallbackTriggered) {
-                    this.isDeadCallbackTriggered = true;
-                    if (window.game) window.game.gameOver(this.damageLog);
-                }
-            }
+            this.health = Math.max(0, this.health + totalRegen * dt);
+            if (this.health <= 0) this._die();
         }
 
         this.updateHUD();
     }
 
-    handleMelee() {
-        if (this.weapon.melee()) {
-            soundManager.playShoot(); // Use shoot sound for now, or a specific whoosh if available
+    // Burning ring: 2.5 damage per level every 0.5s to enemies within IMMOLATION_RANGE
+    updateImmolation(dt) {
+        if (this.stats.immolation <= 0) {
+            if (this.immolationRing) this.immolationRing.visible = false;
+            return;
+        }
 
-            // Hit Detection (SphereCast)
-            // Range: 3.0
-            // Radius: 1.0
-            const range = 3.0;
-            const damage = 10 + (this.stats.meleeDamage || 0) * 15; // Base 10, +15 per level
-            const knockbackForce = 15; // Strong push
+        if (!this.immolationRing) {
+            const ringGeom = new THREE.RingGeometry(IMMOLATION_RANGE - 0.1, IMMOLATION_RANGE, 96);
+            ringGeom.rotateX(-Math.PI / 2);
+            const ringMat = new THREE.MeshBasicMaterial({
+                color: PALETTE.emberBright,
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.6,
+                depthWrite: false
+            });
+            this.immolationRing = new THREE.Mesh(ringGeom, ringMat);
+            this.entityManager.scene.add(this.immolationRing);
+            this.immolationTimer = 0;
+            this.immolationPulseTimer = 0;
+        }
 
-            // Get camera forward direction
-            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-            const origin = this.camera.position.clone();
+        const ring = this.immolationRing;
+        ring.visible = true;
+        ring.position.set(this.position.x, this.position.y - EYE_HEIGHT + 0.05, this.position.z);
+        this.immolationPulseTimer += dt * 4.0;
+        const pulse = 1.0 + Math.sin(this.immolationPulseTimer) * 0.04;
+        ring.scale.set(pulse, 1.0, pulse);
+        ring.rotation.y += dt * 0.5;
 
-            let closestEnemy = null;
-            let closestDist = Infinity;
+        this.immolationTimer += dt;
+        if (this.immolationTimer < 0.5) return;
+        this.immolationTimer = 0;
 
-            // Check all enemies to find the closest one in range/cone
-            if (this.entityManager && this.entityManager.entities) {
-                this.entityManager.entities.forEach(entity => {
-                    if (entity.entityType === 'enemy' && !entity.isDead) {
-                        const toEnemy = new THREE.Vector3().subVectors(entity.position, origin);
-                        const dist = toEnemy.length();
-
-                        const hitRadius = entity.radius || 0.8;
-                        if (dist < range + hitRadius) { // Within range
-                            const angle = toEnemy.angleTo(forward);
-                            if (angle < Math.PI / 4) { // Within 45 degree cone
-                                // Found a candidate, check if it's closer
-                                if (dist < closestDist) {
-                                    closestDist = dist;
-                                    closestEnemy = entity;
-                                }
-                            }
-                        }
-                    }
-                });
-            }
-
-            // Apply hit to the single closest enemy
-            if (closestEnemy) {
-                const died = closestEnemy.takeDamage(damage);
-
-                // Apply Knockback
-                const toEnemy = new THREE.Vector3().subVectors(closestEnemy.position, origin);
-                const pushDir = toEnemy.normalize();
-                pushDir.y = 0; // Keep horizontal to avoid floating issues
-                pushDir.normalize();
-
-                // Calculate potential new position
-                const pushDist = 1.0;
-                const newPos = closestEnemy.position.clone().add(pushDir.multiplyScalar(pushDist));
-
-                // Only move if valid (check walls via EnemyAI)
-                if (closestEnemy.ai && closestEnemy.ai.canMoveTo(newPos)) {
-                    closestEnemy.position.copy(newPos);
-                }
-
-                soundManager.playHit();
+        const damage = this.stats.immolation * 2.5;
+        for (const entity of this.entityManager.entities) {
+            if (entity.entityType === 'enemy' && !entity.isDead && this.position.distanceTo(entity.position) < IMMOLATION_RANGE) {
+                entity.takeDamage(damage);
             }
         }
     }
 
-    handleShooting() {
-        const bulletsFired = this.weapon.shoot();
-        if (bulletsFired > 0) {
-            this.sessionStats.shotsFired += bulletsFired;
-            soundManager.playShoot();
+    // Staff bash: hits the closest enemy in a 45° cone within 3m and knocks it back
+    handleMelee() {
+        if (!this.weapon.melee()) return;
+        soundManager.play('melee');
 
-            // Spawn projectiles instead of raycast
-            // Spawn projectiles
-            const count = bulletsFired;
-            const arcDeg = this.weapon.arc || 0;
-            const totalArcRad = THREE.MathUtils.degToRad(arcDeg);
+        const range = 3.0;
+        const damage = 10 + this.stats.meleeDamage * 15;
+        _forward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
 
-            // Camera vectors
-            const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
-
-            for (let i = 0; i < count; i++) {
-                // Calculate angle for this bullet
-                let angle = 0;
-                if (count > 1) {
-                    const pct = i / (count - 1);
-                    angle = -totalArcRad / 2 + (totalArcRad * pct);
-                } else if (totalArcRad > 0) {
-                    // Single shot with arc = random spread within that arc
-                    angle = (Math.random() - 0.5) * totalArcRad;
-                }
-
-                // Get base direction and apply arc rotation
-                const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-                direction.applyAxisAngle(up, angle);
-                direction.normalize();
-
-                // Critical Hit Calculation
-                const isCritical = Math.random() < this.weapon.critChance;
-                const damage = isCritical ? this.weapon.damage * this.weapon.critDamage : this.weapon.damage;
-
-                // Create projectile
-                const startPos = this.camera.position.clone().add(direction.clone().multiplyScalar(0.5));
-                const projectile = new Projectile(
-                    startPos,
-                    direction,
-                    this.weapon.projectileSpeed,
-                    damage,
-                    this.levelManager,
-                    this.weapon.piercing || 0,
-                    isCritical,
-                    this.weapon.knockback || 0,
-                    this.weapon.explosion || 0,
-                    0, // Gravity
-                    1.0, // Radius
-                    'Player', // Source Name
-                    -1, // Source ID
-                    this.weapon.range, // Max Distance
-                    this.weapon.ricochet || 0 // Ricochet Count
-                );
-                projectile.isPlayerProjectile = true; // Mark as player projectile
-                projectile.homingLevel = this.weapon.stats.homing || 0; // Transmit homing level
-
-                // Add to entity manager
-                if (this.entityManager) {
-                    this.entityManager.add(projectile);
-                }
+        let closestEnemy = null;
+        let closestDist = Infinity;
+        for (const entity of this.entityManager.entities) {
+            if (entity.entityType !== 'enemy' || entity.isDead) continue;
+            _toEnemy.subVectors(entity.position, this.camera.position);
+            const dist = _toEnemy.length();
+            if (dist < range + entity.radius && dist < closestDist && _toEnemy.angleTo(_forward) < Math.PI / 4) {
+                closestDist = dist;
+                closestEnemy = entity;
             }
+        }
+        if (!closestEnemy) return;
+
+        closestEnemy.takeDamage(damage);
+        if (closestEnemy.ai) {
+            closestEnemy.ai.knockback(closestEnemy.position.x - this.camera.position.x, closestEnemy.position.z - this.camera.position.z, 1.0);
+        }
+        soundManager.play('meleeHit', closestEnemy.position);
+    }
+
+    handleShooting() {
+        const count = this.weapon.shoot();
+        if (count <= 0) return;
+
+        this.sessionStats.shotsFired += count;
+        soundManager.play('shoot');
+
+        const w = this.weapon;
+        const totalArcRad = THREE.MathUtils.degToRad(w.arc || 0);
+        _up.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
+
+        for (let i = 0; i < count; i++) {
+            // Multishot fans out evenly over the arc; a single shot with an arc spreads randomly
+            let angle = 0;
+            if (count > 1) angle = -totalArcRad / 2 + totalArcRad * (i / (count - 1));
+            else if (totalArcRad > 0) angle = (Math.random() - 0.5) * totalArcRad;
+
+            _dir.set(0, 0, -1).applyQuaternion(this.camera.quaternion).applyAxisAngle(_up, angle).normalize();
+
+            const isCritical = Math.random() < w.critChance;
+            _startPos.copy(this.camera.position).addScaledVector(_dir, 0.5);
+
+            this.entityManager.add(new Projectile(_startPos, _dir, w.projectileSpeed, isCritical ? w.damage * w.critDamage : w.damage, this.levelManager, {
+                piercing: w.piercing,
+                isCritical,
+                knockback: w.knockback,
+                explosion: w.explosion,
+                sourceName: 'Player',
+                sourceId: -1,
+                maxDistance: w.range,
+                ricochet: w.ricochet,
+                homingLevel: w.stats.homing
+            }));
         }
     }
 
     handleRotation() {
         const mouseDelta = this.input.getMouseDelta();
-
         this.yaw -= mouseDelta.x * CONSTANTS.PLAYER_SENSITIVITY;
         this.pitch -= mouseDelta.y * CONSTANTS.PLAYER_SENSITIVITY;
+        this.pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.pitch)); // Look up/down limit
+        this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+    }
 
-        // Clamp pitch (look up/down limit)
-        this.pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.pitch));
-
-        // Apply rotation to camera
-        // Order: Y (Yaw), X (Pitch), Z (Roll - 0)
+    // Point the camera at a world position
+    lookAt(target, keepLevel = false) {
+        const dx = target.x - this.position.x;
+        const dz = target.z - this.position.z;
+        const dy = target.y - this.position.y;
+        this.yaw = Math.atan2(-dx, -dz); // Matches the camera's (0, 0, -1) forward
+        this.pitch = keepLevel ? 0 : -Math.atan2(dy, Math.sqrt(dx * dx + dz * dz));
         this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
     }
 
     handleMovement(dt) {
-        const speed = this.speed * (this.slowMultiplier || 1.0);
-        const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
-        const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
+        const speed = this.speed * this.slowMultiplier;
+        _forward.set(0, 0, -1).applyAxisAngle(_yAxis, this.yaw);
+        _right.set(1, 0, 0).applyAxisAngle(_yAxis, this.yaw);
 
-        // Horizontal Movement
-        const moveDir = new THREE.Vector3(0, 0, 0);
-        if (this.input.isKeyDown('KeyW')) moveDir.add(forward);
-        if (this.input.isKeyDown('KeyS')) moveDir.sub(forward);
-        if (this.input.isKeyDown('KeyA')) moveDir.sub(right);
-        if (this.input.isKeyDown('KeyD')) moveDir.add(right);
+        _moveDir.set(0, 0, 0);
+        if (this.input.isKeyDown('KeyW')) _moveDir.add(_forward);
+        if (this.input.isKeyDown('KeyS')) _moveDir.sub(_forward);
+        if (this.input.isKeyDown('KeyA')) _moveDir.sub(_right);
+        if (this.input.isKeyDown('KeyD')) _moveDir.add(_right);
+        // Touch stick: analog, a partial push walks slower
+        const axis = this.input.moveAxis;
+        _moveDir.addScaledVector(_forward, axis.y).addScaledVector(_right, axis.x);
+        const len = _moveDir.length();
+        if (len > 0) _moveDir.multiplyScalar(speed * Math.min(1, len) / len);
 
-        if (moveDir.lengthSq() > 0) {
-            moveDir.normalize().multiplyScalar(speed);
-        }
+        this.velocity.x = _moveDir.x;
+        this.velocity.z = _moveDir.z;
 
-        this.velocity.x = moveDir.x;
-        this.velocity.z = moveDir.z;
-
-        // Jumping
-        if (this.onGround && this.input.keys['Space']) {
+        if (this.onGround && this.input.isKeyDown('Space')) {
             this.velocity.y = CONSTANTS.JUMP_FORCE;
             this.onGround = false;
+            soundManager.play('jump');
         }
-
-        // Gravity
         this.velocity.y -= CONSTANTS.GRAVITY * dt;
 
-        // Apply Velocity
-        const deltaPosition = this.velocity.clone().multiplyScalar(dt);
-        const nextPos = this.position.clone().add(deltaPosition);
+        _nextPos.copy(this.position).addScaledVector(this.velocity, dt);
 
-        // Ground Collision
-        if (nextPos.y < 1.6) {
-            nextPos.y = 1.6;
+        // Walls of the floor we stand on push the player out (depenetration)
+        const lm = this.levelManager;
+        const feetY = this.position.y - EYE_HEIGHT;
+        const checkY = lm.getCollisionCheckY(lm.getFloorHeight(this.position.x, this.position.z, feetY), feetY);
+        lm.resolveCircleCollision(_nextPos, this.radius, checkY);
+        this.position.x = _nextPos.x;
+        this.position.z = _nextPos.z;
+
+        // Ground check at the resolved horizontal position, then floating islands
+        const floorY = lm.getFloorHeight(this.position.x, this.position.z, checkY);
+        let grounded = _nextPos.y < floorY + EYE_HEIGHT;
+        this.position.y = grounded ? floorY + EYE_HEIGHT : _nextPos.y;
+        if (this._pushOutOfSky()) grounded = true;
+
+        if (grounded) {
+            if (!this.onGround && this.velocity.y < -6) soundManager.play('land'); // Not on ramp bumps
             this.velocity.y = 0;
-            this.onGround = true;
-        } else {
-            this.onGround = false;
+            // A footstep every 2.2 m walked
+            this.stepDistance = (this.stepDistance || 0) + Math.hypot(this.velocity.x, this.velocity.z) * dt;
+            if (this.stepDistance > 2.2) {
+                this.stepDistance = 0;
+                soundManager.play('footstep');
+            }
         }
-        let canMoveX = true;
-        const checkRadius = this.radius;
-
-        // Helper to check collision at a specific point
-        const checkCollision = (x, z) => {
-            if (!this.levelManager) return false;
-            return this.levelManager.isWall(x, z) || this.levelManager.isDecoration(x, z);
-        };
-
-        // Check X direction
-        const nextPosX = nextPos.x;
-        const currentZ = this.position.z;
-        const r = this.radius;
-
-        // Check all 4 corners at the new X position
-        if (checkCollision(nextPosX + r, currentZ + r) ||
-            checkCollision(nextPosX + r, currentZ - r) ||
-            checkCollision(nextPosX - r, currentZ + r) ||
-            checkCollision(nextPosX - r, currentZ - r)) {
-            canMoveX = false;
-        }
-
-        if (canMoveX) {
-            this.position.x = nextPosX;
-        }
-
-        // Check Z direction
-        let canMoveZ = true;
-        const nextPosZ = nextPos.z;
-        const currentX = this.position.x; // Updated X
-
-        // Check all 4 corners at the new Z position
-        if (checkCollision(currentX + r, nextPosZ + r) ||
-            checkCollision(currentX + r, nextPosZ - r) ||
-            checkCollision(currentX - r, nextPosZ + r) ||
-            checkCollision(currentX - r, nextPosZ - r)) {
-            canMoveZ = false;
-        }
-
-        if (canMoveZ) {
-            this.position.z = nextPosZ;
-        }
-
-        // Apply Vertical Position
-        this.position.y = nextPos.y;
+        this.onGround = grounded;
 
         this.camera.position.copy(this.position);
     }
 
-    getMaxLevel(stat) {
+    // Floating islands and bridges are solid: push the body out of them.
+    // Returns true when something below holds the player up.
+    _pushOutOfSky() {
+        const sky = this.levelManager.skyColliders;
+        if (!sky) return false;
+        let supported = false;
+        for (let pass = 0; pass < 2; pass++) {
+            for (const offset of BODY_POINTS) {
+                if (!sky.probe(this.position.x, this.position.y + offset, this.position.z, this.radius, _contact)) continue;
+                this.position.addScaledVector(_contact.normal, _contact.depth);
+                if (_contact.normal.y > 0.6) supported = true;
+                else if (_contact.normal.y < -0.6 && this.velocity.y > 0) this.velocity.y = 0; // Head bump
+            }
+        }
+        return supported;
+    }
+
+    getMaxLevel() {
         return this.MAX_LEVEL;
     }
 
     upgrade(stat) {
-        if (this.stats[stat] !== undefined) {
-            const maxLvl = this.getMaxLevel(stat);
-            if (this.stats[stat] < maxLvl) {
-                this.stats[stat]++;
-                this.recalculateStats();
-                return true;
-            }
-        }
-        return false;
+        if (this.stats[stat] === undefined || this.stats[stat] >= this.getMaxLevel(stat)) return false;
+        this.stats[stat]++;
+        this.recalculateStats();
+        return true;
     }
 
     recalculateStats() {
-        // Max Health: +25 per level (Buffed from 20)
+        // Max Health: +25 per level, heal the difference so the upgrade feels good immediately
         const oldMax = this.maxHealth;
-        const baseMax = 100 + (this.stats.maxHealth * 25);
-        this.maxHealth = Math.max(25, baseMax * (this.pactHpMultiplier || 1.0));
+        this.maxHealth = Math.max(25, this.getStatValue('maxHealth', this.stats.maxHealth) * this.pactHpMultiplier);
+        if (this.maxHealth > oldMax) this.health += this.maxHealth - oldMax;
+        this.health = Math.min(this.health, this.maxHealth);
 
-        // Heal the difference so upgrade feels good immediately
-        if (this.maxHealth > oldMax) {
-            this.health += (this.maxHealth - oldMax);
-        }
-        if (this.health > this.maxHealth) {
-            this.health = this.maxHealth;
-        }
-
-        // Armor: +3.0% per level (Nerfed from 4%) + pact bonus
-        this.armor = this.stats.armor * 0.03 + (this.pactArmorBonus || 0);
-
-        // Vampirism: +2% per level (max 20%) + pact modifier
-        this.vampirism = this.stats.vampirism * 0.02 + (this.pactVampirism || 0);
-
-        // Regeneration: +0.3 HP/s per level (Nerfed from 0.5)
-        this.regen = this.stats.regen * 0.3;
-
-        // Speed: +8% per level (Buffed from 5%) * pact speed multiplier
-        this.speed = CONSTANTS.PLAYER_SPEED * (1 + this.stats.speed * 0.08) * (this.pactSpeedMultiplier || 1.0);
+        this.armor = this.getStatValue('armor', this.stats.armor) / 100 + this.pactArmorBonus;
+        this.vampirism = this.getStatValue('vampirism', this.stats.vampirism) / 100 + this.pactVampirism;
+        this.regen = this.getStatValue('regen', this.stats.regen);
+        this.speed = CONSTANTS.PLAYER_SPEED * (this.getStatValue('speed', this.stats.speed) / 100) * this.pactSpeedMultiplier;
+        this.magnetRange = this.getStatValue('magnet', this.stats.magnet); // Pickups fly to the player within this range
 
         this.updateHUD();
     }
 
+    // Value of a stat at an upgrade level (percent stats are returned as percentages)
     getStatValue(stat, level) {
         switch (stat) {
-            case 'maxHealth': return 100 + (level * 25);
-            case 'armor': return level * 3.0; // Return as percentage number
-            case 'vampirism': return level * 2; // Return as percentage number
+            case 'maxHealth': return 100 + level * 25;
+            case 'armor': return level * 3.0; // +3% damage reduction per level
+            case 'vampirism': return level * 2; // +2% life steal per level
             case 'regen': return level * 0.3; // HP per second
-            case 'speed': return Math.round((1 + level * 0.08) * 100); // Percentage speed
+            case 'speed': return (1 + level * 0.08) * 100; // +8% per level
             case 'meleeDamage': return 10 + level * 15;
             case 'immolation': return level * 5; // Damage per second
+            case 'magnet': return level > 0 ? 1.5 + level * 0.85 : 0; // Metres: 2.35 m at level 1, 10 m at level 10
             default: return 0;
         }
     }

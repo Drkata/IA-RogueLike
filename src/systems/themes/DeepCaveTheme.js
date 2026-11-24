@@ -1,13 +1,19 @@
+// Values are calibrated: see ART_DIRECTION.md (« Lumière ») before changing them.
 export const DeepCaveTheme = {
     name: 'Deep Cave',
-    wallColors: [0x2b2b2b, 0x1a1a1a, 0x333333], // Dark Rock
-    floorColor: 0x111111, // Dark Floor
-    ceilingColor: 0x000000,
-    ambientLight: 0x606090, // Brighter Blue/Purple (was 0x202040)
-    pointLightColor: 0xaaaaff, // Brighter Crystals
-    fogColor: 0x151525, // Lighter Blue/Black Fog (was 0x050510)
-    fogDensity: 0.02, // Reduced fog (was 0.04)
-    wallTextureType: 'noise', // Rough Rock
-    floorTextureType: 'noise', // Rough Floor
-    decorations: []
+    biome: 'cave', // Layered rock veined with glowing crystal
+    lighting: {
+        sky: 0x8a90c8,
+        ground: 0x404058,
+        fill: 7.5,
+        sun: 0xa8b8ff, // Cold light from crystal clusters above
+        sunIntensity: 5.0,
+        sunDirection: [0.5, 0.7, 0.3],
+        point: 0x8fb0ff, // Crystal glow
+        pointIntensity: 24
+    },
+    fogColor: 0x0d0e18,
+    fogDensity: 0.028,
+    accent: 0x8fb0ff,
+    foliage: 0x3a3a5a // Dead roots
 };

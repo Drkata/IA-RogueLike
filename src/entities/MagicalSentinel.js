@@ -1,109 +1,90 @@
 import * as THREE from 'three';
 import { Projectile } from './Projectile.js';
-import { Pathfinder } from '../systems/Pathfinder.js';
-import { CONSTANTS } from '../core/Constants.js';
 import { soundManager } from '../systems/SoundManager.js';
+import { TextureGenerator } from '../systems/TextureGenerator.js';
 import { FloatingText } from './FloatingText.js';
 import { Pickup } from './Pickup.js';
+import { PALETTE, css } from '../core/Palette.js';
+
+const EYE_HEIGHT = 0.6; // Eye orb height above the centre of mass
+const _eyePos = new THREE.Vector3();
+const _dir = new THREE.Vector3();
+
+let shared = null; // Geometries/materials shared by every sentinel, created on first use
+
+function getShared() {
+    if (!shared) {
+        shared = {
+            pedestalGeo: new THREE.CylinderGeometry(0.2, 0.25, 1.4, 8),
+            pedestalMat: new THREE.MeshStandardMaterial({ color: 0x4a4a4a, roughness: 0.8, metalness: 0.2 }),
+            headGeo: new THREE.TorusGeometry(0.2, 0.05, 8, 16),
+            headMat: new THREE.MeshStandardMaterial({ color: 0x7a6a5a, roughness: 0.5, metalness: 0.4 }),
+            eyeGeo: new THREE.IcosahedronGeometry(0.12, 1),
+            eyeMat: new THREE.MeshStandardMaterial({ color: PALETTE.hex, emissive: PALETTE.hexBright, emissiveIntensity: 1.5, roughness: 0.1, metalness: 0.5 }),
+            // Glow sprite instead of a PointLight: removing a light triggers a shader recompilation freeze
+            glowMat: new THREE.SpriteMaterial({
+                map: TextureGenerator.getGlowTexture(),
+                color: PALETTE.hex,
+                transparent: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            })
+        };
+    }
+    return shared;
+}
 
 export class MagicalSentinel {
     static idCounter = 0;
 
-    constructor(gridX, gridZ, levelManager, entityManager, level = 1) {
+    // `checkY` selects the floor the sentinel stands on
+    constructor(gridX, gridZ, levelManager, entityManager, level = 1, checkY = 0) {
         this.id = 'sentinel_' + MagicalSentinel.idCounter++;
         this.entityType = 'enemy'; // So EntityManager processes it as targetable
         this.levelManager = levelManager;
         this.entityManager = entityManager;
         this.level = level;
-        this.cellSize = CONSTANTS.CELL_SIZE;
         this.isDead = false;
 
-        this.position = new THREE.Vector3(
-            gridX * this.cellSize + this.cellSize / 2,
-            0.8, // Center of mass
-            gridZ * this.cellSize + this.cellSize / 2
-        );
+        this.position = levelManager.floorPositionAt(gridX, gridZ, checkY);
+        const spawnFloorY = this.position.y;
+        this.position.y += 0.8; // Center of mass
 
         this.health = (25 + (level * 5)) / 2;
         this.radius = 0.8; // Hitbox radius
 
         // Attack config
         this.projectileSpeed = 12.0;
-        this.damage = (10 + (level * 2)) * 2;
+        this.damage = (10 + level * 2) / 2;
         this.attackCooldown = Math.max(1.0, 3.5 - (level * 0.15)) / 5.0;
         this.lastAttackTime = Math.random() * 1.5; // Stagger attack starts
         this.attackRange = 15.0;
 
-        this.pathfinder = new Pathfinder(this.levelManager);
+        this.pathfinder = levelManager.pathfinder;
 
         // Visuals
+        const { pedestalGeo, pedestalMat, headGeo, headMat, eyeGeo, eyeMat, glowMat } = getShared();
         this.mesh = new THREE.Group();
-        this.mesh.position.x = this.position.x;
-        this.mesh.position.z = this.position.z;
-        this.mesh.position.y = 0; // Base on floor
+        this.mesh.position.set(this.position.x, spawnFloorY, this.position.z); // Base on floor
         this.mesh.userData.entity = this;
 
         // 1. Stone Pedestal
-        const pedestalGeo = new THREE.CylinderGeometry(0.2, 0.25, 1.4, 8);
-        const pedestalMat = new THREE.MeshStandardMaterial({
-            color: 0x4a4a4a,
-            roughness: 0.8,
-            metalness: 0.2
-        });
         const pedestal = new THREE.Mesh(pedestalGeo, pedestalMat);
         pedestal.position.y = 0.7; // Pivot in middle
-        pedestal.castShadow = true;
-        pedestal.receiveShadow = true;
         this.mesh.add(pedestal);
 
         // 2. Torus Head (holds the eye/orb)
-        const headGeo = new THREE.TorusGeometry(0.2, 0.05, 8, 16);
-        const headMat = new THREE.MeshStandardMaterial({
-            color: 0x7a6a5a,
-            roughness: 0.5,
-            metalness: 0.4
-        });
         const head = new THREE.Mesh(headGeo, headMat);
         head.position.y = 1.4;
         head.rotation.x = Math.PI / 2; // Lie flat
         this.mesh.add(head);
 
         // 3. Glowing Eye Orb
-        const eyeGeo = new THREE.IcosahedronGeometry(0.12, 1);
-        const eyeMat = new THREE.MeshStandardMaterial({
-            color: 0xff0000,
-            emissive: 0xff0000,
-            emissiveIntensity: 0.8,
-            roughness: 0.1,
-            metalness: 0.9
-        });
         this.eyeMesh = new THREE.Mesh(eyeGeo, eyeMat);
         this.eyeMesh.position.y = 1.4;
         this.mesh.add(this.eyeMesh);
 
-        // 4. Point Light (Red glow)
-        // A dynamic PointLight being removed from the scene causes a massive global shader recompilation freeze!
-        // We replace it with a glowing Sprite.
-        const canvas = document.createElement('canvas');
-        canvas.width = 64;
-        canvas.height = 64;
-        const ctx = canvas.getContext('2d');
-        const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-        grad.addColorStop(0, 'rgba(255, 0, 0, 1)');
-        grad.addColorStop(0.4, 'rgba(255, 0, 0, 0.5)');
-        grad.addColorStop(1, 'rgba(255, 0, 0, 0)');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, 64, 64);
-        
-        const glowTex = new THREE.CanvasTexture(canvas);
-        const glowMat = new THREE.SpriteMaterial({
-            map: glowTex,
-            color: 0xff0000,
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false
-        });
-        
+        // 4. Red glow
         this.light = new THREE.Sprite(glowMat);
         this.light.scale.set(4, 4, 4);
         this.light.position.y = 1.4;
@@ -114,21 +95,8 @@ export class MagicalSentinel {
         if (this.isDead) return false;
 
         this.health -= amount;
-
-        // Floating Text
-        if (this.entityManager) {
-            const color = isCritical ? '#ff00ff' : '#ff4444'; // Reddish for mechanical/constructs
-            const size = isCritical ? 2.5 : 1.8;
-            const text = amount.toFixed(1) + (isCritical ? '!' : '');
-
-            const pos = this.position.clone();
-            pos.y += 1.0;
-
-            const floatingText = new FloatingText(pos, text, color, size);
-            this.entityManager.add(floatingText);
-        }
-
-        soundManager.playHit(); // Play hit sound
+        // Reddish numbers for mechanical constructs
+        FloatingText.spawnDamage(this.entityManager, this.position, 1.0, amount, isCritical, isCritical ? 2.5 : 1.8, css(PALETTE.emberBright));
 
         if (this.health <= 0) {
             this.die();
@@ -141,25 +109,19 @@ export class MagicalSentinel {
         this.isDead = true;
         this.mesh.visible = false;
 
-        // Spawn hit effect explosion
-        if (this.entityManager) {
-            this.entityManager.createExplosion(this.position, this.damage * 0.5);
-            soundManager.playExplosion();
+        this.entityManager.createExplosion(this.position, this.damage * 2); // Death blast kept at its former strength
+        soundManager.play('towerDeath', this.position);
 
-            // Chance to drop pickup
-            if (Math.random() < 0.4) {
-                const type = Math.random() < 0.5 ? 'health' : 'ammo';
-                const value = type === 'health' ? 15 : 25;
-                const pickup = new Pickup(this.position, type, value);
-                this.entityManager.add(pickup);
-            }
+        // Chance to drop pickup
+        if (Math.random() < 0.4) {
+            const type = Math.random() < 0.5 ? 'health' : 'ammo';
+            this.entityManager.add(new Pickup(this.position, type, type === 'health' ? 15 : 25, this.levelManager));
+        }
 
-            // Gold Drop (80% chance)
-            if (Math.random() < 0.8) {
-                const goldVal = 8 + Math.floor(Math.random() * 8) + Math.floor(this.level * 0.6);
-                const goldPickup = new Pickup(this.position, 'gold', goldVal);
-                this.entityManager.add(goldPickup);
-            }
+        // Gold Drop (80% chance)
+        if (Math.random() < 0.8) {
+            const goldVal = 8 + Math.floor(Math.random() * 8) + Math.floor(this.level * 0.6);
+            this.entityManager.add(new Pickup(this.position, 'gold', goldVal, this.levelManager));
         }
     }
 
@@ -170,55 +132,37 @@ export class MagicalSentinel {
         const time = performance.now() / 1000;
         this.eyeMesh.position.y = 1.4 + Math.sin(time * 4) * 0.05;
 
-        // Look at player (only rotate yaw/Y so pedestal stays upright)
-        // Pedestal is static but we can rotate the head or just look at player
-        const dx = player.position.x - this.position.x;
-        const dz = player.position.z - this.position.z;
-        const angle = Math.atan2(dx, dz);
-        this.mesh.rotation.y = angle;
+        // Turn towards the player (yaw only, pedestal stays upright)
+        this.mesh.rotation.y = Math.atan2(player.position.x - this.position.x, player.position.z - this.position.z);
 
-        // Attack Logic
+        // Attack while the player is in range and visible from the eye
         const dist = this.position.distanceTo(player.position);
-        if (dist < this.attackRange) {
-            // Line of Sight Check (Sentinel is tall, check from height 1.4)
-            const sentinelHeightEye = this.position.clone();
-            sentinelHeightEye.y = 1.4;
+        if (dist >= this.attackRange) return;
+        _eyePos.copy(this.position);
+        _eyePos.y += EYE_HEIGHT;
+        if (dist >= 4.0 && !this.pathfinder.hasLineOfSight(_eyePos, player.position, 0)) return;
 
-            const hasLOS = dist < 4.0 || this.pathfinder.hasLineOfSight(sentinelHeightEye, player.position, 0);
-
-            if (hasLOS) {
-                this.lastAttackTime += dt;
-                if (this.lastAttackTime >= this.attackCooldown) {
-                    this.lastAttackTime = 0;
-                    this.shoot(player);
-                }
-            }
+        this.lastAttackTime += dt;
+        if (this.lastAttackTime >= this.attackCooldown) {
+            this.lastAttackTime = 0;
+            this.shoot(player);
         }
     }
 
+    // Slow magic orb fired from the eye
     shoot(player) {
-        if (!this.entityManager) return;
+        _eyePos.copy(this.position);
+        _eyePos.y += EYE_HEIGHT;
+        _dir.subVectors(player.position, _eyePos).normalize();
+        _eyePos.addScaledVector(_dir, 0.4);
 
-        // Target player's center of mass
-        const targetPos = player.position.clone();
-        const startPos = this.position.clone();
-        startPos.y = 1.4; // Shoot from head level
-
-        const dir = new THREE.Vector3().subVectors(targetPos, startPos).normalize();
-        const spawnPos = startPos.clone().add(dir.clone().multiplyScalar(0.4));
-
-        // Create slow magic orb
-        const projectile = new Projectile(
-            spawnPos,
-            dir,
-            this.projectileSpeed,
-            this.damage,
-            this.levelManager,
-            0, false, 0, 0, 0, 0.8,
-            "Sentinel", this.id,
-            80 // Range
-        );
-        this.entityManager.add(projectile);
-        soundManager.playShoot();
+        this.entityManager.add(new Projectile(_eyePos, _dir, this.projectileSpeed, this.damage, this.levelManager, {
+            radius: 0.8,
+            sourceName: "Sentinel",
+            sourceId: this.id,
+            maxDistance: 80,
+            color: PALETTE.hexBright // Arcane homing orb, distinct from minion shots
+        }));
+        soundManager.play('towerShoot', _eyePos);
     }
 }

@@ -1,19 +1,12 @@
 import * as THREE from 'three';
-import { CONSTANTS } from '../core/Constants.js';
 import { soundManager } from '../systems/SoundManager.js';
+import { PALETTE } from '../core/Palette.js';
 
 export class HealingFountain {
-    constructor(gridX, gridZ, cellSize) {
-        this.gridX = gridX;
-        this.gridZ = gridZ;
-        this.cellSize = cellSize || CONSTANTS.CELL_SIZE;
+    // `checkY` selects the floor the entity stands on (0, WALL_HEIGHT or 2 * WALL_HEIGHT)
+    constructor(gridX, gridZ, levelManager, checkY = 0) {
         this.entityType = 'fountain';
-
-        this.position = new THREE.Vector3(
-            gridX * this.cellSize + this.cellSize / 2,
-            0,
-            gridZ * this.cellSize + this.cellSize / 2
-        );
+        this.position = levelManager.floorPositionAt(gridX, gridZ, checkY);
         this.isDead = false;
         this.isUsed = false;
         this.radius = 1.0; // Collision/trigger radius
@@ -32,15 +25,13 @@ export class HealingFountain {
         });
         const basin = new THREE.Mesh(basinGeo, basinMat);
         basin.position.y = 0.25;
-        basin.castShadow = true;
-        basin.receiveShadow = true;
         this.mesh.add(basin);
 
         // 2. Glowing Pool Water (flat cylinder inside basin)
         const waterGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.02, 12);
         this.waterMat = new THREE.MeshStandardMaterial({
-            color: 0x00ff66,
-            emissive: 0x00ff66,
+            color: PALETTE.aether,
+            emissive: PALETTE.aetherBright,
             emissiveIntensity: 0.8,
             roughness: 0.1,
             metalness: 0.8,
@@ -52,7 +43,7 @@ export class HealingFountain {
         this.mesh.add(this.water);
 
         // 3. Green Light Source
-        this.light = new THREE.PointLight(0x00ff66, 1.2, 4);
+        this.light = new THREE.PointLight(PALETTE.aetherBright, 8, 6);
         this.light.position.y = 0.6;
         this.mesh.add(this.light);
     }
@@ -60,28 +51,19 @@ export class HealingFountain {
     update(dt, player) {
         if (this.isDead || this.isUsed) return;
 
-        // Collision Check (contact with player)
-        const dx = player.position.x - this.position.x;
-        const dz = player.position.z - this.position.z;
-        const distSq = dx * dx + dz * dz;
-        const triggerDist = this.radius + player.radius;
-
-        if (distSq < triggerDist * triggerDist) {
-            // Apply healing if player is alive and needs health
-            if (player.health < player.maxHealth) {
-                this.use(player);
-            } else {
-                // Show message that player is already full health
-                player.hudManager.showMessage("Vie déjà au maximum !", 100);
-            }
+        if (!player.isNear(this.position, this.radius + player.radius)) return;
+        if (player.health < player.maxHealth) {
+            this.use(player);
+        } else {
+            player.hudManager.showMessage("Votre vie est déjà au maximum");
         }
     }
 
     use(player) {
         this.isUsed = true;
         player.heal(this.healAmount);
-        soundManager.playPowerup();
-        player.hudManager.showMessage("Fontaine de Jouvence active : +50 PV !");
+        soundManager.play('fountain');
+        player.hudManager.showMessage("Fontaine de jouvence : +50 PV");
 
         // Deactivate visuals (water turns murky, light turns off)
         this.light.intensity = 0;

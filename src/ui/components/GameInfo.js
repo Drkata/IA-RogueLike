@@ -4,55 +4,40 @@ export class GameInfo {
     constructor(container) {
         this.element = document.createElement('div');
         this.element.id = 'top-left-panel';
-
-        // Minimap container will be moved here by HUDManager or Game
-        this.minimapContainer = document.createElement('div');
-        this.minimapContainer.id = 'minimap-container';
-        this.element.appendChild(this.minimapContainer);
-
-        this.infoContainer = document.createElement('div');
-        this.infoContainer.innerHTML = `
-            <div class="info-row">
-                <div style="display: flex; align-items: center; gap: 6px;">
-                    <span class="icon-wrapper" style="width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center;">${SVG_ICONS.dungeon_gate}</span>
-                    <span>LEVEL</span>
-                </div>
-                <span id="level-display" style="color: #00ff00">1</span>
-            </div>
-            <div class="info-row">
-                <div style="display: flex; align-items: center; gap: 6px;">
-                    <span class="icon-wrapper" style="width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center;">${SVG_ICONS.hostile}</span>
-                    <span>HOSTILES</span>
-                </div>
-                <span id="enemies-display" style="color: #ff3333">0</span>
-            </div>
-            <div class="info-row">
-                <div style="display: flex; align-items: center; gap: 6px;">
-                    <span class="icon-wrapper" style="width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center;">${SVG_ICONS.coin}</span>
-                    <span>GOLD</span>
-                </div>
-                <span id="gold-display" style="color: #ffd700">0</span>
-            </div>
+        this.element.className = 'compass';
+        this.element.innerHTML = `
+            <div id="minimap-container" class="scrying"></div>
+            <ul class="chronicle">
+                <li><span class="chronicle__icon">${SVG_ICONS.dungeon_gate}</span><span class="chronicle__label">Niveau</span><span class="chronicle__value" data-field="level">1</span></li>
+                <li><span class="chronicle__icon">${SVG_ICONS.hostile}</span><span class="chronicle__label">Ennemis</span><span class="chronicle__value" data-field="enemies">0</span></li>
+                <li><span class="chronicle__icon">${SVG_ICONS.coin}</span><span class="chronicle__label">Or</span><span class="chronicle__value chronicle__value--gold" data-field="gold">0</span></li>
+            </ul>
         `;
-        this.element.appendChild(this.infoContainer);
-
         container.appendChild(this.element);
 
-        this.levelEl = this.element.querySelector('#level-display');
-        this.enemiesEl = this.element.querySelector('#enemies-display');
-        this.goldEl = this.element.querySelector('#gold-display');
+        this.minimapContainer = this.element.querySelector('#minimap-container');
+        this.levelEl = this.element.querySelector('[data-field="level"]');
+        this.enemiesEl = this.element.querySelector('[data-field="enemies"]');
+        this.goldEl = this.element.querySelector('[data-field="gold"]');
+    }
+
+    // Called every frame: only write to the DOM when the value changed
+    _set(el, value) {
+        if (el._value === value) return;
+        el._value = value;
+        el.textContent = value;
     }
 
     updateLevel(level) {
-        this.levelEl.textContent = level;
+        this._set(this.levelEl, level);
     }
 
     updateEnemies(count) {
-        this.enemiesEl.textContent = count;
+        this._set(this.enemiesEl, count);
     }
 
     updateGold(gold) {
-        this.goldEl.textContent = gold;
+        this._set(this.goldEl, gold);
     }
 
     getMinimapContainer() {

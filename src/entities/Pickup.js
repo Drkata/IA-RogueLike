@@ -1,116 +1,193 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { soundManager } from '../systems/SoundManager.js';
+import { TextureGenerator } from '../systems/TextureGenerator.js';
+import { PALETTE } from '../core/Palette.js';
+
+const HOVER_HEIGHT = 0.5;
+const COLLECT_DISTANCE = 1.5;
+// Magnet upgrade: pickups fly to the player, faster and faster (m/s, m/s²)
+const MAGNET_START_SPEED = 3;
+const MAGNET_ACCEL = 30;
+const MAGNET_MAX_SPEED = 22;
+const _target = new THREE.Vector3();
+const PICKUP_SOUNDS = { health: 'health', ammo: 'mana', gold: 'gold', upgrade: 'upgrade' };
+
+const merge = (geometries) => {
+    const merged = mergeGeometries(geometries.map(g => (g.index ? g.toNonIndexed() : g)));
+    geometries.forEach(g => g.dispose());
+    return merged;
+};
+
+// One shape and one palette colour per resource (see ART_DIRECTION.md)
+const KINDS = {
+    health: { // Ember potion
+        color: PALETTE.ember, glow: PALETTE.emberBright,
+        geometry: () => merge([
+            new THREE.SphereGeometry(0.2, 14, 10).translate(0, -0.05, 0),
+            new THREE.CylinderGeometry(0.07, 0.07, 0.16, 10).translate(0, 0.17, 0),
+            new THREE.CylinderGeometry(0.085, 0.085, 0.06, 10).translate(0, 0.27, 0)
+        ])
+    },
+    ammo: { // Aether mana crystal
+        color: PALETTE.aether, glow: PALETTE.aetherBright,
+        geometry: () => new THREE.OctahedronGeometry(0.2).scale(1, 1.7, 1)
+    },
+    gold: { // Standing coin
+        color: PALETTE.gilt, glow: PALETTE.giltBright, metalness: 0.75,
+        geometry: () => new THREE.CylinderGeometry(0.2, 0.2, 0.05, 18).rotateX(Math.PI / 2)
+    },
+    upgrade: { // Hex rune stone
+        color: PALETTE.hex, glow: PALETTE.hexBright,
+        geometry: () => new THREE.IcosahedronGeometry(0.22, 0)
+    }
+};
+
+// Geometry, material and glow sprite material per kind, built on first use and shared
+const shared = {};
+function getKind(type) {
+    if (!shared[type]) {
+        const kind = KINDS[type];
+        shared[type] = {
+            geometry: kind.geometry(),
+            material: new THREE.MeshStandardMaterial({
+                color: kind.color,
+                emissive: kind.glow,
+                emissiveIntensity: 0.6,
+                roughness: 0.35,
+                metalness: kind.metalness || 0.1
+            }),
+            glow: new THREE.SpriteMaterial({
+                map: TextureGenerator.getGlowTexture(),
+                color: kind.glow,
+                transparent: true,
+                opacity: 0.7,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            })
+        };
+    }
+    return shared[type];
+}
 
 export class Pickup {
-    static geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-    // Materials map for reuse
-    static materials = {
-        health: new THREE.MeshLambertMaterial({ color: 0xff0000, emissive: 0xaa0000, emissiveIntensity: 1.0 }),
-        ammo: new THREE.MeshLambertMaterial({ color: 0x00ff00, emissive: 0x00aa00, emissiveIntensity: 1.0 }),
-        upgrade: new THREE.MeshLambertMaterial({ color: 0x9933ff, emissive: 0x6600cc, emissiveIntensity: 1.0 }), // Purple
-        gold: new THREE.MeshLambertMaterial({ color: 0xffd700, emissive: 0x886600, emissiveIntensity: 1.0 }) // Gold
-    };
-
-    constructor(position, type, value) {
-        this.type = type; // 'ammo', 'health', 'upgrade'
+    // `position` is the dropping entity's centre; the pickup lands on the floor below it
+    constructor(position, type, value, levelManager) {
+        this.type = type; // 'health' | 'ammo' | 'upgrade' | 'gold'
         this.value = value;
+        this.levelManager = levelManager;
         this.isDead = false;
         this.bobTimer = 0;
 
-        // Reuse geometry and material
-        this.mesh = new THREE.Mesh(Pickup.geometry, Pickup.materials[type]);
-        this.mesh.position.copy(position);
-        this.mesh.position.y = 0.5; // Start height
+        const kind = getKind(type);
+        this.mesh = new THREE.Mesh(kind.geometry, kind.material);
+        const glow = new THREE.Sprite(kind.glow);
+        glow.scale.setScalar(1.1);
+        this.mesh.add(glow);
+        this.groundY = levelManager.getFloorHeight(position.x, position.z, position.y - 0.8);
+        this.mesh.position.set(position.x, this.groundY + HOVER_HEIGHT, position.z);
 
-        // Fortnite-style drop physics
+        // Pop out in a random direction
         const angle = Math.random() * Math.PI * 2;
         const horizontalForce = 2 + Math.random() * 4;
         this.vx = Math.cos(angle) * horizontalForce;
         this.vz = Math.sin(angle) * horizontalForce;
-        this.vy = 5 + Math.random() * 5; // Upward pop
+        this.vy = 5 + Math.random() * 5;
         this.isSettled = false;
     }
 
+    // Wanted right now: a potion is left on the ground while health is full
+    _wanted(player) {
+        return this.type !== 'health' || player.health < player.maxHealth;
+    }
+
+    // Within the magnet range, wanted, and in sight (no pulling through walls)
+    _shouldAttract(player) {
+        const range = player.magnetRange;
+        if (!range || !this._wanted(player)) return false;
+        const pos = this.mesh.position;
+        if (pos.distanceToSquared(player.position) > range * range) return false;
+        return this.levelManager.pathfinder.hasLineOfSight(pos, player.position, 0);
+    }
+
     update(dt, player) {
-        if (!this.isSettled) {
-            // Physics phase
+        const pos = this.mesh.position;
+        if (!this.attracted && this._shouldAttract(player)) {
+            this.attracted = true;
+            this.magnetSpeed = MAGNET_START_SPEED;
+        }
+
+        if (this.attracted && !this._wanted(player)) {
+            // Health filled up on the way: hover where it is
+            this.attracted = false;
+            this.isSettled = true;
+            this.groundY = pos.y - HOVER_HEIGHT;
+        }
+
+        if (this.attracted) {
+            // Fly to the player's chest, spinning
+            this.magnetSpeed = Math.min(MAGNET_MAX_SPEED, this.magnetSpeed + MAGNET_ACCEL * dt);
+            _target.set(player.position.x, player.position.y - 0.6, player.position.z);
+            const dist = pos.distanceTo(_target);
+            if (dist > 1e-6) pos.lerp(_target, Math.min(1, (this.magnetSpeed * dt) / dist));
+            this.mesh.rotation.y += dt * 12;
+        } else if (!this.isSettled) {
             this.vy -= 20 * dt; // Gravity
-            
-            let nextX = this.mesh.position.x + this.vx * dt;
-            let nextZ = this.mesh.position.z + this.vz * dt;
-            
-            if (window.game && window.game.levelManager) {
-                const radius = 0.3; // Small collision radius for pickup
-                if (window.game.levelManager.isWall(nextX + (this.vx > 0 ? radius : -radius), this.mesh.position.z)) {
-                    this.vx *= -0.5; // Bounce on X
-                    nextX = this.mesh.position.x;
-                }
-                if (window.game.levelManager.isWall(this.mesh.position.x, nextZ + (this.vz > 0 ? radius : -radius))) {
-                    this.vz *= -0.5; // Bounce on Z
-                    nextZ = this.mesh.position.z;
-                }
+
+            // Bounce off walls on each axis separately
+            const radius = 0.3;
+            let nextX = pos.x + this.vx * dt;
+            let nextZ = pos.z + this.vz * dt;
+            if (this.levelManager.isWall(nextX + Math.sign(this.vx) * radius, pos.z, this.groundY)) {
+                this.vx *= -0.5;
+                nextX = pos.x;
             }
-            
-            this.mesh.position.x = nextX;
-            this.mesh.position.z = nextZ;
-            this.mesh.position.y += this.vy * dt;
+            if (this.levelManager.isWall(pos.x, nextZ + Math.sign(this.vz) * radius, this.groundY)) {
+                this.vz *= -0.5;
+                nextZ = pos.z;
+            }
+            pos.x = nextX;
+            pos.z = nextZ;
+            pos.y += this.vy * dt;
 
             // Chaotic rotation while in air
             this.mesh.rotation.x += dt * 8;
             this.mesh.rotation.y += dt * 5;
 
-            // Bounce on ground
-            if (this.mesh.position.y <= 0.5) {
-                this.mesh.position.y = 0.5;
+            // Bounce on ground, settle when slow
+            if (pos.y <= this.groundY + HOVER_HEIGHT) {
+                pos.y = this.groundY + HOVER_HEIGHT;
                 if (this.vy < -3) {
-                    this.vy *= -0.5; // Bounce up
+                    this.vy *= -0.5;
                     this.vx *= 0.6; // Ground friction
                     this.vz *= 0.6;
                 } else {
                     this.isSettled = true;
-                    this.mesh.rotation.x = 0; // Settle upright
-                    this.bobTimer = 0; // Sync bobbing
+                    this.mesh.rotation.x = 0;
+                    this.bobTimer = 0;
                 }
             }
         } else {
-            // Idle bobbing animation
             this.bobTimer += dt * 3;
-            this.mesh.position.y = 0.5 + Math.sin(this.bobTimer) * 0.2;
+            pos.y = this.groundY + HOVER_HEIGHT + Math.sin(this.bobTimer) * 0.2;
             this.mesh.rotation.y += dt;
         }
 
-        // Collision detection with player
-        const dist = this.mesh.position.distanceTo(player.position);
-        if (dist < 1.5) {
-            this.collect(player);
-        }
+        if (pos.distanceToSquared(player.position) < COLLECT_DISTANCE * COLLECT_DISTANCE) this.collect(player);
     }
 
     collect(player) {
         if (this.type === 'health') {
-            if (player.health < player.maxHealth) {
-                player.heal(this.value);
-                this.isDead = true;
-                soundManager.playPickup();
-                console.log("Picked up Health");
-            }
+            if (player.health >= player.maxHealth) return; // Leave it for later
+            player.heal(this.value);
         } else if (this.type === 'ammo') {
             player.weapon.addAmmo(this.value);
-            this.isDead = true;
-            soundManager.playPickup();
-            console.log("Picked up Ammo");
         } else if (this.type === 'upgrade') {
-            this.isDead = true;
-            soundManager.playPickup(); // Or a special sound if available
-            console.log("Picked up Upgrade");
-            if (window.game) {
-                window.game.showUpgradeMenu(1, true); // 1 point, mid-level
-            }
+            window.game.showUpgradeMenu(1, true); // 1 point, mid-level
         } else if (this.type === 'gold') {
             player.addGold(this.value);
-            this.isDead = true;
-            soundManager.playPickup();
-            console.log("Picked up Gold: " + this.value);
         }
+        this.isDead = true;
+        soundManager.play(PICKUP_SOUNDS[this.type]);
     }
 }

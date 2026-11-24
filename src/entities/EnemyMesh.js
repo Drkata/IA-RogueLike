@@ -1,178 +1,114 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { PALETTE } from '../core/Palette.js';
+
+// Muted cloth, stone and rust tones: enemies read by silhouette and glowing eyes (see ART_DIRECTION.md)
+const BODY_COLORS = [0x6b6170, 0x5d6a4a, 0x7a4a36, 0x4e5a6a, 0x8a8070, 0x5e4a6a, 0x8a6a3a, 0x4a6a68];
+
+const BODY_W = 0.5;
+const BODY_H = 0.9;
+const HEAD = 0.25;
+const LEG = 0.75;
+const HEAD_Y = LEG + BODY_H + HEAD * 0.6;
+
+// Brightness of each part (vertex colour × body colour): lighter head, darker limbs and armour
+const SHADE = { head: 1.0, body: 0.9, arm: 0.78, leg: 0.68, spike: 0.6, horn: 0.55, armor: 0.42 };
+
+const _matrix = new THREE.Matrix4();
+const _quat = new THREE.Quaternion();
+const _euler = new THREE.Euler();
+const _pos = new THREE.Vector3();
+const _scale = new THREE.Vector3();
 
 export class EnemyMeshBuilder {
-    // Shared Geometries (Unit size, scaled later)
-    static geometries = {
-        box: new THREE.BoxGeometry(1, 1, 1),
-        sphere: new THREE.SphereGeometry(0.5, 8, 8),
-        cylinder: new THREE.CylinderGeometry(0.5, 0.5, 1, 8),
-        cone: new THREE.ConeGeometry(0.5, 1, 6),
-        octahedron: new THREE.OctahedronGeometry(0.5),
-        eye: new THREE.SphereGeometry(0.05, 4, 4) // Low poly eyes
+    // A little self-light keeps dark enemies readable in dark biomes
+    static materials = BODY_COLORS.map(color =>
+        new THREE.MeshLambertMaterial({ color, vertexColors: true, emissive: color, emissiveIntensity: 0.12 }));
+    static eyeMaterials = {
+        normal: new THREE.MeshBasicMaterial({ color: PALETTE.emberBright }),
+        elite: new THREE.MeshBasicMaterial({ color: PALETTE.hexBright }) // Level 7+
     };
-
-    // Shared Materials Palette
-    static materials = [];
-    static eyeMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00, opacity: 0.9, transparent: true });
-    static armorMaterial = new THREE.MeshLambertMaterial({ color: 0x444444 });
-    static initialized = false;
-
-    static init() {
-        if (this.initialized) return;
-
-        const colorVariants = [
-            0xff3333, 0x3333ff, 0x33ff33, 0xff33ff, 0xffaa33,
-            0x33ffff, 0xffff33, 0xff6633, 0x9933ff, 0x33ff99
-        ];
-
-        this.materials = colorVariants.map(color =>
-            new THREE.MeshLambertMaterial({ color: color })
-        );
-
-        // Emissive variants for high levels could be added here if needed, 
-        // but for perf we'll stick to base materials or use uniforms if we went shader route.
-        // For now, simple colored materials are fast.
-
-        this.initialized = true;
-    }
+    static eyeGeometry = EnemyMeshBuilder._eyes();
+    static shapes = new Map(); // Body geometries by variant, shared by every enemy
 
     static build(level) {
-        if (!this.initialized) this.init();
+        const variant = {
+            head: Math.floor(Math.random() * 4),
+            body: Math.floor(Math.random() * 3),
+            arms: Math.random() > 0.7 ? 4 : 2,
+            spikes: Math.random() > 0.8,
+            horns: Math.random() > 0.7,
+            armor: level >= 4
+        };
+        const key = Object.values(variant).join('|');
+        if (!this.shapes.has(key)) this.shapes.set(key, this._shape(variant));
 
         const group = new THREE.Group();
-        const seed = Math.random();
-
-        // Pick random shared material
-        const matIndex = Math.floor(seed * this.materials.length);
-        const material = this.materials[matIndex];
-
-        const bodyWidth = 0.5;
-        const bodyHeight = 0.9;
-        const headSize = 0.25;
-        const legLength = 0.75;
-
-        // HEAD
-        let head;
-        const headType = Math.floor(Math.random() * 4);
-        if (headType === 0) {
-            head = new THREE.Mesh(this.geometries.box, material);
-            head.scale.set(headSize, headSize, headSize);
-        } else if (headType === 1) {
-            head = new THREE.Mesh(this.geometries.sphere, material);
-            head.scale.set(headSize * 1.2, headSize * 1.2, headSize * 1.2);
-        } else if (headType === 2) {
-            head = new THREE.Mesh(this.geometries.cone, material);
-            head.scale.set(headSize, headSize * 1.2, headSize);
-        } else {
-            head = new THREE.Mesh(this.geometries.octahedron, material);
-            head.scale.set(headSize * 1.2, headSize * 1.2, headSize * 1.2);
-        }
-        head.position.y = legLength + bodyHeight + headSize * 0.6;
-        group.add(head);
-
-        // BODY
-        let body;
-        const bodyShape = Math.floor(Math.random() * 3);
-        if (bodyShape === 0) {
-            body = new THREE.Mesh(this.geometries.box, material);
-            body.scale.set(bodyWidth, bodyHeight, bodyWidth * 0.6);
-        } else if (bodyShape === 1) {
-            body = new THREE.Mesh(this.geometries.cylinder, material);
-            body.scale.set(bodyWidth * 0.8, bodyHeight, bodyWidth * 0.8);
-        } else {
-            body = new THREE.Mesh(this.geometries.sphere, material);
-            body.scale.set(bodyWidth * 1.2, bodyHeight, bodyWidth * 1.2);
-        }
-        body.position.y = legLength + bodyHeight * 0.5;
-        group.add(body);
-
-        // ARMS
-        const numArms = Math.random() > 0.7 ? 4 : 2;
-        const armLength = 0.6;
-        const armThickness = 0.12;
-        const armPositions = numArms === 2 ? [[0]] : [[bodyHeight * 0.3], [-bodyHeight * 0.1]];
-
-        for (let i = 0; i < numArms / 2; i++) {
-            const yOffset = armPositions[i] ? armPositions[i][0] : 0;
-
-            const leftArm = new THREE.Mesh(this.geometries.box, material);
-            leftArm.scale.set(armThickness, armLength, armThickness);
-            leftArm.position.set(-bodyWidth * 0.6, legLength + bodyHeight * 0.5 + yOffset, 0);
-            group.add(leftArm);
-
-            const rightArm = new THREE.Mesh(this.geometries.box, material);
-            rightArm.scale.set(armThickness, armLength, armThickness);
-            rightArm.position.set(bodyWidth * 0.6, legLength + bodyHeight * 0.5 + yOffset, 0);
-            group.add(rightArm);
-        }
-
-        // LEGS
-        const legThickness = 0.15;
-        const leftLeg = new THREE.Mesh(this.geometries.box, material);
-        leftLeg.scale.set(legThickness, legLength, legThickness);
-        leftLeg.position.set(-bodyWidth * 0.25, legLength * 0.5, 0);
-        group.add(leftLeg);
-
-        const rightLeg = new THREE.Mesh(this.geometries.box, material);
-        rightLeg.scale.set(legThickness, legLength, legThickness);
-        rightLeg.position.set(bodyWidth * 0.25, legLength * 0.5, 0);
-        group.add(rightLeg);
-
-        // SPIKES (Simplified: fewer spikes, shared geometry)
-        if (Math.random() > 0.8) {
-            const numSpikes = 3;
-            for (let i = 0; i < numSpikes; i++) {
-                const spike = new THREE.Mesh(this.geometries.cone, material);
-                spike.scale.set(0.1, 0.2, 0.1);
-                spike.position.set(
-                    (Math.random() - 0.5) * bodyWidth,
-                    legLength + Math.random() * bodyHeight,
-                    (Math.random() - 0.5) * bodyWidth * 0.6
-                );
-                spike.rotation.z = Math.random() * Math.PI * 2;
-                group.add(spike);
-            }
-        }
-
-        // HORNS
-        if (Math.random() > 0.7) {
-            const leftHorn = new THREE.Mesh(this.geometries.cone, material);
-            leftHorn.scale.set(0.16, 0.3, 0.16);
-            leftHorn.position.set(-headSize * 0.4, legLength + bodyHeight + headSize, 0);
-            leftHorn.rotation.z = -0.3;
-            group.add(leftHorn);
-
-            const rightHorn = new THREE.Mesh(this.geometries.cone, material);
-            rightHorn.scale.set(0.16, 0.3, 0.16);
-            rightHorn.position.set(headSize * 0.4, legLength + bodyHeight + headSize, 0);
-            rightHorn.rotation.z = 0.3;
-            group.add(rightHorn);
-        }
-
-        // ARMOR (level 4+)
-        if (level >= 4) {
-            const chestPlate = new THREE.Mesh(this.geometries.box, this.armorMaterial);
-            chestPlate.scale.set(bodyWidth * 0.8, 0.15, bodyWidth * 0.5);
-            chestPlate.position.y = legLength + bodyHeight * 0.7;
-            group.add(chestPlate);
-        }
-
-        // EYES (level 7+)
-        if (level >= 7) {
-            const leftEye = new THREE.Mesh(this.geometries.eye, this.eyeMaterial);
-            leftEye.position.set(-headSize * 0.3, legLength + bodyHeight + headSize * 0.5, headSize * 0.3);
-            group.add(leftEye);
-
-            const rightEye = new THREE.Mesh(this.geometries.eye, this.eyeMaterial);
-            rightEye.position.set(headSize * 0.3, legLength + bodyHeight + headSize * 0.5, headSize * 0.3);
-            group.add(rightEye);
-        }
-
+        const material = this.materials[Math.floor(Math.random() * this.materials.length)];
+        group.add(new THREE.Mesh(this.shapes.get(key), material));
+        group.add(new THREE.Mesh(this.eyeGeometry, level >= 7 ? this.eyeMaterials.elite : this.eyeMaterials.normal));
         return group;
     }
 
-    static storeOriginalColors(mesh) {
-        // No longer needed as we use shared materials, 
-        // but kept empty to prevent breaking existing calls
+    // All body parts merged into one geometry with a grey vertex colour per part
+    static _shape({ head, body, arms, spikes, horns, armor }) {
+        const parts = [];
+        const part = (geometry, shade, [sx, sy, sz], [x, y, z], rotZ = 0) => {
+            _matrix.compose(_pos.set(x, y, z), _quat.setFromEuler(_euler.set(0, 0, rotZ)), _scale.set(sx, sy, sz));
+            const g = (geometry.index ? geometry.toNonIndexed() : geometry).applyMatrix4(_matrix);
+            const colors = new Float32Array(g.attributes.position.count * 3).fill(shade);
+            g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            g.deleteAttribute('uv');
+            parts.push(g);
+        };
+        const box = () => new THREE.BoxGeometry(1, 1, 1);
+        const sphere = () => new THREE.SphereGeometry(0.5, 10, 8);
+        const cylinder = () => new THREE.CylinderGeometry(0.5, 0.5, 1, 8);
+        const cone = () => new THREE.ConeGeometry(0.5, 1, 6);
+
+        // Head
+        if (head === 0) part(box(), SHADE.head, [HEAD, HEAD, HEAD], [0, HEAD_Y, 0]);
+        else if (head === 1) part(sphere(), SHADE.head, [HEAD * 1.2, HEAD * 1.2, HEAD * 1.2], [0, HEAD_Y, 0]);
+        else if (head === 2) part(cone(), SHADE.head, [HEAD, HEAD * 1.2, HEAD], [0, HEAD_Y, 0]);
+        else part(new THREE.OctahedronGeometry(0.5), SHADE.head, [HEAD * 1.2, HEAD * 1.2, HEAD * 1.2], [0, HEAD_Y, 0]);
+
+        // Body
+        const bodyY = LEG + BODY_H * 0.5;
+        if (body === 0) part(box(), SHADE.body, [BODY_W, BODY_H, BODY_W * 0.6], [0, bodyY, 0]);
+        else if (body === 1) part(cylinder(), SHADE.body, [BODY_W * 0.8, BODY_H, BODY_W * 0.8], [0, bodyY, 0]);
+        else part(sphere(), SHADE.body, [BODY_W * 1.2, BODY_H, BODY_W * 1.2], [0, bodyY, 0]);
+
+        // Arms (2 or 4) and legs
+        const armOffsets = arms === 2 ? [0] : [BODY_H * 0.3, -BODY_H * 0.1];
+        for (const dy of armOffsets) {
+            for (const side of [-1, 1]) part(box(), SHADE.arm, [0.12, 0.6, 0.12], [side * BODY_W * 0.6, bodyY + dy, 0]);
+        }
+        for (const side of [-1, 1]) part(box(), SHADE.leg, [0.15, LEG, 0.15], [side * BODY_W * 0.25, LEG * 0.5, 0]);
+
+        if (spikes) {
+            for (const [x, y, z, r] of [[-0.15, 0.25, 0.1, 0.4], [0.12, 0.5, -0.08, 2.2], [0, 0.75, 0.12, 4.1]]) {
+                part(cone(), SHADE.spike, [0.1, 0.2, 0.1], [x * BODY_W * 2, LEG + y * BODY_H, z], r);
+            }
+        }
+        if (horns) {
+            for (const side of [-1, 1]) part(cone(), SHADE.horn, [0.16, 0.3, 0.16], [side * HEAD * 0.4, LEG + BODY_H + HEAD, 0], -side * 0.3);
+        }
+        if (armor) part(box(), SHADE.armor, [BODY_W * 0.8, 0.15, BODY_W * 0.5], [0, LEG + BODY_H * 0.7, 0]);
+
+        const geometry = mergeGeometries(parts);
+        parts.forEach(g => g.dispose());
+        return geometry;
+    }
+
+    // Two glowing eyes on the front of the head
+    static _eyes() {
+        const eyes = [-1, 1].map(side => {
+            const g = new THREE.SphereGeometry(0.05, 6, 4);
+            g.translate(side * HEAD * 0.3, LEG + BODY_H + HEAD * 0.5, HEAD * 0.45);
+            return g;
+        });
+        const geometry = mergeGeometries(eyes);
+        eyes.forEach(g => g.dispose());
+        return geometry;
     }
 }

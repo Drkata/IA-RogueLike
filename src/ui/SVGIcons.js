@@ -1,57 +1,71 @@
-// Game-Icons.net integration via Iconify HTTP API
-// Uses standard native <img> tags to bypass Pointer Lock custom element rendering bugs in browsers.
-// This guarantees that icons load instantly and correctly in all contexts.
+// Game-Icons.net via the Iconify HTTP API, as plain <img> tags
+// (custom elements render badly while the pointer is locked).
 
-const makeIcon = (iconName, color = "#d4af37") => {
-    const encodedColor = encodeURIComponent(color);
-    return `
-    <img src="https://api.iconify.design/game-icons/${iconName}.svg?color=${encodedColor}" style="width: 1em; height: 1em; display: inline-block; vertical-align: middle;" />
-    `;
-};
+// Icon tints = upgrade card tints (see ART_DIRECTION.md, section 4)
+const OFFENSE = '#e58f6f';
+const VITALITY = '#8fcf9a'; // --sage
+const ARCANA = '#c9a6ff'; // --hex-bright
+const GILT = '#e6c983'; // --gilt-bright
+
+const makeIcon = (iconName, color = GILT) =>
+    `<img class="ico" alt="" src="https://api.iconify.design/game-icons/${iconName}.svg?color=${encodeURIComponent(color)}">`;
 
 export const SVG_ICONS = {
-    // Stats & Upgrades
-    damage: makeIcon('crossed-swords', '#ff8888'),
-    fireRate: makeIcon('arrow-flights', '#ff8888'),
-    arc: makeIcon('split-arrows', '#aaaaff'),
-    reload: makeIcon('ammo-box', '#ff8888'),
-    ammo: makeIcon('bullets', '#ff8888'),
-    range: makeIcon('bullseye', '#ff8888'),
-    projectileSpeed: makeIcon('fast-arrow', '#ff8888'),
-    bulletCount: makeIcon('shatter', '#aaaaff'),
-    piercing: makeIcon('barbed-spear', '#aaaaff'),
-    critChance: makeIcon('rolling-dices', '#ff8888'),
-    critDamage: makeIcon('skull-mask', '#ff8888'),
-    maxHealth: makeIcon('heart-shield', '#88ff88'),
-    armor: makeIcon('shield', '#88ff88'),
-    vampirism: makeIcon('glass-heart', '#88ff88'),
-    regen: makeIcon('healing', '#88ff88'),
-    speed: makeIcon('sprint', '#88ff88'),
-    knockback: makeIcon('punch', '#aaaaff'),
-    explosion: makeIcon('explosion-rays', '#aaaaff'),
-    ricochet: makeIcon('ricochet', '#aaaaff'),
-    immolation: makeIcon('fire-ring', '#aaaaff'),
-    meleeDamage: makeIcon('wood-club', '#aaaaff'),
-    homing: makeIcon('target-arrows', '#aaaaff'),
+    // Weapon upgrades
+    damage: makeIcon('crossed-swords', OFFENSE),
+    fireRate: makeIcon('arrow-flights', OFFENSE),
+    reload: makeIcon('ammo-box', OFFENSE),
+    ammo: makeIcon('bullets', OFFENSE),
+    range: makeIcon('bullseye', OFFENSE),
+    projectileSpeed: makeIcon('fast-arrow', OFFENSE),
+    critChance: makeIcon('rolling-dices', OFFENSE),
+    critDamage: makeIcon('skull-mask', OFFENSE),
 
-    // Pact / Chaos Icons
-    blood: makeIcon('blood', '#ff3333'),
-    wizard: makeIcon('wizard-staff', '#00aaff'),
-    greed: makeIcon('gold-stack', '#ffd700'),
-    precision: makeIcon('bullseye', '#00ffaa'),
-    resilience: makeIcon('stone-wall', '#aaaaaa'),
-    vampire: makeIcon('vampire-dracula', '#ff0055'),
-    armor_pact: makeIcon('shield', '#00ffaa'),
-    speed_pact: makeIcon('sprint', '#ffff00'),
+    // Body upgrades
+    maxHealth: makeIcon('heart-shield', VITALITY),
+    armor: makeIcon('shield', VITALITY),
+    vampirism: makeIcon('glass-heart', VITALITY),
+    regen: makeIcon('healing', VITALITY),
+    speed: makeIcon('sprint', VITALITY),
 
-    // Shop & Audio
-    potion: makeIcon('health-potion', '#ff3333'),
-    backpack_shop: makeIcon('ammo-box', '#00aaff'),
-    coin: makeIcon('crown-coin', '#ffd700'),
-    audioOn: makeIcon('speaker', '#d4af37'),
-    audioOff: makeIcon('speaker-off', '#888888'),
+    // Special effects
+    arc: makeIcon('split-arrows', ARCANA),
+    bulletCount: makeIcon('shatter', ARCANA),
+    piercing: makeIcon('barbed-spear', ARCANA),
+    knockback: makeIcon('punch', ARCANA),
+    explosion: makeIcon('explosion-rays', ARCANA),
+    ricochet: makeIcon('ricochet', ARCANA),
+    immolation: makeIcon('fire-ring', ARCANA),
+    magnet: makeIcon('magnet', ARCANA),
+    meleeDamage: makeIcon('wood-club', ARCANA),
+    homing: makeIcon('target-arrows', ARCANA),
 
-    // HUD / Level Info
-    dungeon_gate: makeIcon('dungeon-gate', '#00ff00'),
-    hostile: makeIcon('skull-mask', '#ff3333')
+    // Altar pacts
+    blood: makeIcon('blood', '#e0563f'),
+    wizard: makeIcon('wizard-staff', '#7fd6c9'),
+    greed: makeIcon('gold-stack', GILT),
+    precision: makeIcon('bullseye', '#7fd6c9'),
+    resilience: makeIcon('stone-wall', '#c9bfa8'),
+    vampire: makeIcon('vampire-dracula', '#e0563f'),
+    armor_pact: makeIcon('shield', '#8fcf9a'),
+    speed_pact: makeIcon('sprint', '#d8b465'),
+
+    // Shop
+    potion: makeIcon('health-potion', '#e0563f'),
+    mana_reserve: makeIcon('ammo-box', '#7fd6c9'),
+    ward: makeIcon('shield', '#7fd6c9'),
+    soul_shard: makeIcon('shatter', ARCANA),
+    coin: makeIcon('crown-coin', GILT),
+
+    // Touch controls
+    touchFire: makeIcon('fire-ray', '#9ef0e2'), // --aether-bright
+    touchJump: makeIcon('jump-across', '#ece3cc'), // --vellum
+    touchReload: makeIcon('magic-swirl', '#9ef0e2'),
+    touchAction: makeIcon('open-palm', GILT),
+
+    // HUD
+    audioOn: makeIcon('speaker', GILT),
+    audioOff: makeIcon('speaker-off', '#8a8170'),
+    dungeon_gate: makeIcon('dungeon-gate', GILT),
+    hostile: makeIcon('skull-mask', '#e0563f')
 };

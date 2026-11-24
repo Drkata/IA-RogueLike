@@ -1,5 +1,7 @@
 # ROADMAP D'OPTIMISATIONS (PRODUCTION READY)
 
+> **État (novembre 2026)** — Fait : zéro allocation dans les boucles de `Player`, `EnemyAI`, `Projectile`, `MagicalSentinel`, `BossSentinel` ; HUD sans réécriture DOM inutile ; A* sur tableaux typés partagé ; îles et ponts fusionnés par matériau (§3) ; libération GPU à chaque changement de niveau. Reste ouvert : pooling des `Projectile` (§2) et grille spatiale (§4).
+
 Ce document est destiné aux développeurs et futures IA qui interviendront sur le code. Le jeu a subi une passe d'optimisation majeure, mais pour atteindre un standard de qualité "AAA" ou "Production Ready" (notamment pour du mobile ou des plateformes limitées), les chantiers suivants doivent être priorisés.
 
 ## 1. Zero-Allocation Math (Priorité: Critique)

@@ -1,13 +1,19 @@
+// Values are calibrated: see ART_DIRECTION.md (« Lumière ») before changing them.
 export const DemonicBaseTheme = {
     name: 'Demonic Base',
-    wallColors: [0x220000, 0x331111, 0x110505], // Charred Rock
-    floorColor: 0x330000, // Lava Rock
-    ceilingColor: 0x110000,
-    ambientLight: 0x602020, // Red Glow
-    pointLightColor: 0xff6600, // Fire
-    fogColor: 0x220505, // Ash/Smoke
-    fogDensity: 0.035,
-    wallTextureType: 'noise', // Rough Rock
-    floorTextureType: 'lava', // Lava
-    decorations: []
+    biome: 'hell', // Basalt split by lava under a blood moon
+    lighting: {
+        sky: 0xd05850,
+        ground: 0x502018,
+        fill: 10.0,
+        sun: 0xff7840, // Blood moon
+        sunIntensity: 9.5,
+        sunDirection: [0.5, 0.55, -0.6],
+        point: 0xff6a20, // Braziers
+        pointIntensity: 22
+    },
+    fogColor: 0x2a0a08,
+    fogDensity: 0.03,
+    accent: 0xff5a1a,
+    foliage: 0x6a1a10
 };

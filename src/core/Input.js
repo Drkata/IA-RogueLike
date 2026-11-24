@@ -1,9 +1,13 @@
 import { soundManager } from '../systems/SoundManager.js';
+import { TouchControls } from '../ui/TouchControls.js';
 
 export class Input {
-    constructor() {
+    constructor(device) {
         this.keys = {};
         this.mouseDelta = { x: 0, y: 0 };
+        this.moveAxis = { x: 0, y: 0 }; // Analog movement from the touch stick: x right, y forward, length ≤ 1
+        this.isTouch = device.touch;
+        if (this.isTouch) this.touchControls = new TouchControls(this);
 
         document.addEventListener('keydown', (e) => this.onKeyDown(e));
         document.addEventListener('keyup', (e) => this.onKeyUp(e));
@@ -12,14 +16,13 @@ export class Input {
         document.addEventListener('mouseup', (e) => this.onMouseUp(e));
         document.addEventListener('click', () => this.requestPointerLock());
 
-        // Audio Context Resume (One-time)
+        // Audio may only start after a user gesture (pointerup is the one touch screens grant)
+        const gestures = ['click', 'keydown', 'pointerup'];
         const resumeAudio = () => {
             soundManager.ensureContext();
-            document.removeEventListener('click', resumeAudio);
-            document.removeEventListener('keydown', resumeAudio);
+            gestures.forEach(type => document.removeEventListener(type, resumeAudio));
         };
-        document.addEventListener('click', resumeAudio);
-        document.addEventListener('keydown', resumeAudio);
+        gestures.forEach(type => document.addEventListener(type, resumeAudio));
     }
 
     onKeyDown(e) {
@@ -48,25 +51,48 @@ export class Input {
     }
 
     requestPointerLock() {
+        // Touch devices look with the finger; iPhone Safari has no pointer lock at all
+        if (this.isTouch || !document.body.requestPointerLock) return;
         // Don't request pointer lock if game is paused (upgrade menu open)
-        if (window.game && window.game.isPaused) {
-            return;
-        }
+        if (window.game && window.game.isPaused) return;
         const promise = document.body.requestPointerLock();
-        if (promise) {
-            promise.catch(err => {
-                // Ignore PointerLock errors caused by rapid clicking
-            });
-        }
+        if (promise) promise.catch(() => {}); // Rapid clicking rejects the request: harmless
+    }
+
+    exitPointerLock() {
+        if (document.pointerLockElement) document.exitPointerLock();
+    }
+
+    // Drop every held key and stick push (a menu opened while something was held)
+    releaseAll() {
+        for (const code in this.keys) this.keys[code] = false;
+        this.moveAxis.x = 0;
+        this.moveAxis.y = 0;
+    }
+
+    // Interaction prompt in the player's controls, e.g. prompt('ouvrir la porte')
+    prompt(action) {
+        return `${this.isTouch ? "Touchez le bouton d'action" : 'Appuyez sur E'} pour ${action}`;
     }
 
     isKeyDown(code) {
         return !!this.keys[code];
     }
 
+    // True once per key press (the key must be released to trigger again)
+    consumeKey(code) {
+        if (!this.keys[code]) return false;
+        this.keys[code] = false;
+        return true;
+    }
+
+    // Mouse movement since the last call (the returned object is reused)
     getMouseDelta() {
-        const delta = { ...this.mouseDelta };
-        this.mouseDelta = { x: 0, y: 0 };
-        return delta;
+        this._delta = this._delta || { x: 0, y: 0 };
+        this._delta.x = this.mouseDelta.x;
+        this._delta.y = this.mouseDelta.y;
+        this.mouseDelta.x = 0;
+        this.mouseDelta.y = 0;
+        return this._delta;
     }
 }

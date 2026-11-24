@@ -1,13 +1,19 @@
+// Values are calibrated: see ART_DIRECTION.md (« Lumière ») before changing them.
 export const MedievalCityTheme = {
     name: 'Medieval City',
-    wallColors: [0x808080, 0xa9a9a9, 0x696969], // Stone Grey
-    floorColor: 0x505050, // Cobblestone Grey
-    ceilingColor: 0x87ceeb, // Sky Blue
-    ambientLight: 0xffeebb, // Warm Sunlight/Torchlight
-    pointLightColor: 0xffaa00, // Torches
-    fogColor: 0xccccff, // Light blueish fog (distance)
-    fogDensity: 0.01, // Very clear
-    wallTextureType: 'bricks', // Stone Bricks
-    floorTextureType: 'bricks', // Cobblestone
-    decorations: []
+    biome: 'city', // Limestone and cobbles at sunset
+    lighting: {
+        sky: 0xa8b4dc,
+        ground: 0x704e30,
+        fill: 4.0,
+        sun: 0xffc890, // Low sun
+        sunIntensity: 5.0,
+        sunDirection: [-0.7, 0.5, 0.35],
+        point: 0xffa040, // Torches
+        pointIntensity: 18
+    },
+    fogColor: 0x5a4458,
+    fogDensity: 0.012,
+    accent: 0xffb060,
+    foliage: 0x4a6a2a
 };

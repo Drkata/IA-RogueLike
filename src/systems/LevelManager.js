@@ -1,8 +1,87 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CONSTANTS } from '../core/Constants.js';
 import { MapGenerator } from './MapGenerator.js';
 import { TextureGenerator } from './TextureGenerator.js';
 import { ThemeManager } from './themes/ThemeManager.js';
+import { Pathfinder } from './Pathfinder.js';
+import { SkyColliders } from './SkyColliders.js';
+
+const H = CONSTANTS.WALL_HEIGHT;
+const FLOOR_TILE = 4; // Metres covered by one floor texture tile
+const RUNE_VARIANTS = 4;
+
+// Every material of one theme. Built when the theme changes (every 5 levels) and shared by all its
+// levels, so textures are painted once per theme. See ART_DIRECTION.md for the rules they follow.
+class ThemeKit {
+    constructor(theme) {
+        this.theme = theme;
+        this.materials = [];
+        const biome = theme.biome;
+        const surface = (canvases, options = {}) => {
+            const { map, bumpMap, emissiveMap } = TextureGenerator.toTextures(canvases);
+            return this._keep(new THREE.MeshStandardMaterial({
+                map,
+                bumpMap,
+                bumpScale: 1,
+                emissiveMap,
+                emissive: emissiveMap ? 0xffffff : 0x000000,
+                emissiveIntensity: emissiveMap ? 1.5 : 0,
+                roughness: 0.9,
+                metalness: 0,
+                ...options
+            }));
+        };
+
+        this.walls = [0, 1, 2].map(v => surface(TextureGenerator.wallSurface(biome, v)));
+        this.runeWalls = Array.from({ length: RUNE_VARIANTS }, (_, v) =>
+            surface(TextureGenerator.runeWallSurface(v), { roughness: 0.55, emissiveIntensity: 1.3 }));
+        this.vaultWall = surface(TextureGenerator.vaultWallSurface(), { roughness: 0.5, metalness: 0.25, emissiveIntensity: 0.6 });
+
+        // The floor tile is shared with the island caps; only the floor gets the per-level aoMap
+        this.floor = surface(TextureGenerator.floorSurface(biome), { roughness: 0.95 });
+        this.islandCap = this._keep(new THREE.MeshStandardMaterial({
+            map: this.floor.map,
+            bumpMap: this.floor.bumpMap,
+            roughness: 0.95,
+            metalness: 0
+        }));
+
+        this.sky = this._keep(new THREE.MeshBasicMaterial({
+            map: TextureGenerator.toTexture(TextureGenerator.skyCanvas(biome), { repeat: false }),
+            side: THREE.BackSide,
+            fog: false // The sky is the backdrop the fog fades into
+        }));
+        this.pentacle = this._keep(new THREE.MeshBasicMaterial({
+            map: TextureGenerator.toTexture(TextureGenerator.pentacleCanvas(), { repeat: false }),
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            polygonOffset: true,
+            polygonOffsetFactor: -2
+        }));
+
+        // Floating island details
+        this.rune = this._keep(new THREE.MeshStandardMaterial({ color: 0x0c0a12, emissive: theme.accent, emissiveIntensity: 2, roughness: 0.3 }));
+        this.foliage = this._keep(new THREE.MeshStandardMaterial({ color: theme.foliage, roughness: 0.9 }));
+        this.wood = this._keep(new THREE.MeshStandardMaterial({ color: 0x4a3322, roughness: 0.85 }));
+    }
+
+    _keep(material) {
+        material.userData.kit = true; // Survives LevelManager._disposeLevel
+        this.materials.push(material);
+        return material;
+    }
+
+    dispose() {
+        const textures = new Set();
+        for (const m of this.materials) {
+            for (const t of [m.map, m.bumpMap, m.emissiveMap]) if (t) textures.add(t);
+            m.dispose();
+        }
+        textures.forEach(t => t.dispose());
+    }
+}
 
 export class LevelManager {
     constructor(scene) {
@@ -14,34 +93,26 @@ export class LevelManager {
         this.levelData = null;
         this.levelMeshGroup = new THREE.Group();
         this.scene.add(this.levelMeshGroup);
-        this.currentTheme = 0;
         this.currentLevelIndex = 1;
         this.decorationPositions = []; // Track decoration positions
-        this.skyStructures = []; // Bounding boxes for sky platforms
         this.themeManager = new ThemeManager();
+        this.kit = null;
+        this.floorShadow = null;
+        // Shared by every enemy: A* is synchronous, so one set of search buffers is enough
+        this.pathfinder = new Pathfinder(this);
     }
-
-
 
     generateLevel(width, height, levelIndex = 1) {
         this.currentLevelIndex = levelIndex;
-        this.currentTheme = (levelIndex - 1) % 3; // Cycle 3 themes
+        const isBossLevel = levelIndex % 10 === 0;
         const generator = new MapGenerator(width, height);
-
-        let levelData;
-        if (levelIndex % 10 === 0) {
-            levelData = generator.generateArena();
-        } else {
-            levelData = generator.generate();
-        }
+        const levelData = isBossLevel ? generator.generateArena() : generator.generate();
 
         this.loadLevelData(levelData);
 
-        // Generate Chest Positions (using the dedicated treasure spawn room)
-        this.chestPositions = [];
-        if (levelIndex % 10 !== 0 && levelData.treasureSpawn) {
-            this.chestPositions.push(levelData.treasureSpawn);
-        }
+        // Chests sit in the dedicated treasure rooms
+        this.chestPositions = !isBossLevel && levelData.treasureSpawn ? [levelData.treasureSpawn] : [];
+        this.chestPositionsFloor1 = !isBossLevel && levelData.treasureSpawnFloor1 ? [levelData.treasureSpawnFloor1] : [];
 
         return levelData.playerStart;
     }
@@ -51,814 +122,589 @@ export class LevelManager {
         this.width = levelData.width;
         this.height = levelData.height;
         this.data = levelData.data;
+        this.dataFloor1 = levelData.dataFloor1 || new Array(this.width * this.height).fill(0);
+        this.dataFloor2 = levelData.dataFloor2 || null;
         this.cellSize = levelData.cellSize || CONSTANTS.CELL_SIZE;
         this.buildLevel();
     }
 
-    getThemeMaterials() {
-        // Get theme data
-        const theme = this.themeManager.getTheme(this.currentLevelIndex);
-        const wallColors = theme.wallColors;
-        const floorColor = theme.floorColor;
-        const wallTextureType = theme.wallTextureType || 'bricks';
-        const floorTextureType = theme.floorTextureType || 'grid';
-
-        // Create wall materials with variations
-        const wallMaterials = wallColors.map(color => {
-            const colorHex = '#' + color.toString(16).padStart(6, '0');
-            let tex;
-
-            // Use appropriate texture type
-            if (wallTextureType === 'bricks') {
-                tex = TextureGenerator.createBricksTexture(colorHex);
-            } else if (wallTextureType === 'noise') {
-                tex = TextureGenerator.createNoiseTexture(colorHex);
-            } else if (wallTextureType === 'panel') {
-                const accentColor = '#' + theme.pointLightColor.toString(16).padStart(6, '0');
-                tex = TextureGenerator.createPanelTexture(colorHex, accentColor);
-            } else if (wallTextureType === 'circuit') {
-                const accentColor = '#' + theme.pointLightColor.toString(16).padStart(6, '0');
-                tex = TextureGenerator.createCircuitTexture(colorHex, accentColor);
-            } else { // grid
-                const color2Hex = '#' + (color + 0x222222).toString(16).padStart(6, '0');
-                tex = TextureGenerator.createGridTexture(colorHex, color2Hex);
-            }
-
-            return new THREE.MeshStandardMaterial({
-                map: tex,
-                roughness: 0.7,
-                metalness: 0.3
-            });
-        });
-
-        // Create floor material
-        const floorColorHex = '#' + floorColor.toString(16).padStart(6, '0');
-        let floorTex;
-
-        if (floorTextureType === 'hexagon') {
-            const accentColor = '#' + theme.pointLightColor.toString(16).padStart(6, '0');
-            floorTex = TextureGenerator.createHexagonTexture(floorColorHex, accentColor);
-        } else if (floorTextureType === 'metal_floor') {
-            floorTex = TextureGenerator.createMetalFloorTexture(floorColorHex);
-        } else if (floorTextureType === 'slime') {
-            floorTex = TextureGenerator.createSlimeTexture(floorColorHex, '#33ff33');
-        } else if (floorTextureType === 'lava') {
-            floorTex = TextureGenerator.createLavaTexture(floorColorHex, '#ff4400');
-        } else {
-            const mortarHex = '#1a1a1a';
-            floorTex = TextureGenerator.createFlagstoneTexture(floorColorHex, mortarHex);
+    _getKit(theme) {
+        if (!this.kit || this.kit.theme !== theme) {
+            if (this.kit) this.kit.dispose();
+            this.kit = new ThemeKit(theme);
         }
+        return this.kit;
+    }
 
-        return {
-            walls: wallMaterials, // Array of materials for variation
-            floor: new THREE.MeshStandardMaterial({
-                map: floorTex,
-                roughness: 0.8,
-                metalness: 0.2,
-                vertexColors: true
-            })
-        };
+    // Free the GPU resources of the previous level (theme kit materials are kept)
+    _disposeLevel() {
+        this.levelMeshGroup.traverse(obj => {
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.isInstancedMesh) obj.dispose();
+            if (!obj.material || obj.material.userData.kit) return;
+            for (const t of [obj.material.map, obj.material.bumpMap, obj.material.emissiveMap]) if (t) t.dispose();
+            obj.material.dispose();
+        });
+        this.levelMeshGroup.clear();
+        if (this.floorShadow) this.floorShadow.dispose();
+        this.floorShadow = null;
+        this.skyColliders = null;
+    }
+
+    // Special room type ('event' | 'treasure') of each Floor 0 floor cell, null otherwise
+    _computeSpecialFloorCells() {
+        const cells = new Array(this.width * this.height).fill(null);
+        for (const room of this.levelData.rooms || []) {
+            if (room.type !== 'event' && room.type !== 'treasure') continue;
+            for (let z = Math.max(0, room.z); z < Math.min(this.height, room.z + room.h); z++) {
+                for (let x = Math.max(0, room.x); x < Math.min(this.width, room.x + room.w); x++) {
+                    const i = z * this.width + x;
+                    if (cells[i] === null && this.data[i] === 0) cells[i] = room.type;
+                }
+            }
+        }
+        return cells;
+    }
+
+    // Walls next to an event/treasure room get that room's look
+    getRoomTypeForWall(x, z, specialCells) {
+        for (let dz = -1; dz <= 1; dz++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                const nx = x + dx;
+                const nz = z + dz;
+                if (nx >= 0 && nx < this.width && nz >= 0 && nz < this.height) {
+                    const type = specialCells[nz * this.width + nx];
+                    if (type) return type;
+                }
+            }
+        }
+        return null;
     }
 
     buildLevel() {
-        // Clear previous level
-        this.levelMeshGroup.clear();
-        this.skyStructures = [];
+        this._disposeLevel();
 
-        const mats = this.getThemeMaterials();
-        const wallGeo = new THREE.BoxGeometry(this.cellSize, CONSTANTS.WALL_HEIGHT, this.cellSize);
-
-        // Prepare instance data
-        const wallInstances = mats.walls.map(() => []);
-        const NUM_EVENT_VARIATIONS = 15;
-        const eventWallInstances = Array.from({length: NUM_EVENT_VARIATIONS}, () => []);
-        const treasureWallMatrices = [];
-
-        for (let y = 0; y < this.height; y++) {
-            for (let x = 0; x < this.width; x++) {
-                const index = y * this.width + x;
-                if (this.data[index] === 1) {
-                    const posX = x * this.cellSize + this.cellSize / 2;
-                    const posY = CONSTANTS.WALL_HEIGHT / 2;
-                    const posZ = y * this.cellSize + this.cellSize / 2;
-
-                    const dummy = new THREE.Object3D();
-                    dummy.position.set(posX, posY, posZ);
-                    dummy.updateMatrix();
-
-                    const roomType = this.getRoomTypeForWall(x, y);
-                    if (roomType === 'event') {
-                        const vIndex = Math.floor(Math.random() * NUM_EVENT_VARIATIONS);
-                        eventWallInstances[vIndex].push(dummy.matrix.clone());
-                    } else if (roomType === 'treasure') {
-                        treasureWallMatrices.push(dummy.matrix.clone());
-                    } else {
-                        const matIndex = Math.floor(Math.random() * mats.walls.length);
-                        wallInstances[matIndex].push(dummy.matrix.clone());
-                    }
-                }
-            }
-        }
-
-        // Create standard InstancedMeshes
-        wallInstances.forEach((matrices, i) => {
-            if (matrices.length === 0) return;
-
-            const mesh = new THREE.InstancedMesh(wallGeo, mats.walls[i], matrices.length);
-
-            for (let j = 0; j < matrices.length; j++) {
-                mesh.setMatrixAt(j, matrices[j]);
-            }
-
-            mesh.instanceMatrix.needsUpdate = true;
-            mesh.castShadow = true;
-            mesh.receiveShadow = true;
-            this.levelMeshGroup.add(mesh);
-        });
-
-        // Create Event Room InstancedMesh (glowing purple obsidian walls)
-        eventWallInstances.forEach((matrices) => {
-            if (matrices.length === 0) return;
-            const eventTex = TextureGenerator.createRuneWallTexture('#180c26', '#8a2be2');
-            const eventWallMat = new THREE.MeshStandardMaterial({
-                map: eventTex,
-                color: 0xffffff, // White to show texture colors correctly
-                emissive: 0x8a2be2, // Purple glow
-                emissiveIntensity: 0.1, // Very low intensity so it doesn't wash out the texture
-                emissiveMap: eventTex, // Make the bright parts of the texture glow
-                roughness: 0.3,
-                metalness: 0.8
-            });
-            const eventMesh = new THREE.InstancedMesh(wallGeo, eventWallMat, matrices.length);
-            for (let j = 0; j < matrices.length; j++) {
-                eventMesh.setMatrixAt(j, matrices[j]);
-            }
-            eventMesh.instanceMatrix.needsUpdate = true;
-            eventMesh.castShadow = true;
-            eventMesh.receiveShadow = true;
-            this.levelMeshGroup.add(eventMesh);
-        });
-
-        // Create Treasure Room InstancedMesh (glimmering golden brass walls)
-        if (treasureWallMatrices.length > 0) {
-            const treasureTex = TextureGenerator.createVaultWallTexture('#3d290d', '#d4af37');
-            const treasureWallMat = new THREE.MeshStandardMaterial({
-                map: treasureTex,
-                color: 0xffffff, // White to show texture colors correctly
-                emissive: 0xd4af37, // Gold glow
-                emissiveIntensity: 0.1, // Very low intensity
-                emissiveMap: treasureTex,
-                roughness: 0.2,
-                metalness: 0.9
-            });
-            const treasureMesh = new THREE.InstancedMesh(wallGeo, treasureWallMat, treasureWallMatrices.length);
-            for (let j = 0; j < treasureWallMatrices.length; j++) {
-                treasureMesh.setMatrixAt(j, treasureWallMatrices[j]);
-            }
-            treasureMesh.instanceMatrix.needsUpdate = true;
-            treasureMesh.castShadow = true;
-            treasureMesh.receiveShadow = true;
-            this.levelMeshGroup.add(treasureMesh);
-        }
-
-        // Setup floor with Baked Texture (Rock + Paths + AO)
         const theme = this.themeManager.getTheme(this.currentLevelIndex);
-        const floorColorHex = '#' + theme.floorColor.toString(16).padStart(6, '0');
-        const bakedTex = TextureGenerator.createBakedFloorTexture(this.levelData, floorColorHex, theme);
-        mats.floor.map = bakedTex;
-        mats.floor.vertexColors = false; // We don't need vertex colors anymore, everything is baked!
-        mats.floor.needsUpdate = true;
+        const kit = this._getKit(theme);
+        const wallGeo = new THREE.BoxGeometry(this.cellSize, H, this.cellSize);
+        const rampGeo = this.createRampGeometry(this.cellSize, H / 2, this.cellSize);
+        const boxHalfGeo = new THREE.BoxGeometry(this.cellSize, H / 2, this.cellSize);
+        const randomWall = () => kit.walls[Math.floor(Math.random() * kit.walls.length)];
 
-        // Simple Floor Geometry (no subdivisions needed anymore)
-        const floorGeo = new THREE.PlaneGeometry(this.width * this.cellSize, this.height * this.cellSize);
-        const floor = new THREE.Mesh(floorGeo, mats.floor);
+        const pickWallMat = (roomType) => {
+            if (roomType === 'event') return kit.runeWalls[Math.floor(Math.random() * kit.runeWalls.length)];
+            if (roomType === 'treasure') return kit.vaultWall;
+            return randomWall();
+        };
+
+        // Every wall, ramp and ramp base is an instance: one draw call per (geometry, material)
+        const instances = new Map(); // geometry -> material -> matrices
+        const addInstance = (geometry, material, matrix) => {
+            if (!instances.has(geometry)) instances.set(geometry, new Map());
+            const byMaterial = instances.get(geometry);
+            if (!byMaterial.has(material)) byMaterial.set(material, []);
+            byMaterial.get(material).push(matrix);
+        };
+        const addWall = (mat, posX, posY, posZ) => addInstance(wallGeo, mat, new THREE.Matrix4().makeTranslation(posX, posY, posZ));
+        const RAMP_YAW = { 2: Math.PI, 3: 0, 4: -Math.PI / 2, 5: Math.PI / 2 }; // North, South, West, East
+        const yaw = new THREE.Matrix4();
+        const addRamp = (cellType, posX, posZ, baseY) => {
+            const rampMat = randomWall();
+            const isHigh = cellType >= 6;
+            // Half-height box under the upper half of a long ramp
+            if (isHigh) addInstance(boxHalfGeo, rampMat, new THREE.Matrix4().makeTranslation(posX, baseY + H / 4, posZ));
+            const matrix = new THREE.Matrix4().makeTranslation(posX, baseY + (isHigh ? H / 2 : 0), posZ);
+            addInstance(rampGeo, rampMat, matrix.multiply(yaw.makeRotationY(RAMP_YAW[isHigh ? cellType - 4 : cellType])));
+        };
+
+        const floors = [this.data, this.dataFloor1, this.dataFloor2];
+        const specialCells = this._computeSpecialFloorCells();
+
+        for (let z = 0; z < this.height; z++) {
+            for (let x = 0; x < this.width; x++) {
+                const index = z * this.width + x;
+                const posX = x * this.cellSize + this.cellSize / 2;
+                const posZ = z * this.cellSize + this.cellSize / 2;
+
+                floors.forEach((grid, floor) => {
+                    if (!grid) return;
+                    const cellType = grid[index];
+                    if (cellType === 1) {
+                        addWall(pickWallMat(this.getRoomTypeForWall(x, z, specialCells)), posX, H * floor + H / 2, posZ);
+                    } else if (cellType >= 2 && cellType <= 9 && floor < 2) {
+                        addRamp(cellType, posX, posZ, H * floor);
+                    }
+                });
+            }
+        }
+
+        for (const [geometry, byMaterial] of instances) {
+            for (const [mat, matrices] of byMaterial) {
+                const mesh = new THREE.InstancedMesh(geometry, mat, matrices.length);
+                matrices.forEach((m, j) => mesh.setMatrixAt(j, m));
+                mesh.instanceMatrix.needsUpdate = true;
+                this.levelMeshGroup.add(mesh);
+            }
+        }
+
+        this._buildFloor(kit);
+        this.createSkybox(kit);
+
+        if (this.levelData.rooms) {
+            this.addDecorations(this.levelData.rooms, theme);
+            this.levelMeshGroup.add(this.createSkyIslands(kit));
+        }
+    }
+
+    // Tiled floor (one texture tile per FLOOR_TILE metres) with soft wall shadows and pentacles in event rooms
+    _buildFloor(kit) {
+        const w = this.width * this.cellSize;
+        const d = this.height * this.cellSize;
+        const geometry = new THREE.PlaneGeometry(w, d);
+        const uv = geometry.attributes.uv;
+        for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * w / FLOOR_TILE, uv.getY(i) * d / FLOOR_TILE);
+
+        // The shadow map covers the whole level once: undo the tiling for it
+        this.floorShadow = TextureGenerator.toTexture(TextureGenerator.floorShadowCanvas(this.levelData), { color: false, repeat: false });
+        this.floorShadow.repeat.set(FLOOR_TILE / w, FLOOR_TILE / d);
+        kit.floor.aoMap = this.floorShadow;
+        kit.floor.needsUpdate = true;
+
+        const floor = new THREE.Mesh(geometry, kit.floor);
         floor.rotation.x = -Math.PI / 2;
-        floor.position.set(
-            (this.width * this.cellSize) / 2,
-            0,
-            (this.height * this.cellSize) / 2
-        );
-        floor.receiveShadow = true;
+        floor.position.set(w / 2, 0, d / 2);
         this.levelMeshGroup.add(floor);
 
-        // Skybox
-        this.createSkybox();
-
-        // Decorations
-        if (this.levelData.rooms) {
-            this.addDecorations(this.levelData.rooms, this.levelData.playerStart);
+        for (const room of this.levelData.rooms || []) {
+            if (room.type !== 'event') continue;
+            const decal = new THREE.Mesh(new THREE.PlaneGeometry(room.w * this.cellSize * 0.9, room.h * this.cellSize * 0.9), kit.pentacle);
+            decal.rotation.x = -Math.PI / 2;
+            decal.position.set((room.x + room.w / 2) * this.cellSize, 0.02, (room.z + room.h / 2) * this.cellSize);
+            this.levelMeshGroup.add(decal);
         }
+    }
 
-        // Spawn Floating Sky Structures in rooms
-        if (this.levelData.rooms) {
-            const theme = this.themeManager.getTheme(this.currentLevelIndex);
-            const capColor = theme.floorColor;
+    // Decorative floating islands + bridges around the map. They are static, so every part is
+    // merged into one mesh per material (a few draw calls instead of thousands).
+    createSkyIslands(kit) {
+        const capMat = kit.islandCap;
+        const stoneMat = kit.walls[0];
+        const vineMat = kit.foliage;
+        const runeMat = kit.rune;
+        const woodMat = kit.wood;
+        const stoneMatBridge = kit.walls[1];
+        const vineMatBridge = kit.foliage;
+        const root = new THREE.Group();
+        const add = (parent, geo, mat, x = 0, y = 0, z = 0) => {
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(x, y, z);
+            parent.add(mesh);
+            return mesh;
+        };
 
-            const capMat = new THREE.MeshStandardMaterial({
-                color: capColor,
-                roughness: 0.8,
-                metalness: 0.1
-            });
+        const mapW = this.width * this.cellSize;
+        const mapH = this.height * this.cellSize;
+        const islands = [];
 
-            const stoneMat = new THREE.MeshStandardMaterial({
-                color: 0x2b2e33, // Slate grey rock
-                roughness: 0.9,
-                metalness: 0.15
-            });
+        // 80 to 120 islands, spawned with a +100% margin around the map
+        const totalIslands = 80 + Math.floor(Math.random() * 40);
+        for (let k = 0; k < totalIslands; k++) {
+            const island = new THREE.Group();
+            island.position.set(-mapW / 2 + Math.random() * (mapW * 2), 8.0 + Math.random() * 32.0, -mapH / 2 + Math.random() * (mapH * 2));
+            const islandType = Math.floor(Math.random() * 3);
 
-            const vineMat = new THREE.MeshStandardMaterial({
-                color: this.currentTheme === 3 ? 0x8b0000 : 0x2e8b57, // Crimson for Demonic, Forest Green for others
-                roughness: 0.9,
-                metalness: 0.1
-            });
-            
-            const runeMat = new THREE.MeshStandardMaterial({
-                color: 0x051a24,
-                emissive: this.currentTheme === 1 ? 0x9400d3 : 0x00dfff, // Purple or Cyan glow
-                emissiveIntensity: 1.8,
-                roughness: 0.2,
-                metalness: 0.9
-            });
+            if (islandType === 0) {
+                // CLASSIC: box with a cone underneath
+                const blockW = (2.0 + Math.random() * 4.0) * 1.4;
+                const blockH = (1.0 + Math.random() * 2.0) * 1.4;
+                const blockD = (2.0 + Math.random() * 4.0) * 1.4;
+                add(island, new THREE.BoxGeometry(blockW, blockH, blockD), stoneMat);
+                add(island, new THREE.BoxGeometry(blockW + 0.1, 0.15, blockD + 0.1), capMat, 0, blockH / 2 + 0.055, 0);
+                add(island, new THREE.ConeGeometry((blockW + blockD) * 0.17, blockH * 1.5, 4), stoneMat, 0, -(blockH / 2 + blockH * 0.75), 0).rotation.x = Math.PI;
 
-            const mapW = this.width * this.cellSize;
-            const mapH = this.height * this.cellSize;
+                if (blockW * blockD > 25 && Math.random() > 0.3) {
+                    // Runic temple
+                    const temple = add(island, new THREE.BoxGeometry(2.0, 2.5, 2.0), stoneMat, 0, blockH / 2 + 1.25, 0);
+                    add(temple, new THREE.ConeGeometry(1.8, 1.5, 4), stoneMat, 0, 1.25 + 0.75, 0).rotation.y = Math.PI / 4;
+                    add(temple, new THREE.BoxGeometry(1.0, 1.0, 2.1), runeMat);
+                } else if (Math.random() > 0.5) {
+                    // Crystal
+                    add(island, new THREE.OctahedronGeometry(0.18 + Math.random() * 0.08, 0), runeMat, 0, blockH / 2 + 0.2, 0);
+                }
+            } else if (islandType === 1) {
+                // PILLAR CLUSTER (basalt-like columns)
+                const numPillars = 3 + Math.floor(Math.random() * 4);
+                for (let p = 0; p < numPillars; p++) {
+                    const pw = (0.8 + Math.random() * 1.0) * 1.4;
+                    const ph = (4.0 + Math.random() * 6.0) * 1.4;
+                    const pillar = add(island, new THREE.CylinderGeometry(pw, pw * 0.7, ph, 6), stoneMat,
+                        (Math.random() - 0.5) * 3.0, (Math.random() - 0.5) * 2.0, (Math.random() - 0.5) * 3.0);
+                    pillar.rotation.x = (Math.random() - 0.5) * 0.2;
+                    pillar.rotation.z = (Math.random() - 0.5) * 0.2;
 
-            // Spawn 80 to 120 floating islands across the expanded map surface (30% density increase)
-            const totalIslands = 80 + Math.floor(Math.random() * 40);
-            for (let k = 0; k < totalIslands; k++) {
-                // Spawns with +100% margin around the map boundaries
-                const posX = -mapW / 2 + Math.random() * (mapW * 2);
-                const posZ = -mapH / 2 + Math.random() * (mapH * 2);
-                const posY = 8.0 + Math.random() * 32.0;
+                    const cap = add(island, new THREE.CylinderGeometry(pw + 0.05, pw + 0.05, 0.2, 6), capMat,
+                        pillar.position.x, pillar.position.y + ph / 2 + 0.1, pillar.position.z);
+                    cap.rotation.copy(pillar.rotation);
+                }
+            } else {
+                // RUINS: flat circular island with standing stones
+                const radius = (2.5 + Math.random() * 2.0) * 1.4;
+                const thickness = (0.8 + Math.random() * 1.0) * 1.4;
+                add(island, new THREE.CylinderGeometry(radius, radius * 0.5, thickness, 8), stoneMat);
+                add(island, new THREE.CylinderGeometry(radius + 0.1, radius + 0.1, 0.15, 8), capMat, 0, thickness / 2 + 0.055, 0);
 
-                const structureGroup = new THREE.Group();
-                structureGroup.position.set(posX, posY, posZ);
-
-                const islandType = Math.floor(Math.random() * 3);
-
-                if (islandType === 0) {
-                    // TYPE 0: CLASSIC (Box with cone underneath)
-                    const blockW = (2.0 + Math.random() * 4.0) * 1.4;
-                    const blockH = (1.0 + Math.random() * 2.0) * 1.4;
-                    const blockD = (2.0 + Math.random() * 4.0) * 1.4;
-
-                    const blockGeo = new THREE.BoxGeometry(blockW, blockH, blockD);
-                    const mainMesh = new THREE.Mesh(blockGeo, stoneMat);
-                    structureGroup.add(mainMesh);
-
-                    const capGeo = new THREE.BoxGeometry(blockW + 0.1, 0.15, blockD + 0.1);
-                    const capMesh = new THREE.Mesh(capGeo, capMat);
-                    capMesh.position.y = blockH / 2 + 0.055;
-                    structureGroup.add(capMesh);
-
-                    const coneGeo = new THREE.ConeGeometry((blockW + blockD) * 0.17, blockH * 1.5, 4);
-                    const coneMesh = new THREE.Mesh(coneGeo, stoneMat);
-                    coneMesh.rotation.x = Math.PI;
-                    coneMesh.position.y = -(blockH / 2 + blockH * 0.75);
-                    structureGroup.add(coneMesh);
-                    // Runic Temple or Crystal
-                    if (blockW * blockD > 25 && Math.random() > 0.3) {
-                        const templeGeo = new THREE.BoxGeometry(2.0, 2.5, 2.0);
-                        const temple = new THREE.Mesh(templeGeo, stoneMat);
-                        temple.position.set(0, blockH / 2 + 1.25, 0);
-                        
-                        const roofGeo = new THREE.ConeGeometry(1.8, 1.5, 4);
-                        const roof = new THREE.Mesh(roofGeo, stoneMat);
-                        roof.position.set(0, 1.25 + 0.75, 0);
-                        roof.rotation.y = Math.PI / 4;
-                        temple.add(roof);
-
-                        const runeDecal = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.0, 2.1), runeMat);
-                        temple.add(runeDecal);
-
-                        temple.castShadow = true;
-                        temple.receiveShadow = true;
-                        structureGroup.add(temple);
-                    } else if (Math.random() > 0.5) {
-                        // Crystal
-                        const coreGeo = new THREE.OctahedronGeometry(0.18 + Math.random() * 0.08, 0);
-                        const core = new THREE.Mesh(coreGeo, runeMat);
-                        core.position.set(0, blockH / 2 + 0.2, 0);
-                        structureGroup.add(core);
-                    }
-
-                } else if (islandType === 1) {
-                    // TYPE 1: PILLAR CLUSTER (Basalt-like columns)
-                    const numPillars = 3 + Math.floor(Math.random() * 4);
-                    for (let p = 0; p < numPillars; p++) {
-                        const pw = (0.8 + Math.random() * 1.0) * 1.4;
-                        const ph = (4.0 + Math.random() * 6.0) * 1.4;
-                        
-                        const pillarGeo = new THREE.CylinderGeometry(pw, pw * 0.7, ph, 6);
-                        const pillar = new THREE.Mesh(pillarGeo, stoneMat);
-                        
-                        const px = (Math.random() - 0.5) * 3.0;
-                        const pz = (Math.random() - 0.5) * 3.0;
-                        const py = (Math.random() - 0.5) * 2.0;
-                        
-                        pillar.position.set(px, py, pz);
-                        pillar.rotation.x = (Math.random() - 0.5) * 0.2;
-                        pillar.rotation.z = (Math.random() - 0.5) * 0.2;
-                        structureGroup.add(pillar);
-                        
-                        // Top cap for pillar
-                        const pCapGeo = new THREE.CylinderGeometry(pw + 0.05, pw + 0.05, 0.2, 6);
-                        const pCap = new THREE.Mesh(pCapGeo, capMat);
-                        pCap.position.set(px, py + ph / 2 + 0.1, pz);
-                        pCap.rotation.copy(pillar.rotation);
-                        structureGroup.add(pCap);
-                    }
-
-                } else {
-                    // TYPE 2: RUINS (Flat circular island with standing stones)
-                    const radius = (2.5 + Math.random() * 2.0) * 1.4;
-                    const thickness = (0.8 + Math.random() * 1.0) * 1.4;
-                    
-                    const baseGeo = new THREE.CylinderGeometry(radius, radius * 0.5, thickness, 8);
-                    const base = new THREE.Mesh(baseGeo, stoneMat);
-                    structureGroup.add(base);
-                    
-                    const capGeo = new THREE.CylinderGeometry(radius + 0.1, radius + 0.1, 0.15, 8);
-                    const cap = new THREE.Mesh(capGeo, capMat);
-                    cap.position.y = thickness / 2 + 0.055;
-                    structureGroup.add(cap);
-
-                    // Centerpiece (Hexagonal Temple)
-                    if (radius > 4.5 && Math.random() > 0.3) {
-                        const templeGeo = new THREE.CylinderGeometry(1.5, 1.5, 3.0, 6);
-                        const temple = new THREE.Mesh(templeGeo, stoneMat);
-                        temple.position.set(0, thickness / 2 + 1.5, 0);
-                        
-                        const roofGeo = new THREE.ConeGeometry(2.0, 2.0, 6);
-                        const roof = new THREE.Mesh(roofGeo, stoneMat);
-                        roof.position.set(0, 1.5 + 1.0, 0);
-                        temple.add(roof);
-
-                        const runeDecal = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.55, 0.5, 6), runeMat);
-                        temple.add(runeDecal);
-
-                        temple.castShadow = true;
-                        temple.receiveShadow = true;
-                        structureGroup.add(temple);
-                    }
-                    
-                    // Standing stones (arch or monoliths)
-                    const numStones = 2 + Math.floor(Math.random() * 4);
-                    for (let s = 0; s < numStones; s++) {
-                        const sw = 0.4 + Math.random() * 0.3;
-                        const sh = 1.0 + Math.random() * 2.0;
-                        const sd = 0.4 + Math.random() * 0.3;
-                        
-                        const stoneGeo = new THREE.BoxGeometry(sw, sh, sd);
-                        const stone = new THREE.Mesh(stoneGeo, stoneMat);
-                        
-                        const angle = (s / numStones) * Math.PI * 2 + Math.random();
-                        const dist = radius * 0.6;
-                        
-                        stone.position.set(Math.cos(angle) * dist, thickness / 2 + sh / 2, Math.sin(angle) * dist);
-                        stone.rotation.y = -angle; // Face outward
-                        
-                        // Small glowing rune on the stone
-                        const runeGeo = new THREE.BoxGeometry(sw * 1.1, sh * 0.3, sd * 1.1);
-                        const rune = new THREE.Mesh(runeGeo, runeMat);
-                        rune.position.copy(stone.position);
-                        structureGroup.add(rune);
-                        
-                        structureGroup.add(stone);
-                    }
+                if (radius > 4.5 && Math.random() > 0.3) {
+                    // Hexagonal temple
+                    const temple = add(island, new THREE.CylinderGeometry(1.5, 1.5, 3.0, 6), stoneMat, 0, thickness / 2 + 1.5, 0);
+                    add(temple, new THREE.ConeGeometry(2.0, 2.0, 6), stoneMat, 0, 1.5 + 1.0, 0);
+                    add(temple, new THREE.CylinderGeometry(1.55, 1.55, 0.5, 6), runeMat);
                 }
 
-                // Add satellite shards and vines to ALL types
-                const shardCount = Math.floor(Math.random() * 3);
-                for (let s = 0; s < shardCount; s++) {
-                    const shardGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-                    const shard = new THREE.Mesh(shardGeo, stoneMat);
-                    const angle = Math.random() * Math.PI * 2;
-                    const dist = 3.0 + Math.random() * 3.0;
-                    shard.position.set(Math.cos(angle) * dist, (Math.random() - 0.5) * 2.0, Math.sin(angle) * dist);
-                    shard.rotation.set(Math.random(), Math.random(), Math.random());
-                    structureGroup.add(shard);
+                const numStones = 2 + Math.floor(Math.random() * 4);
+                for (let s = 0; s < numStones; s++) {
+                    const sw = 0.4 + Math.random() * 0.3;
+                    const sh = 1.0 + Math.random() * 2.0;
+                    const sd = 0.4 + Math.random() * 0.3;
+                    const angle = (s / numStones) * Math.PI * 2 + Math.random();
+                    const dist = radius * 0.6;
+                    const stone = add(island, new THREE.BoxGeometry(sw, sh, sd), stoneMat,
+                        Math.cos(angle) * dist, thickness / 2 + sh / 2, Math.sin(angle) * dist);
+                    stone.rotation.y = -angle; // Face outward
+                    // Small glowing rune band on the stone
+                    add(island, new THREE.BoxGeometry(sw * 1.1, sh * 0.3, sd * 1.1), runeMat).position.copy(stone.position);
                 }
-
-                const vineCount = Math.floor(Math.random() * 4);
-                for (let v = 0; v < vineCount; v++) {
-                    const vineH = 1.0 + Math.random() * 2.0;
-                    const vineGeo = new THREE.CylinderGeometry(0.03, 0.015, vineH, 4);
-                    const vine = new THREE.Mesh(vineGeo, vineMat);
-                    vine.position.set((Math.random() - 0.5) * 2.0, -vineH / 2 - 0.5, (Math.random() - 0.5) * 2.0);
-                    vine.rotation.z = (Math.random() - 0.5) * 0.3;
-                    vine.rotation.x = (Math.random() - 0.5) * 0.3;
-                    structureGroup.add(vine);
-                }
-
-                // Enable shadows for all parts
-                structureGroup.traverse((child) => {
-                    if (child.isMesh) {
-                        child.castShadow = true;
-                        child.receiveShadow = true;
-                    }
-                });
-
-                this.levelMeshGroup.add(structureGroup);
-                
-                // Keep track of them for hovering animation & bridges
-                if (!this.floatingIslands) this.floatingIslands = [];
-                this.floatingIslands.push({
-                    mesh: structureGroup,
-                    baseY: posY,
-                    speed: 0.2 + Math.random() * 0.5,
-                    offset: Math.random() * Math.PI * 2,
-                    connections: 0 // Bridge connections counter
-                });
             }
 
-            // --- Bridge Generation System ---
-            if (this.floatingIslands && this.floatingIslands.length > 0) {
-                const woodMat = new THREE.MeshLambertMaterial({ color: 0x5c4033 });
-                const stoneMatBridge = new THREE.MeshLambertMaterial({ color: 0x6a6a6a });
-                const vineMatBridge = new THREE.MeshLambertMaterial({ color: 0x2e5c2e });
+            // Satellite shards and hanging vines on every type
+            const shardCount = Math.floor(Math.random() * 3);
+            for (let s = 0; s < shardCount; s++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = 3.0 + Math.random() * 3.0;
+                add(island, new THREE.BoxGeometry(0.5, 0.5, 0.5), stoneMat, Math.cos(angle) * dist, (Math.random() - 0.5) * 2.0, Math.sin(angle) * dist)
+                    .rotation.set(Math.random(), Math.random(), Math.random());
+            }
+            const vineCount = Math.floor(Math.random() * 4);
+            for (let v = 0; v < vineCount; v++) {
+                const vineH = 1.0 + Math.random() * 2.0;
+                const vine = add(island, new THREE.CylinderGeometry(0.03, 0.015, vineH, 4), vineMat,
+                    (Math.random() - 0.5) * 2.0, -vineH / 2 - 0.5, (Math.random() - 0.5) * 2.0);
+                vine.rotation.z = (Math.random() - 0.5) * 0.3;
+                vine.rotation.x = (Math.random() - 0.5) * 0.3;
+            }
 
-                for (let i = 0; i < this.floatingIslands.length; i++) {
-                    const islA = this.floatingIslands[i];
-                    
-                    for (let j = i + 1; j < this.floatingIslands.length; j++) {
-                        if (islA.connections >= 2) break;
-                        
-                        const islB = this.floatingIslands[j];
-                        if (islB.connections >= 2) continue;
-                        
-                        const dx = islA.mesh.position.x - islB.mesh.position.x;
-                        const dy = islA.mesh.position.y - islB.mesh.position.y;
-                        const dz = islA.mesh.position.z - islB.mesh.position.z;
-                        
-                        const horizDist = Math.sqrt(dx * dx + dz * dz);
-                        const dist3D = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                        
-                        // Valid bridge connection?
-                        if (horizDist > 4.0 && horizDist < 20.0 && Math.abs(dy) < 6.0) {
-                            const bridgeGroup = new THREE.Group();
-                            
-                            const midX = (islA.mesh.position.x + islB.mesh.position.x) / 2;
-                            const midY = (islA.mesh.position.y + islB.mesh.position.y) / 2;
-                            const midZ = (islA.mesh.position.z + islB.mesh.position.z) / 2;
-                            bridgeGroup.position.set(midX, midY, midZ);
-                            bridgeGroup.lookAt(islB.mesh.position.x, islB.mesh.position.y, islB.mesh.position.z);
-                            
-                            const connType = Math.floor(Math.random() * 3);
+            root.add(island);
+            islands.push({ mesh: island, connections: 0 });
+        }
 
-                            if (connType === 0) {
-                                // Type 0: Wood Bridge
-                                const numPlanks = Math.floor(dist3D / 0.8);
-                                for (let p = 0; p < numPlanks; p++) {
-                                    const t = p / (numPlanks - 1);
-                                    const sag = Math.sin(t * Math.PI) * (dist3D * 0.15); // Sag curve
-                                    
-                                    const plankGeo = new THREE.BoxGeometry(1.5, 0.15, 0.5);
-                                    const plank = new THREE.Mesh(plankGeo, woodMat);
-                                    
-                                    const zPos = (t - 0.5) * dist3D;
-                                    plank.position.set(0, -sag, zPos);
-                                    
-                                    plank.rotation.z = (Math.random() - 0.5) * 0.2;
-                                    plank.rotation.x = (Math.random() - 0.5) * 0.2;
-                                    
-                                    plank.castShadow = true;
-                                    plank.receiveShadow = true;
-                                    bridgeGroup.add(plank);
-                                }
-                            } else if (connType === 1) {
-                                // Type 1: Stone Arch
-                                const numStones = Math.floor(dist3D / 1.2);
-                                for (let p = 0; p < numStones; p++) {
-                                    const t = p / (numStones - 1);
-                                    const arch = Math.sin(t * Math.PI) * (dist3D * 0.2); // Arch goes UP
-                                    
-                                    const stoneGeo = new THREE.BoxGeometry(2.0, 0.8, 1.2);
-                                    const stone = new THREE.Mesh(stoneGeo, stoneMatBridge);
-                                    
-                                    const zPos = (t - 0.5) * dist3D;
-                                    stone.position.set(0, arch, zPos);
-                                    
-                                    stone.rotation.x = -(t - 0.5) * Math.PI * 0.5; // Rotate to follow arch
-                                    stone.rotation.y = (Math.random() - 0.5) * 0.1;
-                                    stone.rotation.z = (Math.random() - 0.5) * 0.1;
-                                    
-                                    stone.castShadow = true;
-                                    stone.receiveShadow = true;
-                                    bridgeGroup.add(stone);
-                                }
-                            } else {
-                                // Type 2: Giant Vines / Roots
-                                const numVines = 2 + Math.floor(Math.random() * 2);
-                                for (let v = 0; v < numVines; v++) {
-                                    const numSegments = Math.floor(dist3D / 1.5);
-                                    const vineRadius = 0.2 + Math.random() * 0.3;
-                                    const vineOffset = (Math.random() - 0.5) * 1.5;
-                                    
-                                    for (let s = 0; s < numSegments; s++) {
-                                        const t = s / (numSegments - 1);
-                                        const sag = Math.sin(t * Math.PI) * (dist3D * 0.2) + (Math.random() - 0.5) * 0.5;
-                                        
-                                        const segGeo = new THREE.CylinderGeometry(vineRadius, vineRadius * 0.8, 1.8, 5);
-                                        const segment = new THREE.Mesh(segGeo, vineMatBridge);
-                                        
-                                        const zPos = (t - 0.5) * dist3D;
-                                        const xPos = Math.sin(t * Math.PI * 4 + v) * 0.8 + vineOffset; // Twist around center
-                                        
-                                        segment.position.set(xPos, -sag, zPos);
-                                        segment.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.5;
-                                        segment.rotation.z = (Math.random() - 0.5) * 0.5;
-                                        
-                                        segment.castShadow = true;
-                                        segment.receiveShadow = true;
-                                        bridgeGroup.add(segment);
-                                    }
-                                }
-                            }
-                            
-                            this.levelMeshGroup.add(bridgeGroup);
-                            
-                            // Synchronize island movement if hovering is ever enabled
-                            islB.speed = islA.speed;
-                            islB.offset = islA.offset;
-                            
-                            islA.connections++;
-                            islB.connections++;
+        // Bridges: each island links to at most 2 neighbours
+        for (let i = 0; i < islands.length; i++) {
+            const islA = islands[i];
+            for (let j = i + 1; j < islands.length && islA.connections < 2; j++) {
+                const islB = islands[j];
+                if (islB.connections >= 2) continue;
+
+                const a = islA.mesh.position;
+                const b = islB.mesh.position;
+                const dx = a.x - b.x;
+                const dy = a.y - b.y;
+                const dz = a.z - b.z;
+                const horizDist = Math.sqrt(dx * dx + dz * dz);
+                if (horizDist <= 4.0 || horizDist >= 20.0 || Math.abs(dy) >= 6.0) continue;
+
+                const dist3D = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                const bridge = new THREE.Group();
+                bridge.position.set((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2);
+                bridge.lookAt(b.x, b.y, b.z);
+
+                const connType = Math.floor(Math.random() * 3);
+                if (connType === 0) {
+                    // Wood bridge with a sag curve
+                    const numPlanks = Math.floor(dist3D / 0.8);
+                    for (let p = 0; p < numPlanks; p++) {
+                        const t = p / (numPlanks - 1);
+                        const plank = add(bridge, new THREE.BoxGeometry(1.5, 0.15, 0.5), woodMat, 0, -Math.sin(t * Math.PI) * (dist3D * 0.15), (t - 0.5) * dist3D);
+                        plank.rotation.z = (Math.random() - 0.5) * 0.2;
+                        plank.rotation.x = (Math.random() - 0.5) * 0.2;
+                    }
+                } else if (connType === 1) {
+                    // Stone arch
+                    const numStones = Math.floor(dist3D / 1.2);
+                    for (let p = 0; p < numStones; p++) {
+                        const t = p / (numStones - 1);
+                        const stone = add(bridge, new THREE.BoxGeometry(2.0, 0.8, 1.2), stoneMatBridge, 0, Math.sin(t * Math.PI) * (dist3D * 0.2), (t - 0.5) * dist3D);
+                        stone.rotation.x = -(t - 0.5) * Math.PI * 0.5; // Follow the arch
+                        stone.rotation.y = (Math.random() - 0.5) * 0.1;
+                        stone.rotation.z = (Math.random() - 0.5) * 0.1;
+                    }
+                } else {
+                    // Giant twisted vines / roots
+                    const numVines = 2 + Math.floor(Math.random() * 2);
+                    for (let v = 0; v < numVines; v++) {
+                        const numSegments = Math.floor(dist3D / 1.5);
+                        const vineRadius = 0.2 + Math.random() * 0.3;
+                        const vineOffset = (Math.random() - 0.5) * 1.5;
+                        for (let s = 0; s < numSegments; s++) {
+                            const t = s / (numSegments - 1);
+                            const sag = Math.sin(t * Math.PI) * (dist3D * 0.2) + (Math.random() - 0.5) * 0.5;
+                            const xPos = Math.sin(t * Math.PI * 4 + v) * 0.8 + vineOffset; // Twist around center
+                            const segment = add(bridge, new THREE.CylinderGeometry(vineRadius, vineRadius * 0.8, 1.8, 5), vineMatBridge, xPos, -sag, (t - 0.5) * dist3D);
+                            segment.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.5;
+                            segment.rotation.z = (Math.random() - 0.5) * 0.5;
                         }
                     }
                 }
+
+                root.add(bridge);
+                islA.connections++;
+                islB.connections++;
             }
         }
+
+        // Islands and bridges are solid (projectiles bounce off, the player stands on them)
+        root.updateMatrixWorld(true);
+        this.skyColliders = new SkyColliders();
+        root.traverse(obj => obj.isMesh && this.skyColliders.add(obj));
+
+        return this._mergeByMaterial(root);
     }
-    createSkybox() {
-        const skyGeo = new THREE.SphereGeometry(500, 32, 32);
 
-        const size = 2048; // High resolution skybox
-        const canvas = document.createElement('canvas');
-        canvas.width = size;
-        canvas.height = size;
-        const ctx = canvas.getContext('2d');
-
-        const themeName = this.themeManager.getThemeName(this.currentLevelIndex);
-        let topColor, bottomColor;
-
-        if (themeName === 'Enchanted Forest') {
-            topColor = '#101030'; // Night sky
-            bottomColor = '#2a1a4a'; // Magical purple horizon
-        } else if (themeName === 'Medieval City') {
-            topColor = '#1a2a6c'; // Deep Blue
-            bottomColor = '#b21f1f'; // Sunset Red
-        } else if (themeName === 'Deep Cave') {
-            topColor = '#000000';
-            bottomColor = '#050510'; // Very dark fog
-        } else { // Demonic Base
-            topColor = '#110000';
-            bottomColor = '#330000'; // Hellish Red
-        }
-
-        // Base gradient
-        const gradient = ctx.createLinearGradient(0, 0, 0, size);
-        gradient.addColorStop(0, topColor);
-        gradient.addColorStop(1, bottomColor);
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, size, size);
-
-        // Global Stars
-        if (themeName !== 'Deep Cave') {
-            for (let i = 0; i < 1500; i++) {
-                const x = Math.random() * size;
-                const y = Math.random() * size;
-                const r = Math.random() * 1.5;
-                ctx.fillStyle = `rgba(255, 255, 255, ${Math.random()})`;
-                ctx.beginPath();
-                ctx.arc(x, y, r, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-
-        // Theme-specific effects
-        if (themeName === 'Enchanted Forest') {
-            // Magical Nebulas
-            for (let i = 0; i < 15; i++) {
-                const x = Math.random() * size;
-                const y = Math.random() * size; // Spread everywhere
-                const r = 200 + Math.random() * 300;
-
-                const cloudGrad = ctx.createRadialGradient(x, y, 0, x, y, r);
-                const hue = Math.random() > 0.5 ? '280, 100%, 70%' : '200, 100%, 70%';
-                cloudGrad.addColorStop(0, `hsla(${hue}, 0.15)`);
-                cloudGrad.addColorStop(1, `hsla(${hue}, 0)`);
-                ctx.fillStyle = cloudGrad;
-                ctx.beginPath();
-                ctx.arc(x, y, r, 0, Math.PI * 2);
-                ctx.fill();
-            }
-            
-            // Giant Magical Moon
-            const moonX = size * 0.7;
-            const moonY = size * 0.3;
-            const moonR = 150;
-            const moonGrad = ctx.createRadialGradient(moonX, moonY, 0, moonX, moonY, moonR * 2);
-            moonGrad.addColorStop(0, 'rgba(200, 240, 255, 1)');
-            moonGrad.addColorStop(0.2, 'rgba(200, 240, 255, 0.8)');
-            moonGrad.addColorStop(1, 'rgba(200, 240, 255, 0)');
-            ctx.fillStyle = moonGrad;
-            ctx.beginPath();
-            ctx.arc(moonX, moonY, moonR * 2, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Pollen / Magic motes
-            ctx.fillStyle = '#ffffaa';
-            for (let i = 0; i < 800; i++) {
-                const x = Math.random() * size;
-                const y = Math.random() * size;
-                const s = Math.random() * 3;
-                ctx.globalAlpha = Math.random() * 0.6 + 0.4;
-                ctx.beginPath();
-                ctx.arc(x, y, s, 0, Math.PI * 2);
-                ctx.fill();
-            }
-
-        } else if (themeName === 'Medieval City') {
-            // Huge Setting Sun
-            const sunX = size * 0.5;
-            const sunY = size * 0.7; // Lower on horizon
-            const sunR = 250;
-            const sunGrad = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, sunR * 3);
-            sunGrad.addColorStop(0, 'rgba(255, 200, 50, 1)');
-            sunGrad.addColorStop(0.1, 'rgba(255, 100, 0, 0.8)');
-            sunGrad.addColorStop(1, 'rgba(255, 0, 0, 0)');
-            ctx.fillStyle = sunGrad;
-            ctx.beginPath();
-            ctx.arc(sunX, sunY, sunR * 3, 0, Math.PI * 2);
-            ctx.fill();
-
-        } else if (themeName === 'Deep Cave') {
-            // Glowing crystals in the dark void
-            for (let i = 0; i < 200; i++) {
-                const x = Math.random() * size;
-                const y = Math.random() * size;
-                const s = Math.random() * 4;
-
-                const glowColor = Math.random() > 0.5 ? 'rgba(100, 150, 255, 0.6)' : 'rgba(150, 50, 255, 0.6)';
-                ctx.fillStyle = glowColor;
-                ctx.beginPath();
-                ctx.arc(x, y, s, 0, Math.PI * 2);
-                ctx.fill();
-                
-                // Crystal flare
-                ctx.fillStyle = 'rgba(255,255,255,0.8)';
-                ctx.fillRect(x - s/4, y - s*2, s/2, s*4);
-                ctx.fillRect(x - s*2, y - s/4, s*4, s/2);
-            }
-
-        } else { // Demonic Base
-            // Giant Blood Moon / Eye
-            const eyeX = size * 0.5;
-            const eyeY = size * 0.3;
-            const eyeR = 200;
-            const eyeGrad = ctx.createRadialGradient(eyeX, eyeY, 0, eyeX, eyeY, eyeR * 2.5);
-            eyeGrad.addColorStop(0, 'rgba(255, 50, 0, 1)');
-            eyeGrad.addColorStop(0.3, 'rgba(150, 0, 0, 0.8)');
-            eyeGrad.addColorStop(1, 'rgba(50, 0, 0, 0)');
-            ctx.fillStyle = eyeGrad;
-            ctx.beginPath();
-            ctx.arc(eyeX, eyeY, eyeR * 2.5, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Raining Embers/Ash
-            for (let i = 0; i < 1000; i++) {
-                const x = Math.random() * size;
-                const y = Math.random() * size;
-                const s = Math.random() * 4 + 1;
-                ctx.fillStyle = Math.random() > 0.3 ? 'rgba(255, 100, 0, 0.8)' : 'rgba(50, 50, 50, 0.8)';
-                ctx.beginPath();
-                ctx.arc(x, y, s, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-        ctx.globalAlpha = 1;
-
-        const skyTexture = new THREE.CanvasTexture(canvas);
-        const skyMat = new THREE.MeshBasicMaterial({
-            map: skyTexture,
-            side: THREE.BackSide,
-            fog: false // Sky shouldn't be affected by fog
+    // Bake every mesh of a static hierarchy into one merged mesh per material
+    _mergeByMaterial(root) {
+        root.updateMatrixWorld(true);
+        const buckets = new Map();
+        root.traverse(obj => {
+            if (!obj.isMesh) return;
+            const geo = obj.geometry.index ? obj.geometry.toNonIndexed() : obj.geometry.clone();
+            geo.applyMatrix4(obj.matrixWorld);
+            obj.geometry.dispose();
+            if (!buckets.has(obj.material)) buckets.set(obj.material, []);
+            buckets.get(obj.material).push(geo);
         });
 
-        const sky = new THREE.Mesh(skyGeo, skyMat);
-        sky.position.set(
-            (this.width * this.cellSize) / 2,
-            0,
-            (this.height * this.cellSize) / 2
-        );
+        const merged = new THREE.Group();
+        for (const [mat, geos] of buckets) {
+            const geo = mergeGeometries(geos);
+            geos.forEach(g => g.dispose());
+            if (geo) merged.add(new THREE.Mesh(geo, mat));
+        }
+        return merged;
+    }
+
+    createSkybox(kit) {
+        const sky = new THREE.Mesh(new THREE.SphereGeometry(500, 48, 24), kit.sky);
+        sky.position.set((this.width * this.cellSize) / 2, 0, (this.height * this.cellSize) / 2);
         this.levelMeshGroup.add(sky);
     }
 
-    addDecorations(rooms, startPos) {
-        this.decorationPositions = []; // Reset decoration tracking
-
-        rooms.forEach(room => {
-            // Get themed decorations for this room
-            const roomDecorations = this.themeManager.generateRoomDecorations(
-                room,
-                startPos,
-                this.currentLevelIndex
-            );
-
-            // Spawn each decoration
-            // Spawn each decoration - DISABLED per user request
-            // (Code removed during cleanup)
-
-            // Add themed point light in center of some rooms
-            if (Math.random() < 0.4) {
-                const cx = Math.floor(room.x + room.w / 2);
-                const cz = Math.floor(room.z + room.h / 2);
-
-                const lightColor = this.themeManager.getPointLightColor(this.currentLevelIndex);
-                const light = new THREE.PointLight(lightColor, 1, 10);
-                light.position.set(
-                    cx * this.cellSize + this.cellSize / 2,
-                    2,
-                    cz * this.cellSize + this.cellSize / 2
-                );
-                this.levelMeshGroup.add(light);
-            }
-        });
+    // Room lights in the theme colour (prop decorations are disabled)
+    addDecorations(rooms, theme) {
+        this.decorationPositions = [];
+        const { point, pointIntensity } = theme.lighting;
+        for (const room of rooms) {
+            if (Math.random() >= 0.4) continue;
+            const cx = Math.floor(room.x + room.w / 2);
+            const cz = Math.floor(room.z + room.h / 2);
+            const light = new THREE.PointLight(point, pointIntensity, 14);
+            light.position.set(cx * this.cellSize + this.cellSize / 2, 2.2, cz * this.cellSize + this.cellSize / 2);
+            this.levelMeshGroup.add(light);
+        }
     }
 
-    addMeshAt(geo, mat, x, z, y) {
-        const mesh = new THREE.Mesh(geo, mat);
-        mesh.position.set(
-            x * this.cellSize + this.cellSize / 2,
-            y,
-            z * this.cellSize + this.cellSize / 2
-        );
-        this.levelMeshGroup.add(mesh);
+    // ─── Spatial queries ─────────────────────────────────────────────────────
+
+    // World X/Z of a grid cell centre
+    gridToWorld(g) {
+        return g * this.cellSize + this.cellSize / 2;
     }
 
-    isWall(x, z) {
+    // World position on the floor at the centre of a grid cell. `checkY` picks the floor level.
+    floorPositionAt(gridX, gridZ, checkY = 0, target = new THREE.Vector3()) {
+        const x = this.gridToWorld(gridX);
+        const z = this.gridToWorld(gridZ);
+        return target.set(x, this.getFloorHeight(x, z, checkY), z);
+    }
+
+    isWall(x, z, groundY = 0) {
         const gridX = Math.floor(x / this.cellSize);
         const gridZ = Math.floor(z / this.cellSize);
-
         if (gridX < 0 || gridX >= this.width || gridZ < 0 || gridZ >= this.height) {
             return true; // Out of bounds = wall
         }
-
         const index = gridZ * this.width + gridX;
+
+        // Each floor's walls only block entities standing within that floor's height band
+        if (groundY >= H * 2 - 0.1) {
+            return !!this.dataFloor2 && this.dataFloor2[index] === 1 && groundY < H * 3 - 0.1;
+        }
+        if (groundY >= H - 0.1) {
+            return !!this.dataFloor1 && this.dataFloor1[index] === 1 && groundY < H * 2 - 0.1;
+        }
         return this.data[index] === 1;
     }
 
+    // Random walkable cell on a random floor: { x, z } grid coordinates + y = floor height
     getRandomEmptyPosition() {
-        let attempts = 0;
-        while (attempts < 100) {
-            attempts++;
+        for (let attempts = 0; attempts < 100; attempts++) {
             const x = Math.floor(Math.random() * this.width);
             const z = Math.floor(Math.random() * this.height);
-            const index = z * this.width + x;
+            const idx = z * this.width + x;
+            const r = Math.random();
 
-            if (this.data[index] === 0) {
-                return { x, z };
+            if (r < 0.15 && this.dataFloor2) {
+                // 15%: Floor 2 (top of Floor 1 walls)
+                if (this.dataFloor1[idx] === 1 && this.dataFloor2[idx] === 0) return { x, z, y: H * 2 };
+            } else if (r < 0.50 && this.dataFloor1) {
+                // 35%: Floor 1 (top of Floor 0 walls)
+                if (this.data[idx] === 1 && this.dataFloor1[idx] === 0) return { x, z, y: H };
+            } else if (this.data[idx] === 0) {
+                // 50%: Floor 0
+                return { x, z, y: 0 };
             }
         }
         return null;
     }
 
     isDecoration(x, z) {
+        if (this.decorationPositions.length === 0) return false;
         const gridX = Math.floor(x / this.cellSize);
         const gridZ = Math.floor(z / this.cellSize);
-
-        for (const deco of this.decorationPositions) {
-            if (deco.x === gridX && deco.z === gridZ) {
-                return true;
-            }
-        }
-        return false;
+        return this.decorationPositions.some(deco => deco.x === gridX && deco.z === gridZ);
     }
 
-    getRoomTypeForWall(x, z) {
-        if (!this.levelData || !this.levelData.rooms) return null;
+    interpolateRampGeometryHeight(type, localX, localZ) {
+        const half = H / 2;
+        switch (type) {
+            case 2: return (1 - localZ) * half;
+            case 3: return localZ * half;
+            case 4: return (1 - localX) * half;
+            case 5: return localX * half;
+            case 6: return half + (1 - localZ) * half;
+            case 7: return half + localZ * half;
+            case 8: return half + (1 - localX) * half;
+            case 9: return half + localX * half;
+            default: return 0;
+        }
+    }
 
-        // Check 8 neighbors for adjacent floor cells of special rooms
-        for (let dz = -1; dz <= 1; dz++) {
-            for (let dx = -1; dx <= 1; dx++) {
-                const nx = x + dx;
-                const nz = z + dz;
-                if (nx >= 0 && nx < this.width && nz >= 0 && nz < this.height) {
-                    const idx = nz * this.width + nx;
-                    if (this.data[idx] === 0) {
-                        for (const room of this.levelData.rooms) {
-                            if (nx >= room.x && nx < room.x + room.w &&
-                                nz >= room.z && nz < room.z + room.h) {
-                                if (room.type === 'event' || room.type === 'treasure') {
-                                    return room.type;
-                                }
-                            }
+    getFloorHeight(x, z, groundY = 0) {
+        if (!this.width || !this.height || !this.data) return 0;
+        const gridX = Math.floor(x / this.cellSize);
+        const gridZ = Math.floor(z / this.cellSize);
+        if (gridX < 0 || gridX >= this.width || gridZ < 0 || gridZ >= this.height) return 0;
+
+        const index = gridZ * this.width + gridX;
+        const type = this.data[index];
+        const typeFloor1 = this.dataFloor1 ? this.dataFloor1[index] : 0;
+        const typeFloor2 = this.dataFloor2 ? this.dataFloor2[index] : 0;
+        const localX = (x - gridX * this.cellSize) / this.cellSize;
+        const localZ = (z - gridZ * this.cellSize) / this.cellSize;
+
+        // Floor 2 wall / platform
+        if (groundY >= H * 2 - 0.1) {
+            if (typeFloor2 === 1) return groundY >= H * 3 - 0.1 ? H * 3 : H * 2;
+            if (typeFloor2 === 10) return H * 2; // Floating platform
+        }
+
+        if (groundY >= H - 0.1) {
+            // Ramp up to Floor 2
+            if (typeFloor1 >= 2 && typeFloor1 <= 9) return H + this.interpolateRampGeometryHeight(typeFloor1, localX, localZ);
+            // Floor 1 wall / platform
+            if (typeFloor1 === 1) return groundY >= H * 2 - 0.1 ? H * 2 : H;
+            if (typeFloor1 === 10) return H; // Floating platform
+            if (type === 1) return H; // Walkable top of Floor 0 wall
+            // Floor 0 ramps fall through to the Floor 0 calculation
+        }
+
+        if (type === 1) return 0;
+        return this.interpolateRampGeometryHeight(type, localX, localZ);
+    }
+
+    // Height at which walls are tested for something standing on `floorY` (feet at `feetY`).
+    // Snaps to the floor band so that ramps don't make walls of the next floor block.
+    getCollisionCheckY(floorY, feetY) {
+        if (floorY >= H + H / 2 - 0.1) return H * 2;
+        if (floorY >= H / 2 - 0.1) return H;
+        return feetY;
+    }
+
+    // Push a circle (x/z of `pos`, radius `r`) out of the wall cells around it. Mutates `pos`.
+    resolveCircleCollision(pos, r, checkY) {
+        const size = this.cellSize;
+        // 2 passes so diagonal corner collisions are resolved cleanly
+        for (let pass = 0; pass < 2; pass++) {
+            const gridX = Math.floor(pos.x / size);
+            const gridZ = Math.floor(pos.z / size);
+
+            for (let dz = -1; dz <= 1; dz++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    const gx = gridX + dx;
+                    const gz = gridZ + dz;
+                    const cx = (gx + 0.5) * size;
+                    const cz = (gz + 0.5) * size;
+                    if (!this.isWall(cx, cz, checkY) && !this.isDecoration(cx, cz)) continue; // isWall: out of bounds = wall
+
+                    // Closest point of the cell box to the circle centre
+                    const diffX = pos.x - Math.max(gx * size, Math.min(pos.x, gx * size + size));
+                    const diffZ = pos.z - Math.max(gz * size, Math.min(pos.z, gz * size + size));
+                    const distSq = diffX * diffX + diffZ * diffZ;
+                    if (distSq >= r * r) continue;
+
+                    const dist = Math.sqrt(distSq);
+                    if (dist > 0.0001) {
+                        const overlap = r - dist;
+                        pos.x += (diffX / dist) * overlap;
+                        pos.z += (diffZ / dist) * overlap;
+                    } else {
+                        // Centre inside the box: push out from the cell centre
+                        const pdx = pos.x - cx;
+                        const pdz = pos.z - cz;
+                        const pdist = Math.sqrt(pdx * pdx + pdz * pdz);
+                        if (pdist > 0.0001) {
+                            pos.x += (pdx / pdist) * r;
+                            pos.z += (pdz / pdist) * r;
+                        } else {
+                            pos.x += r; // Fallback push
                         }
                     }
                 }
             }
         }
-        return null;
+    }
+
+    createRampGeometry(w, h, d) {
+        const A = [-w / 2, 0, -d / 2];
+        const B = [w / 2, 0, -d / 2];
+        const C = [-w / 2, 0, d / 2];
+        const D = [w / 2, 0, d / 2];
+        const E = [-w / 2, h, d / 2];
+        const F = [w / 2, h, d / 2];
+
+        const vertices = [];
+        const normals = [];
+        const uvs = [];
+        const addTriangle = (v1, v2, v3, n, uv1, uv2, uv3) => {
+            vertices.push(...v1, ...v2, ...v3);
+            normals.push(...n, ...n, ...n);
+            uvs.push(...uv1, ...uv2, ...uv3);
+        };
+
+        // Front face (South: 0, 0, 1)
+        addTriangle(D, C, E, [0, 0, 1], [1, 0], [0, 0], [0, 1]);
+        addTriangle(D, E, F, [0, 0, 1], [1, 0], [0, 1], [1, 1]);
+        // Left face (-1, 0, 0)
+        addTriangle(A, C, E, [-1, 0, 0], [0, 0], [1, 0], [1, 1]);
+        // Right face (1, 0, 0)
+        addTriangle(D, B, F, [1, 0, 0], [0, 0], [1, 0], [0, 1]);
+        // Slope face (pointing up-backwards)
+        const L = Math.sqrt(d * d + h * h);
+        const nSlope = [0, d / L, -h / L];
+        addTriangle(B, A, E, nSlope, [1, 0], [0, 0], [0, 1]);
+        addTriangle(B, E, F, nSlope, [1, 0], [0, 1], [1, 1]);
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+        geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+        return geometry;
     }
 }

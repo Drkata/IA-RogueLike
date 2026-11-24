@@ -26,3 +26,9 @@ dist-ssr
 # Backup directories
 ui_backup/
 .venv_ytdl/
+
+# Texture previews (npm run preview:visuals)
+previews/
+
+# Downloaded sound packs (npm run build:sfx)
+.sfx-cache/

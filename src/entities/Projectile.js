@@ -1,59 +1,103 @@
 import * as THREE from 'three';
-import { CONSTANTS } from '../core/Constants.js';
+import { TextureGenerator } from '../systems/TextureGenerator.js';
+import { PALETTE } from '../core/Palette.js';
 import { soundManager } from '../systems/SoundManager.js';
 
 // Module-level scratch vectors — zero-allocation in Projectile.update() hot path
-const _tempPos    = new THREE.Vector3();
-const _tempDir    = new THREE.Vector3();
-const _tempLookAt = new THREE.Vector3(); // For mesh.lookAt() — avoids position.clone()
-const _tempCenter = new THREE.Vector3(); // For sky-island AABB center
-const _tempSize   = new THREE.Vector3(); // For sky-island AABB size
+const _tempPos = new THREE.Vector3();
+const _tempDir = new THREE.Vector3();
+const _tempLookAt = new THREE.Vector3();
+const _contact = { normal: new THREE.Vector3(), depth: 0 };
+const _segStart = new THREE.Vector3();
+const _seg = new THREE.Vector3();
+const _wallNormal = new THREE.Vector3();
+const _hit = new THREE.Vector3();
+const _toEnemy = new THREE.Vector3();
+
+const BOUNCE_DAMAGE_MULT = 1.25;
+const MAX_WALL_BOUNCES_PER_STEP = 3; // Into a corner, a fast shot can hit several faces in one frame
+// Player ricochets bend towards an enemy in sight within this cone and range (0° disables it)
+const RICOCHET_ASSIST_COS = Math.cos(THREE.MathUtils.degToRad(25));
+const RICOCHET_ASSIST_RANGE = 15;
+
+// First wall face crossed by the segment start → end, walking the X/Z grid cell by cell
+// (exact impact point, no tunnelling through corners, and no wall test while inside one cell).
+// Returns the fraction of the segment at the impact and writes the face normal, or returns -1.
+function firstWallHit(lm, start, end, normal) {
+    const size = lm.cellSize;
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    let cx = Math.floor(start.x / size);
+    let cz = Math.floor(start.z / size);
+    const stepX = dx > 0 ? 1 : -1;
+    const stepZ = dz > 0 ? 1 : -1;
+    const tDeltaX = dx !== 0 ? size / Math.abs(dx) : Infinity;
+    const tDeltaZ = dz !== 0 ? size / Math.abs(dz) : Infinity;
+    let tMaxX = dx !== 0 ? ((dx > 0 ? cx + 1 : cx) * size - start.x) / dx : Infinity;
+    let tMaxZ = dz !== 0 ? ((dz > 0 ? cz + 1 : cz) * size - start.z) / dz : Infinity;
+
+    for (;;) {
+        const alongX = tMaxX < tMaxZ;
+        const t = alongX ? tMaxX : tMaxZ;
+        if (t > 1) return -1;
+        if (alongX) {
+            cx += stepX;
+            tMaxX += tDeltaX;
+        } else {
+            cz += stepZ;
+            tMaxZ += tDeltaZ;
+        }
+        if (lm.isWall((cx + 0.5) * size, (cz + 0.5) * size, start.y + (end.y - start.y) * t)) {
+            normal.set(alongX ? -stepX : 0, 0, alongX ? 0 : -stepZ);
+            return t;
+        }
+    }
+}
 
 export class Projectile {
     static geometry = new THREE.IcosahedronGeometry(0.15, 1); // Crystal shape
-    static glowTexture = null;
-    
-    // Shared Materials Cache
+
+    // Shared materials, one per color
     static sharedMeshMaterials = {};
     static sharedSpriteMaterials = {};
 
     static getMaterials(color) {
         if (!Projectile.sharedMeshMaterials[color]) {
-            Projectile.sharedMeshMaterials[color] = new THREE.MeshBasicMaterial({ color: color });
-        }
-        
-        if (!Projectile.glowTexture) {
-            const canvas = document.createElement('canvas');
-            canvas.width = 64;
-            canvas.height = 64;
-            const ctx = canvas.getContext('2d');
-            const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-            grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-            grad.addColorStop(0.4, 'rgba(255, 255, 255, 0.5)');
-            grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-            ctx.fillStyle = grad;
-            ctx.fillRect(0, 0, 64, 64);
-            Projectile.glowTexture = new THREE.CanvasTexture(canvas);
-        }
-
-        if (!Projectile.sharedSpriteMaterials[color]) {
+            Projectile.sharedMeshMaterials[color] = new THREE.MeshBasicMaterial({ color });
             Projectile.sharedSpriteMaterials[color] = new THREE.SpriteMaterial({
-                map: Projectile.glowTexture,
-                color: color,
+                map: TextureGenerator.getGlowTexture(),
+                color,
                 transparent: true,
                 blending: THREE.AdditiveBlending,
                 depthWrite: false,
-                opacity: 0.6 // Reduced opacity
+                opacity: 0.6
             });
         }
-        
         return {
             meshMat: Projectile.sharedMeshMaterials[color],
             spriteMat: Projectile.sharedSpriteMaterials[color]
         };
     }
 
-    constructor(position, direction, speed, damage, levelManager, piercing = 0, isCritical = false, knockback = 0, explosion = 0, gravity = 0, radius = 1.0, sourceName = 'Unknown', sourceId = -1, maxDistance = 1000, ricochet = 0) {
+    /**
+     * @param {object} [options]
+     * @param {number} [options.piercing=0]      Enemies it can pass through
+     * @param {boolean} [options.isCritical=false]
+     * @param {number} [options.knockback=0]
+     * @param {number} [options.explosion=0]     Chance (0-1) to explode on hit
+     * @param {number} [options.gravity=0]       > 0 for arcing shots
+     * @param {number} [options.radius=1.0]      Hit radius against the player
+     * @param {string} [options.sourceName='Unknown'] Shown in the death recap
+     * @param {number|string} [options.sourceId=-1]   -1 = the player
+     * @param {number} [options.maxDistance=1000]
+     * @param {number} [options.ricochet=0]      Bounces allowed
+     * @param {number} [options.homingLevel=0]
+     * @param {number} [options.color]           Defaults to the palette: aether (player), hex (crit), ember (enemy)
+     */
+    constructor(position, direction, speed, damage, levelManager, {
+        piercing = 0, isCritical = false, knockback = 0, explosion = 0, gravity = 0, radius = 1.0,
+        sourceName = 'Unknown', sourceId = -1, maxDistance = 1000, ricochet = 0, homingLevel = 0, color = null
+    } = {}) {
         this.position = position.clone();
         this.direction = direction.clone().normalize();
         this.speed = speed;
@@ -64,48 +108,97 @@ export class Projectile {
         this.knockback = knockback;
         this.explosion = explosion;
         this.gravity = gravity;
-        this.radius = radius; // Collision radius
+        this.radius = radius;
         this.sourceName = sourceName;
         this.sourceId = sourceId;
         this.maxDistance = maxDistance;
         this.distanceTraveled = 0;
-        this.ricochet = ricochet; // Number of bounces allowed
-        this.homingLevel = 0;
+        this.ricochet = ricochet;
+        this.homingLevel = homingLevel;
 
-        this.hitEntities = new Set(); // Track unique entities hit
+        this.isPlayerProjectile = sourceId === -1;
+        this.firstStep = true; // The first wall test starts half a metre back, at the shooter
+        this.hitEntities = this.isPlayerProjectile ? new Set() : null; // Enemies already hit (piercing)
         this.isDead = false;
-        this.lifeTime = 10.0; // Increased safety limit (range controls death now)
-        this.isPlayerProjectile = false; // Set by creator
+        this.lifeTime = 10.0; // Safety limit (range controls death)
         this.entityType = 'projectile'; // Fix for minified builds
 
-        // Physics velocity (if gravity is used)
         if (this.gravity !== 0) {
             this.velocity = this.direction.clone().multiplyScalar(this.speed);
         }
 
-        // Visual
-        let color = 0x00ffff; // Default Cyan
-        if (isCritical) color = 0xff00ff; // Purple/Magenta for crit
-        else if (explosion > 0) color = 0xffaa00; // Orange for explosive
-
+        // Player magic is aether, crits hex, explosive shots and every enemy shot ember
+        if (color === null) {
+            if (!this.isPlayerProjectile) color = PALETTE.emberBright;
+            else if (isCritical) color = PALETTE.hexBright;
+            else color = explosion > 0 ? PALETTE.emberBright : PALETTE.aetherBright;
+        }
         const materials = Projectile.getMaterials(color);
 
         this.mesh = new THREE.Mesh(Projectile.geometry, materials.meshMat);
         this.mesh.position.copy(this.position);
-        this.mesh.userData.entity = this; // For collision detection
+        this.mesh.userData.entity = this;
 
         const sprite = new THREE.Sprite(materials.spriteMat);
-        sprite.scale.set(0.8, 0.8, 0.8); // Reduced scale (was 1.5)
+        sprite.scale.setScalar(isCritical ? 1.5 : 0.8);
         this.mesh.add(sprite);
 
-        if (isCritical) {
-            this.mesh.scale.multiplyScalar(1.5); // Bigger projectile for crits
-            sprite.scale.set(1.5, 1.5, 1.5); // Reduced crit scale (was 2.5)
-        }
+        if (isCritical) this.mesh.scale.multiplyScalar(1.5);
+        if (this.isPlayerProjectile) this.mesh.scale.multiplyScalar(0.65);
+    }
 
-        // Reduce player projectile visual size
-        if (this.sourceId === -1) {
-            this.mesh.scale.multiplyScalar(0.65);
+    // Reverse the given velocity axes after a bounce; bounces make the shot hit harder
+    _bounce(flipX, flipY, flipZ) {
+        this.ricochet--;
+        if (flipX) this.direction.x *= -1;
+        if (flipY) this.direction.y *= -1;
+        if (flipZ) this.direction.z *= -1;
+        if (this.velocity) {
+            if (flipX) this.velocity.x *= -1;
+            if (flipY) this.velocity.y *= -1;
+            if (flipZ) this.velocity.z *= -1;
+        }
+        this.distanceTraveled = 0;
+        this.damage *= BOUNCE_DAMAGE_MULT;
+    }
+
+    // Mirror the direction (and velocity) on a surface of normal `n`
+    _reflect(n) {
+        this.ricochet--;
+        this.direction.addScaledVector(n, -2 * this.direction.dot(n)).normalize();
+        if (this.velocity) this.velocity.addScaledVector(n, -2 * this.velocity.dot(n));
+        this.distanceTraveled = 0;
+        this.damage *= BOUNCE_DAMAGE_MULT;
+    }
+
+    // Every ricochet: bend player shots towards a nearby enemy in sight, and give feedback
+    _onRicochet(point) {
+        if (!this.isPlayerProjectile || !window.game) return;
+        let best = null;
+        let bestCos = RICOCHET_ASSIST_COS;
+        for (const enemy of window.game.entityManager.entities) {
+            if (enemy.entityType !== 'enemy' || enemy.isDead) continue;
+            _toEnemy.subVectors(enemy.position, point);
+            const dist = _toEnemy.length();
+            if (dist > RICOCHET_ASSIST_RANGE || dist < 0.5) continue;
+            const cos = _toEnemy.dot(this.direction) / dist;
+            if (cos > bestCos) {
+                bestCos = cos;
+                best = enemy;
+            }
+        }
+        if (best && this.gravity === 0 && this.levelManager.pathfinder.hasLineOfSight(point, best.position, 0)) {
+            this.direction.subVectors(best.position, point).normalize();
+        }
+        soundManager.play('ricochet', point);
+        window.game.entityManager.createHitEffect(point, false);
+    }
+
+    // Steer towards `target` by `strength * dt`
+    _steer(target, strength, dt) {
+        this.direction.lerp(target, strength * dt).normalize();
+        if (this.gravity !== 0) {
+            this.velocity.copy(this.direction).multiplyScalar(this.velocity.length());
         }
     }
 
@@ -119,72 +212,38 @@ export class Projectile {
         }
 
         let moveDist = 0;
-
         if (this.gravity !== 0) {
-            // Arc Movement (Grenades, arrows)
+            // Arc movement
             this.velocity.y -= this.gravity * dt;
-            _tempDir.copy(this.velocity).multiplyScalar(dt);
-            _tempPos.copy(this.position).add(_tempDir);
-            
-            // Align sprite to velocity
-            _tempDir.copy(_tempPos).add(this.velocity);
-            this.mesh.lookAt(_tempDir);
+            _tempPos.copy(this.position).addScaledVector(this.velocity, dt);
         } else {
-            // Linear Movement
             moveDist = this.speed * dt;
-            _tempDir.copy(this.direction).multiplyScalar(moveDist);
-            _tempPos.copy(this.position).add(_tempDir);
+            _tempPos.copy(this.position).addScaledVector(this.direction, moveDist);
         }
 
-        // Auto-aiming / Homing effect for Sentinels
+        // Sentinel shots slowly track the player (horizontally)
         if (this.sourceName === "Sentinel" && this.distanceTraveled > 1.0) {
-            if (window.game && window.game.player) {
-                const targetPos = window.game.player.position;
-                _tempDir.copy(targetPos);
-                _tempDir.y = this.position.y; // Keep same height to avoid aiming into floor
-                
-                _tempDir.subVectors(_tempDir, this.position).normalize();
-                this.direction.lerp(_tempDir, 0.6 * dt).normalize();
-                
-                if (this.gravity !== 0) {
-                    const currentSpeed = this.velocity.length();
-                    this.velocity.copy(this.direction).multiplyScalar(currentSpeed);
-                }
-            }
+            _tempDir.set(player.position.x, this.position.y, player.position.z).sub(this.position).normalize();
+            this._steer(_tempDir, 0.6, dt);
         }
 
-        // Homing effect for Player projectiles — for loop avoids forEach closure allocation
-        if (this.sourceId === -1 && this.homingLevel > 0 && this.distanceTraveled > 0.5) {
+        // Homing player shots track the closest enemy within 15m
+        if (this.isPlayerProjectile && this.homingLevel > 0 && this.distanceTraveled > 0.5 && window.game) {
             let closestEnemy = null;
-            let closestDist = Infinity;
-
-            if (window.game && window.game.entityManager && window.game.entityManager.entities) {
-                const entities = window.game.entityManager.entities;
-                for (let _i = 0; _i < entities.length; _i++) {
-                    const entity = entities[_i];
-                    if (entity.entityType === 'enemy' && !entity.isDead) {
-                        const dist = this.position.distanceTo(entity.position);
-                        if (dist < closestDist && dist < 15.0) {
-                            closestDist = dist;
-                            closestEnemy = entity;
-                        }
-                    }
+            let closestDistSq = 15.0 * 15.0;
+            const entities = window.game.entityManager.entities;
+            for (let i = 0; i < entities.length; i++) {
+                const entity = entities[i];
+                if (entity.entityType !== 'enemy' || entity.isDead) continue;
+                const distSq = this.position.distanceToSquared(entity.position);
+                if (distSq < closestDistSq) {
+                    closestDistSq = distSq;
+                    closestEnemy = entity;
                 }
             }
-
             if (closestEnemy) {
-                _tempDir.subVectors(closestEnemy.position, this.position);
-                // Allow vertical tracking to hit floating enemies / Boss
-                _tempDir.normalize();
-                
-                // Homing strength: Level 1: 1.5, Level 2: 3.0, Level 3: 4.5
-                const strength = this.homingLevel * 1.5;
-                this.direction.lerp(_tempDir, strength * dt).normalize();
-                
-                if (this.gravity !== 0) {
-                    const currentSpeed = this.velocity.length();
-                    this.velocity.copy(this.direction).multiplyScalar(currentSpeed);
-                }
+                _tempDir.subVectors(closestEnemy.position, this.position).normalize();
+                this._steer(_tempDir, this.homingLevel * 1.5, dt);
             }
         }
 
@@ -195,122 +254,69 @@ export class Projectile {
             return;
         }
 
-        // Wall Collision (only if projectile is low enough to hit the wall)
-        if (this.levelManager && this.levelManager.isWall(_tempPos.x, _tempPos.z)) {
-            // Only collide if projectile is below wall height
-            if (_tempPos.y < 2.5) {
-                if (this.ricochet > 0) {
-                    this.ricochet--;
-
-                    // Step back to previous valid position
-                    _tempDir.copy(this.direction).multiplyScalar(-moveDist);
-                    _tempPos.copy(this.position).add(_tempDir);
-
-                    // Refined AABB-based reflection for accurate angles
-                    const canMoveX = !this.levelManager.isWall(this.position.x + this.direction.x * 0.5, this.position.z);
-                    const canMoveZ = !this.levelManager.isWall(this.position.x, this.position.z + this.direction.z * 0.5);
-
-                    if (!canMoveX && canMoveZ) {
-                        this.direction.x *= -1;
-                        if (this.velocity) this.velocity.x *= -1;
-                    } else if (canMoveX && !canMoveZ) {
-                        this.direction.z *= -1;
-                        if (this.velocity) this.velocity.z *= -1;
-                    } else {
-                        // Corner or direct hit
-                        this.direction.x *= -1;
-                        this.direction.z *= -1;
-                        if (this.velocity) {
-                            this.velocity.x *= -1;
-                            this.velocity.z *= -1;
-                        }
-                    }
-                    
-                    // Move in new direction — zero-allocation: addScaledVector avoids direction.clone()
-                    _tempPos.copy(this.position).addScaledVector(this.direction, moveDist);
-                    this.distanceTraveled = 0;
-                    this.damage *= 1.25;
-                } else {
-                    this.isDead = true;
-                    return;
-                }
-            }
-        }
-
-        // Floor Collision & Ricochet
-        const floorHeight = 0.05;
-
-        if (_tempPos.y <= floorHeight) {
-            if (this.ricochet > 0) {
-                this.ricochet--;
-                
-                // Reflect vertical direction and velocity
-                this.direction.y *= -1;
-                if (this.velocity) this.velocity.y *= -1;
-                
-                // Snap to floor so it doesn't get stuck
-                _tempPos.y = floorHeight + 0.01;
-                
-                this.distanceTraveled = 0;
-                this.damage *= 1.25;
-            } else {
+        // 1. Floor / ramp / wall-top collision (vertical bounce)
+        const floorHeight = this.levelManager.getFloorHeight(_tempPos.x, _tempPos.z, _tempPos.y);
+        const projectileRadius = 0.05;
+        if (_tempPos.y <= floorHeight + projectileRadius) {
+            if (this.ricochet <= 0) {
+                if (this.gravity !== 0) soundManager.play('meteor', _tempPos); // Boss meteors crash down
                 this.isDead = true;
                 return;
             }
+            if (Math.abs(this.direction.y) < 0.01 && this.gravity === 0) {
+                // Hit a ramp or step horizontally: bounce backwards and slightly up
+                this._bounce(true, false, true);
+                this.direction.y = 0.5;
+                this.direction.normalize();
+            } else {
+                this._bounce(false, true, false);
+            }
+            _tempPos.y = floorHeight + projectileRadius + 0.01; // Snap above the floor
+            this._onRicochet(_tempPos);
+            _tempPos.copy(this.position).addScaledVector(this.direction, moveDist);
+            _tempPos.y = Math.max(_tempPos.y, floorHeight + projectileRadius + 0.01);
         }
 
-        // SkyStructures collision (Islands/Bridges/Buildings)
-        if (this.levelManager && this.levelManager.skyStructures) {
-            for (const mesh of this.levelManager.skyStructures) {
-                if (!mesh.geometry.boundingBox) {
-                    mesh.geometry.computeBoundingBox();
-                }
-                const box = mesh.geometry.boundingBox.clone().applyMatrix4(mesh.matrixWorld);
-
-                if (box.containsPoint(_tempPos)) {
-                    if (this.ricochet > 0) {
-                        this.ricochet--;
-
-                        // Determine reflection axis — zero-allocation: reuse _tempCenter/_tempSize
-                        box.getCenter(_tempCenter);
-                        box.getSize(_tempSize);
-
-                        const dx = (_tempPos.x - _tempCenter.x) / _tempSize.x;
-                        const dy = (_tempPos.y - _tempCenter.y) / _tempSize.y;
-                        const dz = (_tempPos.z - _tempCenter.z) / _tempSize.z;
-
-                        const absX = Math.abs(dx);
-                        const absY = Math.abs(dy);
-                        const absZ = Math.abs(dz);
-
-                        if (absX > absY && absX > absZ) {
-                            this.direction.x *= -1;
-                            if (this.velocity) this.velocity.x *= -1;
-                        } else if (absY > absX && absY > absZ) {
-                            this.direction.y *= -1;
-                            if (this.velocity) this.velocity.y *= -1;
-                        } else {
-                            this.direction.z *= -1;
-                            if (this.velocity) this.velocity.z *= -1;
-                        }
-
-                        _tempPos.copy(this.position).addScaledVector(this.direction, moveDist);
-                        this.distanceTraveled = 0;
-                        this.damage *= 1.25;
-                    } else {
-                        this.isDead = true;
-                        return;
-                    }
-                }
+        // 2. Walls: bounce exactly where the path meets the wall face, then fly the rest of the step
+        _segStart.copy(this.position);
+        if (this.firstStep) {
+            _segStart.addScaledVector(this.direction, -0.5); // Shots spawn 0.5 m ahead: catch a wall in between
+            this.firstStep = false;
+        }
+        for (let bounce = 0; bounce < MAX_WALL_BOUNCES_PER_STEP; bounce++) {
+            const t = firstWallHit(this.levelManager, _segStart, _tempPos, _wallNormal);
+            if (t < 0) break;
+            _hit.lerpVectors(_segStart, _tempPos, t).addScaledVector(_wallNormal, 0.01); // Just off the face
+            if (this.ricochet <= 0) {
+                if (this.isPlayerProjectile && window.game) window.game.entityManager.createHitEffect(_hit, false);
+                this.isDead = true;
+                return;
             }
+            _seg.subVectors(_tempPos, _hit).reflect(_wallNormal); // Rest of the step, mirrored
+            this._reflect(_wallNormal);
+            this._onRicochet(_hit);
+            if (this.gravity !== 0) _tempPos.copy(_hit).add(_seg);
+            else _tempPos.copy(_hit).addScaledVector(this.direction, _seg.length());
+            _segStart.copy(_hit);
+        }
+
+        // 3. Floating islands and bridges
+        const sky = this.levelManager.skyColliders;
+        if (sky && sky.probe(_tempPos.x, _tempPos.y, _tempPos.z, 0, _contact)) {
+            if (this.ricochet <= 0) {
+                if (this.gravity !== 0) soundManager.play('meteor', _tempPos);
+                this.isDead = true;
+                return;
+            }
+            this._reflect(_contact.normal);
+            this._onRicochet(this.position);
+            _tempPos.copy(this.position).addScaledVector(this.direction, moveDist);
         }
 
         // Obstacles collision
-        if (this.levelManager && this.levelManager.isDecoration(_tempPos.x, _tempPos.z)) {
-            if (_tempPos.y < 1.2) {
-                this.isDead = true;
-                return;
-            }
+        if (_tempPos.y < 1.2 && this.levelManager.isDecoration(_tempPos.x, _tempPos.z)) {
+            this.isDead = true;
+            return;
         }
 
         // Safety catch
@@ -322,23 +328,14 @@ export class Projectile {
         this.position.copy(_tempPos);
         this.mesh.position.copy(this.position);
 
-        // Rotate mesh to face direction — zero-allocation: _tempLookAt avoids position.clone()
-        _tempLookAt.copy(this.position).add(this.direction);
+        // Face the direction of travel
+        _tempLookAt.copy(this.position).add(this.gravity !== 0 ? this.velocity : this.direction);
         this.mesh.lookAt(_tempLookAt);
 
-        // NOTE: lifeTime is already decremented at L111 — no second decrement here.
-
-        // Collision detection
-        if (this.isPlayerProjectile) {
-            // Player projectile collisions handled by EntityManager
-        } else {
-            // Enemy projectile - check collision with player
-            const dist = this.position.distanceTo(player.position);
-            // Use custom radius + player radius (approx 0.5)
-            if (dist < (this.radius + 0.5)) {
-                player.takeDamage(this.damage, this.sourceName, this.sourceId);
-                this.isDead = true;
-            }
+        // Enemy shots hit the player here; player shots are resolved by EntityManager
+        if (!this.isPlayerProjectile && this.position.distanceToSquared(player.position) < (this.radius + 0.5) ** 2) {
+            player.takeDamage(this.damage, this.sourceName, this.sourceId);
+            this.isDead = true;
         }
     }
 }

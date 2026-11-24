@@ -2,33 +2,25 @@ export class AmmoDisplay {
     constructor(container) {
         this.element = document.createElement('div');
         this.element.id = 'ammo-container';
+        this.element.className = 'mana';
         this.element.innerHTML = `
-            <div class="hud-label">Mana</div>
-            <div>
-                <span class="ammo-value" id="ammo-current">0</span>
-                <span class="ammo-reserve" id="ammo-reserve">/ 0</span>
-            </div>
+            <span class="mana__value">0</span>
+            <span class="mana__reserve">/ 0</span>
+            <span class="mana__label">mana</span>
         `;
         container.appendChild(this.element);
 
-        this.currentEl = this.element.querySelector('#ammo-current');
-        this.reserveEl = this.element.querySelector('#ammo-reserve');
+        this.currentEl = this.element.querySelector('.mana__value');
+        this.reserveEl = this.element.querySelector('.mana__reserve');
     }
 
     update(current, reserve) {
+        if (current === this._current && reserve === this._reserve) return; // Called every frame
+        this._current = current;
+        this._reserve = reserve;
         this.currentEl.textContent = current;
         this.reserveEl.textContent = `/ ${reserve}`;
-
-        if (current === 0) {
-            this.currentEl.style.color = '#ff3333'; // Empty
-        } else if (current < 10) {
-            this.currentEl.style.color = '#ffff00'; // Low
-        } else {
-            this.currentEl.style.color = '#00aaff'; // Mana Blue
-        }
-    }
-
-    setReloadCallback(callback) {
-        // No-op: Reload button removed from HUD
+        this.element.classList.toggle('mana--empty', current === 0);
+        this.element.classList.toggle('mana--low', current > 0 && current < 10);
     }
 }

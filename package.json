@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite --host",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:levels": "node scripts/check-levels.mjs",
+    "preview:visuals": "node scripts/preview-visuals.mjs previews",
+    "build:sfx": "node scripts/build-sfx.mjs"
   },
   "devDependencies": {
     "vite": "^7.2.4"

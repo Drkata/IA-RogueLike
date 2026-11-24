@@ -1,13 +1,6 @@
 import * as THREE from 'three';
 import { soundManager } from './SoundManager.js';
-
-// ─── Module-level scratch vectors (zero-allocation in hot paths) ──────────────
-const _sep      = new THREE.Vector3();
-const _push     = new THREE.Vector3();
-const _newPos1  = new THREE.Vector3();
-const _newPos2  = new THREE.Vector3();
-const _knockDir = new THREE.Vector3();
-const _kbPos    = new THREE.Vector3();
+import { PALETTE } from '../core/Palette.js';
 
 export class EntityManager {
     constructor(scene) {
@@ -21,7 +14,7 @@ export class EntityManager {
 
         // We reuse geometry but create materials for opacity fading
         this.hitBaseMat = new THREE.MeshBasicMaterial({
-            color: 0xffff00, // Yellow
+            color: PALETTE.giltBright,
             transparent: true,
             opacity: 0.8,
             depthTest: false
@@ -30,7 +23,7 @@ export class EntityManager {
         // Telegraph Visuals
         this.telegraphGeo = new THREE.RingGeometry(0.1, 2.5, 32); // Ring
         this.telegraphMat = new THREE.MeshBasicMaterial({
-            color: 0xff0000,
+            color: PALETTE.ember,
             transparent: true,
             opacity: 0.5,
             side: THREE.DoubleSide
@@ -43,14 +36,14 @@ export class EntityManager {
         this._explosionGeo  = new THREE.SphereGeometry(1, 16, 16);
         // Pre-allocate 4 explosion meshes
         for (let i = 0; i < 4; i++) {
-            const mat = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.5 });
+            const mat = new THREE.MeshBasicMaterial({ color: PALETTE.emberBright, transparent: true, opacity: 0.5 });
             this._explosionPool.push(new THREE.Mesh(this._explosionGeo, mat));
         }
 
         // Shockwave Visuals
         this.shockwaveGeo = new THREE.RingGeometry(0.5, 1.0, 32);
         this.shockwaveMat = new THREE.MeshBasicMaterial({
-            color: 0x00ffff, // Cyan
+            color: PALETTE.aetherBright,
             transparent: true,
             opacity: 0.8,
             side: THREE.DoubleSide,
@@ -65,6 +58,18 @@ export class EntityManager {
         }
     }
 
+    _remove(entity) {
+        if (entity.mesh) this.scene.remove(entity.mesh);
+        if (entity.dispose) entity.dispose(); // Per-instance GPU resources (e.g. FloatingText material)
+    }
+
+    // Expired effects go back to the pool they came from
+    _recycleEffect(effect) {
+        this.scene.remove(effect);
+        if (effect.userData.isExplosion) this._explosionPool.push(effect);
+        else if (!effect.userData.isShockwave) this.hitEffectPool.push(effect);
+    }
+
     update(dt, player) {
         // Update and remove dead entities in place
         let i = 0;
@@ -72,9 +77,7 @@ export class EntityManager {
             const entity = this.entities[i];
 
             if (entity.isDead) {
-                if (entity.mesh) {
-                    this.scene.remove(entity.mesh);
-                }
+                this._remove(entity);
                 // Swap with last element and pop (fast removal)
                 const lastIndex = this.entities.length - 1;
                 if (i < lastIndex) {
@@ -112,14 +115,10 @@ export class EntityManager {
                     effect.material.opacity = effect.userData.life / 0.2;
                 }
             } else {
-                // Remove
-                this.scene.remove(effect);
-
                 // Swap remove
                 this.hitEffects[j] = this.hitEffects[this.hitEffects.length - 1];
                 this.hitEffects.pop();
-
-                this.hitEffectPool.push(effect);
+                this._recycleEffect(effect);
             }
         }
 
@@ -141,7 +140,12 @@ export class EntityManager {
             }
         }
 
-        // Check player projectile collisions with enemies
+        this._resolvePlayerShots(player);
+    }
+
+    // Player projectiles vs enemies (enemy projectiles test the player themselves)
+    _resolvePlayerShots(player) {
+        const stats = player.sessionStats;
         for (let i = 0; i < this.entities.length; i++) {
             const projectile = this.entities[i];
             if (projectile.isDead || projectile.entityType !== 'projectile' || !projectile.isPlayerProjectile) continue;
@@ -149,157 +153,46 @@ export class EntityManager {
             for (let j = 0; j < this.entities.length; j++) {
                 const enemy = this.entities[j];
                 if (enemy.isDead || enemy.entityType !== 'enemy') continue;
+                if (projectile.hitEntities.has(enemy.id)) continue; // Already pierced through it
+                if (projectile.position.distanceToSquared(enemy.position) >= enemy.radius * enemy.radius) continue;
 
-                // Skip if already hit this enemy (for piercing)
-                if (projectile.hitEntities && projectile.hitEntities.has(enemy.id)) continue;
+                const died = enemy.takeDamage(projectile.damage, projectile.isCritical);
 
-                const dist = projectile.position.distanceTo(enemy.position);
-                const hitRadius = enemy.radius ? enemy.radius : 0.85;
+                stats.shotsHit++;
+                stats.damageDealt += projectile.damage;
+                if (died) stats.kills++;
+                if (projectile.isCritical) stats.critCount++;
+                stats.maxDamageHit = Math.max(stats.maxDamageHit, projectile.damage);
 
-                if (dist < hitRadius) {
-                    const died = enemy.takeDamage(projectile.damage, projectile.isCritical);
+                if (player.vampirism > 0) player.heal(projectile.damage * player.vampirism);
 
-                    // Stats
-                    if (player && player.sessionStats) {
-                        player.sessionStats.shotsHit++;
-                        player.sessionStats.damageDealt += projectile.damage;
-                        if (died) {
-                            player.sessionStats.kills++;
-                            if (player.lifeSteal > 0) {
-                                player.heal(player.lifeSteal);
-                            }
-                        }
-
-                        if (projectile.isCritical) player.sessionStats.critCount++;
-                        if (projectile.damage > player.sessionStats.maxDamageHit) {
-                            player.sessionStats.maxDamageHit = projectile.damage;
-                        }
-                    }
-
-                    // Vampirism (Life Steal)
-                    if (player && player.vampirism > 0) {
-                        const healAmount = projectile.damage * player.vampirism;
-                        player.heal(healAmount);
-                    }
-
-                    // Knockback — zero-allocation: reuse _knockDir and _kbPos
-                    if (projectile.knockback > 0) {
-                        _knockDir.copy(projectile.direction);
-                        _knockDir.y = 0;
-                        _knockDir.normalize();
-
-                        const pushDist = projectile.knockback * 0.2;
-                        _kbPos.copy(enemy.position).addScaledVector(_knockDir, pushDist);
-
-                        if (enemy.ai && enemy.ai.canMoveTo(_kbPos)) {
-                            enemy.position.copy(_kbPos);
-                            enemy.mesh.position.copy(_kbPos);
-                            enemy.mesh.position.y -= 0.85;
-                        }
-                    }
-
-                    // Explosion
-                    if (projectile.explosion > 0) {
-                        if (Math.random() < projectile.explosion) {
-                            this.createExplosion(projectile.position, projectile.damage, player);
-                        }
-                    }
-
-                    // Handle Piercing
-                    if (projectile.hitEntities && !projectile.hitEntities.has(enemy.id)) {
-                        projectile.hitEntities.add(enemy.id);
-
-                        if (projectile.piercing > 0) {
-                            projectile.piercing--;
-                            // Continue flight (don't kill projectile)
-                        } else {
-                            projectile.isDead = true;
-                        }
-                    } else if (!projectile.hitEntities) {
-                        // Legacy support or fallback
-                        projectile.isDead = true;
-                    }
-
-                    // Visual and sound feedback
-                    if (projectile.isCritical) {
-                        this.createHitEffect(projectile.position, true); // True for crit
-                        soundManager.playCritHit();
-                    } else {
-                        this.createHitEffect(projectile.position, false);
-                        soundManager.playHit();
-                    }
-
-                    if (projectile.isDead) break; // Stop checking other enemies for this projectile
+                if (projectile.knockback > 0 && enemy.ai) {
+                    enemy.ai.knockback(projectile.direction.x, projectile.direction.z, projectile.knockback * 0.2);
                 }
-            }
-        }
 
-        // Enemy-to-enemy separation — zero-allocation: scratch vectors _sep/_push/_newPos1/_newPos2
-        const separationRadius = 0.8;
-
-        for (let i = 0; i < this.entities.length; i++) {
-            if (this.entities[i].entityType !== 'enemy') continue;
-            for (let j = i + 1; j < this.entities.length; j++) {
-                if (this.entities[j].entityType !== 'enemy') continue;
-
-                const enemy1 = this.entities[i];
-                const enemy2 = this.entities[j];
-
-                const dist = enemy1.position.distanceTo(enemy2.position);
-
-                if (dist < separationRadius) {
-                    if (dist > 0.01) {
-                        _sep.subVectors(enemy1.position, enemy2.position);
-                        _sep.y = 0;
-                        if (_sep.lengthSq() > 0) _sep.normalize();
-                        else _sep.set(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
-                    } else {
-                        _sep.set(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
-                    }
-
-                    const pushForce = dist > 0.01
-                        ? (separationRadius - dist) * 0.5
-                        : separationRadius * 0.5;
-
-                    _newPos1.copy(enemy1.position).addScaledVector(_sep,  pushForce);
-                    _newPos2.copy(enemy2.position).addScaledVector(_sep, -pushForce);
-
-                    if (enemy1.ai && enemy1.ai.canMoveTo(_newPos1)) {
-                        enemy1.position.copy(_newPos1);
-                        enemy1.mesh.position.copy(_newPos1);
-                        enemy1.mesh.position.y -= 0.85;
-                    }
-
-                    if (enemy2.ai && enemy2.ai.canMoveTo(_newPos2)) {
-                        enemy2.position.copy(_newPos2);
-                        enemy2.mesh.position.copy(_newPos2);
-                        enemy2.mesh.position.y -= 0.85;
-                    }
+                if (projectile.explosion > 0 && Math.random() < projectile.explosion) {
+                    this.createExplosion(projectile.position, projectile.damage, player);
                 }
+
+                // Piercing: keep flying through up to `piercing` enemies
+                projectile.hitEntities.add(enemy.id);
+                if (projectile.piercing > 0) projectile.piercing--;
+                else projectile.isDead = true;
+
+                this.createHitEffect(projectile.position, projectile.isCritical);
+                soundManager.play(projectile.isCritical ? 'crit' : 'hit', projectile.position);
+
+                if (projectile.isDead) break; // Stop checking other enemies for this projectile
             }
         }
     }
 
     createHitEffect(position, isCritical = false) {
-        let flash = this.hitEffectPool.pop();
-
-        if (!flash) {
-            const mat = this.hitBaseMat.clone();
-            flash = new THREE.Mesh(this.hitGeo, mat);
-        } else {
-            flash.geometry = this.hitGeo;
-        }
+        const flash = this.hitEffectPool.pop() || new THREE.Mesh(this.hitGeo, this.hitBaseMat.clone());
 
         flash.position.copy(position);
-
-        if (isCritical) {
-            flash.scale.set(1, 1, 1);
-            flash.material.color.setHex(0xff0000);
-        } else {
-            flash.scale.set(1, 1, 1);
-            flash.material.color.setHex(0xffff00);
-        }
-
+        flash.scale.set(1, 1, 1);
+        flash.material.color.setHex(isCritical ? PALETTE.hexBright : PALETTE.giltBright);
         flash.material.opacity = 0.8;
         flash.userData.life = 0.2;
 
@@ -308,6 +201,7 @@ export class EntityManager {
     }
 
     createExplosion(position, damage, player) {
+        soundManager.play('explosion', position);
         const radius = 6.0;
         let targetsHit = 0;
 
@@ -316,31 +210,21 @@ export class EntityManager {
             if (enemy.isDead || enemy.entityType !== 'enemy') continue;
 
             const dist = position.distanceTo(enemy.position);
-            const hitRadius = enemy.radius ? enemy.radius : 0.85;
+            const reach = radius + enemy.radius;
+            if (dist >= reach) continue;
 
-            if (dist < (radius + hitRadius)) {
-                // Falloff damage
-                const dmgMult = 1.0 - (dist / (radius + hitRadius));
-                const finalDamage = Math.max(1, Math.floor(damage * dmgMult));
-                const died = enemy.takeDamage(finalDamage, false);
-                if (died && player) {
-                    player.sessionStats.kills++;
-                    if (player.lifeSteal > 0) {
-                        player.heal(player.lifeSteal);
-                    }
-                }
-                this.createHitEffect(enemy.position, false);
+            // Linear damage falloff
+            const finalDamage = Math.max(1, Math.floor(damage * (1.0 - dist / reach)));
+            const died = enemy.takeDamage(finalDamage, false);
+            this.createHitEffect(enemy.position, false);
 
-                if (player && player.sessionStats) {
-                    player.sessionStats.damageDealt += finalDamage;
-                    if (died) player.sessionStats.kills++;
-
-                    if (finalDamage > player.sessionStats.maxDamageHit) {
-                        player.sessionStats.maxDamageHit = finalDamage;
-                    }
-                }
-                targetsHit++;
+            if (player) {
+                const stats = player.sessionStats;
+                stats.damageDealt += finalDamage;
+                if (died) stats.kills++;
+                stats.maxDamageHit = Math.max(stats.maxDamageHit, finalDamage);
             }
+            targetsHit++;
         }
 
         // Spawn visual — use explosion pool to avoid material cloning & shader recompilation
@@ -357,8 +241,8 @@ export class EntityManager {
     }
 
     createShockwave(position) {
-        // Reuse shockwave material — no clone needed because opacity is shared
-        // and we only ever show one shockwave at a time in practice
+        soundManager.play('shockwave');
+        // Shared material: only one shockwave is shown at a time in practice
         const effect = new THREE.Mesh(this.shockwaveGeo, this.shockwaveMat);
         effect.position.copy(position);
         effect.position.y = 0.5;
@@ -381,7 +265,7 @@ export class EntityManager {
             if (!this._beaconGeo) {
                 this._beaconGeo = new THREE.CylinderGeometry(0.1, 0.1, 20, 8);
                 this._beaconMat = new THREE.MeshBasicMaterial({
-                    color: 0xff0000, transparent: true, opacity: 0.3,
+                    color: PALETTE.ember, transparent: true, opacity: 0.3,
                     blending: THREE.AdditiveBlending, depthWrite: false
                 });
             }
@@ -407,7 +291,7 @@ export class EntityManager {
             return this._explosionPool.pop();
         }
         // Pool empty (rare): create a new one
-        const mat = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.5 });
+        const mat = new THREE.MeshBasicMaterial({ color: PALETTE.emberBright, transparent: true, opacity: 0.5 });
         return new THREE.Mesh(this._explosionGeo, mat);
     }
 
@@ -423,18 +307,11 @@ export class EntityManager {
     }
 
     clear() {
-        for (const entity of this.entities) {
-            if (entity.mesh) this.scene.remove(entity.mesh);
-        }
+        for (const entity of this.entities) this._remove(entity);
         this.entities = [];
 
-        for (const effect of this.hitEffects) {
-            this.scene.remove(effect);
-            // Return explosions to pool
-            if (effect.userData.isExplosion) this._explosionPool.push(effect);
-        }
+        for (const effect of this.hitEffects) this._recycleEffect(effect);
         this.hitEffects = [];
-        // Keep hitEffectPool intact (hit flash pool is fine to keep)
 
         for (const tele of this.telegraphs) {
             this.scene.remove(tele);
