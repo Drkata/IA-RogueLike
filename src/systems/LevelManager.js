@@ -640,10 +640,11 @@ export class LevelManager {
     }
 
     // Height at which walls are tested for something standing on `floorY` (feet at `feetY`).
-    // Snaps to the floor band so that ramps don't make walls of the next floor block.
+    // Snaps up to the floor's band so that ramps don't make walls of the next floor block; feet above
+    // that band (a jump) test the walls at their own height, so a jump that clears a wall gets over it.
     getCollisionCheckY(floorY, feetY) {
-        if (floorY >= H + H / 2 - 0.1) return H * 2;
-        if (floorY >= H / 2 - 0.1) return H;
+        if (floorY >= H + H / 2 - 0.1) return Math.max(H * 2, feetY);
+        if (floorY >= H / 2 - 0.1) return Math.max(H, feetY);
         return feetY;
     }
 
