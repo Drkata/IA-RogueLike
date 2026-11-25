@@ -12,6 +12,8 @@ const IMMOLATION_RANGE = 9; // Metres
 // Highest rise walked up without jumping, on top of the ramp slope (< 1 m per metre). Anything
 // sharper (a ramp's side, a wall top beside a ramp) is a wall face: it takes a jump.
 const STEP_UP = 0.3; // m
+const AEGIS_DELAY = 4; // s unhurt before the Aegis pact's shield refills
+const AEGIS_RATE = 10; // Shield points per second
 const STATS_REFRESH = 0.25; // s: the HUD stats ledger is costly to rebuild, so play refreshes it 4 times a second
 
 // Zero-allocation scratch vectors for the per-frame code
@@ -23,6 +25,7 @@ const _up = new THREE.Vector3();
 const _dir = new THREE.Vector3();
 const _toEnemy = new THREE.Vector3();
 const _startPos = new THREE.Vector3();
+const _wave = new THREE.Vector3();
 const _yAxis = new THREE.Vector3(0, 1, 0);
 const _contact = { normal: new THREE.Vector3(), depth: 0 };
 // Body sample points (offsets from the eyes) tested against floating islands: feet, waist, head
@@ -96,6 +99,14 @@ export class Player {
         this.pactArmorBonus = 0;
         this.pactVampirism = 0;
         this.healthRegen = 0; // Flat HP/s from pacts (negative = drain)
+        this.pactJumpMultiplier = 1.0;
+        this.pactGoldMultiplier = 1.0; // Gold picked up
+        this.pactPotionMultiplier = 1.0; // Health potions picked up
+        this.pactShockwaveKills = 0; // Cataclysm: a shockwave every this many kills (0: none)
+        this.nextShockwaveAt = 0; // Kill count of the next one
+        this.pactImmolation = 0; // Extra burning aura damage per second
+        this.pactShieldCap = 0; // Aegis: the shield refills up to this after a while unhurt (0: none)
+        this.sinceHurt = 0; // s since the last hit
     }
 
     // True if the player is within `radius` horizontally of `pos` and on the same floor (pos.y = floor height)
@@ -107,6 +118,7 @@ export class Player {
 
     takeDamage(amount, sourceName = 'Unknown', sourceId = -1) {
         if (this.invulnerabilityTimer > 0) return;
+        this.sinceHurt = 0;
 
         // Shield absorbs first
         const absorbed = Math.min(this.shield, amount);
@@ -251,6 +263,18 @@ export class Player {
         this.weapon.update(dt);
         this.updateImmolation(dt);
 
+        // Cataclysm pact: every few kills, a shockwave from the player's feet
+        if (this.pactShockwaveKills && this.sessionStats.kills >= this.nextShockwaveAt) {
+            this.nextShockwaveAt = this.sessionStats.kills + this.pactShockwaveKills;
+            this.entityManager.shockwave(_wave.set(this.position.x, this.position.y - EYE_HEIGHT, this.position.z));
+        }
+
+        // Aegis pact: after a few seconds unhurt, the shield refills up to its cap
+        this.sinceHurt += dt;
+        if (this.sinceHurt > AEGIS_DELAY && this.shield < this.pactShieldCap) {
+            this.shield = Math.min(this.pactShieldCap, this.shield + AEGIS_RATE * dt);
+        }
+
         // Regeneration / pact drain (the drain can kill)
         const totalRegen = this.regen + this.healthRegen;
         if (totalRegen > 0 && this.health < this.maxHealth) {
@@ -266,9 +290,10 @@ export class Player {
         this.updateHUD(refreshStats);
     }
 
-    // Burning ring: 2.5 damage per level every 0.5s to enemies within IMMOLATION_RANGE
+    // Burning ring: 5 damage per second per upgrade level (+ Pyre pact) to enemies within IMMOLATION_RANGE, in 0.5 s ticks
     updateImmolation(dt) {
-        if (this.stats.immolation <= 0) {
+        const dps = this.getStatValue('immolation', this.stats.immolation) + this.pactImmolation; // Upgrade + Pyre pact
+        if (dps <= 0) {
             if (this.immolationRing) this.immolationRing.visible = false;
             return;
         }
@@ -301,7 +326,7 @@ export class Player {
         if (this.immolationTimer < 0.5) return;
         this.immolationTimer = 0;
 
-        const damage = this.stats.immolation * 2.5;
+        const damage = dps * 0.5; // One tick every 0.5 s
         for (const entity of this.entityManager.entities) {
             if (entity.entityType === 'enemy' && !entity.isDead && this.position.distanceTo(entity.position) < IMMOLATION_RANGE) {
                 entity.takeDamage(damage);
@@ -412,7 +437,7 @@ export class Player {
         this.velocity.z = _moveDir.z;
 
         if (this.onGround && this.input.isKeyDown('Space')) {
-            this.velocity.y = CONSTANTS.JUMP_FORCE;
+            this.velocity.y = CONSTANTS.JUMP_FORCE * this.pactJumpMultiplier;
             this.onGround = false;
             soundManager.play('jump');
         }

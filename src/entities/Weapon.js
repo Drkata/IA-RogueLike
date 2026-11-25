@@ -46,10 +46,7 @@ export class Weapon {
         this.baseCritChance = 0; // 0% base
         this.baseCritDamage = 1.5; // 150% base
 
-        // Pact Modifiers
-        this.pactDamageMultiplier = 1.0;
-        this.pactFireRateMultiplier = 1.0;
-        this.pactProjectileSpeedMultiplier = 1.0;
+        this.resetPacts();
         this.recalculateStats(); // Current (derived) stats
 
         // Ammo State
@@ -78,6 +75,20 @@ export class Weapon {
 
 
 
+    // Permanent modifiers granted by altar pacts (PACTS in Game.js)
+    resetPacts() {
+        this.pactDamageMultiplier = 1.0;
+        this.pactFireRateMultiplier = 1.0;
+        this.pactProjectileSpeedMultiplier = 1.0;
+        this.pactCritChance = 0; // Added to the upgrades' value
+        this.pactCritDamage = 0;
+        this.pactRicochet = 0;
+        this.pactRangeMultiplier = 1.0;
+        this.pactAmmoMultiplier = 1.0;
+        this.pactExplosion = 0; // Added chance
+        this.pactReloadMultiplier = 1.0; // Of the reload time
+    }
+
     getMaxLevel() {
         return this.MAX_LEVEL;
     }
@@ -101,17 +112,17 @@ export class Weapon {
         this.damage = value('damage') * this.pactDamageMultiplier;
         this.fireRate = value('fireRate') / this.pactFireRateMultiplier;
         this.arc = s.bulletCount * 2; // Multishot spread: 2 degrees per extra bullet
-        this.maxAmmo = value('ammo');
-        this.reloadTime = value('reload');
-        this.range = value('range');
+        this.maxAmmo = Math.floor(value('ammo') * this.pactAmmoMultiplier);
+        this.reloadTime = value('reload') * this.pactReloadMultiplier;
+        this.range = value('range') * this.pactRangeMultiplier;
         this.projectileSpeed = value('projectileSpeed') * this.pactProjectileSpeedMultiplier;
         this.bulletCount = value('bulletCount');
         this.piercing = value('piercing');
-        this.critChance = value('critChance') / 100;
-        this.critDamage = value('critDamage') / 100;
+        this.critChance = value('critChance') / 100 + this.pactCritChance;
+        this.critDamage = value('critDamage') / 100 + this.pactCritDamage;
         this.knockback = value('knockback');
-        this.explosion = value('explosion') / 100;
-        this.ricochet = value('ricochet');
+        this.explosion = value('explosion') / 100 + this.pactExplosion;
+        this.ricochet = value('ricochet') + this.pactRicochet;
 
         // Kinetic impact: every 1% of extra projectile speed adds 0.5% damage
         const speedBonus = (this.projectileSpeed / this.baseProjectileSpeed) - 1;
@@ -165,11 +176,7 @@ export class Weapon {
         this.stats = newUpgradeStats();
         this.currentAmmo = this.baseMaxAmmo;
         this.reserveAmmo = 400;
-
-        // Pact Modifiers
-        this.pactDamageMultiplier = 1.0;
-        this.pactFireRateMultiplier = 1.0;
-        this.pactProjectileSpeedMultiplier = 1.0;
+        this.resetPacts();
 
         // Melee State
         this.isMeleeing = false;

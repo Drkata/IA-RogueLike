@@ -49,6 +49,14 @@ export const SVG_ICONS = {
     vampire: makeIcon('vampire-dracula', '#e0563f'),
     armor_pact: makeIcon('shield', '#8fcf9a'),
     speed_pact: makeIcon('sprint', '#d8b465'),
+    hunter: makeIcon('crosshair', OFFENSE),
+    storm: makeIcon('lightning-arc', '#9ef0e2'),
+    cataclysm: makeIcon('earth-crack', '#e0563f'),
+    wings: makeIcon('feathered-wing', '#ece3cc'),
+    pyre: makeIcon('campfire', '#e58f6f'),
+    pyromancy: makeIcon('fire-bomb', '#e0563f'),
+    colossus: makeIcon('giant', '#c9bfa8'),
+    aegis: makeIcon('magic-shield', '#9ef0e2'),
 
     // Shop
     potion: makeIcon('health-potion', '#e0563f'),

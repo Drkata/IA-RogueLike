@@ -191,13 +191,13 @@ export class Pickup {
     collect(player) {
         if (this.type === 'health') {
             if (player.health >= player.maxHealth) return; // Leave it for later
-            player.heal(this.value);
+            player.heal(this.value * player.pactPotionMultiplier);
         } else if (this.type === 'ammo') {
             player.weapon.addAmmo(this.value);
         } else if (this.type === 'upgrade') {
             window.game.showUpgradeMenu(1, true); // 1 point, mid-level
         } else if (this.type === 'gold') {
-            player.addGold(this.value);
+            player.addGold(Math.round(this.value * player.pactGoldMultiplier));
         }
         this.isDead = true;
         soundManager.play(PICKUP_SOUNDS[this.type]);
