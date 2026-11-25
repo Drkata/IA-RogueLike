@@ -224,6 +224,7 @@ Sous 5 cd, une `PointLight` est quasi invisible.
 - Une source sonore qui existe dans le monde se joue **avec sa position** ; l'interface et le corps du joueur, sans.
 - Un événement fréquent (tir, impact, pas) a un volume bas et plusieurs variantes.
 - Le bouton son du HUD coupe la **musique** seulement.
+- **Volumes** : effets 80 %, musique 30 % par défaut, réglables dans l'écran de pause (`soundManager.setVolume('sfx' | 'music', 0…1)`) et mémorisés sur l'appareil. Monter la musique la rallume si elle était coupée. La musique passe elle aussi par Web Audio (`musicBus`) : l'iPhone ignore le volume d'un élément `<audio>`.
 
 ## 10. Performance
 

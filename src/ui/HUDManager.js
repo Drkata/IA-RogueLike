@@ -30,18 +30,22 @@ export class HUDManager {
     }
 
     _setupAudioToggle(button) {
-        const render = () => {
-            const muted = soundManager.isMuted;
-            button.innerHTML = muted ? SVG_ICONS.audioOff : SVG_ICONS.audioOn;
-            button.setAttribute('aria-label', muted ? 'Activer la musique' : 'Couper la musique');
-            button.classList.toggle('is-muted', muted);
-        };
+        this.audioToggle = button;
         button.addEventListener('click', (e) => {
             e.stopPropagation(); // Don't grab the pointer lock
             soundManager.toggleMute();
-            render();
+            this.renderAudioToggle();
         });
-        render();
+        this.renderAudioToggle();
+    }
+
+    // Music on/off icon (also called when the pause screen's music slider turns the music on)
+    renderAudioToggle() {
+        const button = this.audioToggle;
+        const muted = soundManager.isMuted;
+        button.innerHTML = muted ? SVG_ICONS.audioOff : SVG_ICONS.audioOn;
+        button.setAttribute('aria-label', muted ? 'Activer la musique' : 'Couper la musique');
+        button.classList.toggle('is-muted', muted);
     }
 
     updateHealth(current, max, shield = 0) {

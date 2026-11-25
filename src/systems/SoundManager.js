@@ -63,13 +63,28 @@ const SFX = {
 const PRECISE_PANNING = new Set(['enemyShoot', 'towerShoot', 'meteor']);
 
 const SFX_VOLUME = 0.8;
+const MUSIC_VOLUME = 0.3;
+const VOLUME_KEY = 'arcaniste-volume'; // localStorage: { sfx, music }, each in [0, 1]
+
+// Volumes the player set on this device (pause screen), or the defaults
+function savedVolumes() {
+    try {
+        return JSON.parse(localStorage.getItem(VOLUME_KEY)) || {};
+    } catch {
+        return {}; // Storage unavailable (private mode): defaults
+    }
+}
 const MIN_GAP = 0.03; // Seconds: the same sound restarted faster than this just stacks into noise
 
 export class SoundManager {
     constructor() {
         this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const saved = savedVolumes();
+        const valid = (v, fallback) => (Number.isFinite(v) && v >= 0 && v <= 1 ? v : fallback);
+        this.sfxVolume = valid(saved.sfx, SFX_VOLUME);
+        this.musicVolume = valid(saved.music, MUSIC_VOLUME);
         this.sfxBus = this.ctx.createGain();
-        this.sfxBus.gain.value = SFX_VOLUME;
+        this.sfxBus.gain.value = this.sfxVolume;
         this.sfxBus.connect(this.ctx.destination);
 
         this.buffers = new Map(); // file name -> AudioBuffer (missing until loaded)
@@ -78,7 +93,6 @@ export class SoundManager {
         this._loadAll();
 
         // Background Music
-        this.bgmVolume = 0.3;
         this.isMuted = true;
         this.playlist = [
             'sounds/bgm1.mp3',
@@ -87,7 +101,10 @@ export class SoundManager {
         ];
         this.currentTrackIndex = Math.floor(Math.random() * this.playlist.length);
         this.bgmAudio = new Audio();
-        this.bgmAudio.volume = this.bgmVolume;
+        // Through Web Audio as well, for its volume: iPhone Safari ignores <audio>.volume
+        this.musicBus = this.ctx.createGain();
+        this.musicBus.gain.value = this.musicVolume;
+        this.ctx.createMediaElementSource(this.bgmAudio).connect(this.musicBus).connect(this.ctx.destination);
         this.hasStartedBGM = false;
         this.bgmAudio.addEventListener('ended', () => this.playNextTrack());
     }
@@ -162,6 +179,15 @@ export class SoundManager {
             l.setPosition(p.x, p.y, p.z);
             l.setOrientation(-e[8], -e[9], -e[10], e[4], e[5], e[6]);
         }
+    }
+
+    // `kind`: 'sfx' or 'music'; `volume` in [0, 1]. Remembered on this device.
+    setVolume(kind, volume) {
+        this[`${kind}Volume`] = volume;
+        (kind === 'sfx' ? this.sfxBus : this.musicBus).gain.value = volume;
+        try {
+            localStorage.setItem(VOLUME_KEY, JSON.stringify({ sfx: this.sfxVolume, music: this.musicVolume }));
+        } catch { /* Storage unavailable: kept for this session only */ }
     }
 
     toggleMute() {

@@ -515,6 +515,40 @@ body:has(.overlay:not([hidden])) #crosshair {
     text-align: center;
 }
 
+/* Pause screen: one row per volume (label, slider, value) */
+.volume {
+    display: grid;
+    grid-template-columns: auto minmax(120px, 220px) 3.5em;
+    align-items: center;
+    gap: 12px 14px;
+    margin: 0;
+    padding: 14px 20px 16px;
+    border: 1px solid var(--rule-faint);
+    border-radius: 3px;
+    text-align: left;
+}
+
+.volume legend {
+    padding: 0 6px;
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--vellum-dim);
+}
+
+.volume input[type="range"] {
+    width: 100%;
+    margin: 0;
+    accent-color: var(--gilt-bright);
+    cursor: pointer;
+}
+
+.volume output {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--vellum-dim);
+}
+
 .overlay--death {
     background: radial-gradient(ellipse at 50% 30%, rgb(90 20 12 / 0.6), rgb(6 2 2 / 0.97) 72%);
 }

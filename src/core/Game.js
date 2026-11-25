@@ -248,6 +248,23 @@ export class Game {
             soundManager.play('uiClick');
             this._resume(); // The pause screen stays up until the pointer is locked
         });
+        // Pause screen volumes (remembered on this device by soundManager)
+        for (const slider of document.querySelectorAll('[data-volume]')) {
+            const kind = slider.dataset.volume;
+            const show = () => { slider.nextElementSibling.value = `${slider.value} %`; };
+            slider.value = Math.round(soundManager[`${kind}Volume`] * 100);
+            show();
+            slider.addEventListener('input', () => {
+                const volume = slider.value / 100;
+                soundManager.setVolume(kind, volume);
+                if (kind === 'music' && volume > 0 && soundManager.isMuted) {
+                    soundManager.toggleMute(); // Raising the music means wanting to hear it
+                    this.hudManager.renderAudioToggle();
+                }
+                show();
+            });
+            if (kind === 'sfx') slider.addEventListener('change', () => soundManager.play('uiClick')); // Hear the new level
+        }
 
         document.addEventListener('pointerlockchange', () => {
             if (!document.pointerLockElement) this.pause(); // Escape or focus lost during play (ignored under a menu)
@@ -276,7 +293,8 @@ export class Game {
         clearTimeout(this.resumeTimer);
         this.resumeTimer = setTimeout(() => {
             button.disabled = false;
-            button.focus();
+            // Unless the player already went to a volume slider
+            if (!document.getElementById('pause-screen').contains(document.activeElement)) button.focus();
         }, button.disabled ? RELOCK_DELAY : 0);
     }
 

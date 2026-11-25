@@ -68,6 +68,15 @@
     <div class="pause" role="dialog" aria-labelledby="pause-title">
       <h2 id="pause-title" class="title">Pause</h2>
       <p class="lede">La partie est figée. Reprenez quand vous êtes prêt.</p>
+      <fieldset class="volume">
+        <legend>Volume</legend>
+        <label for="volume-sfx">Effets sonores</label>
+        <input id="volume-sfx" type="range" min="0" max="100" step="5" data-volume="sfx">
+        <output for="volume-sfx"></output>
+        <label for="volume-music">Musique</label>
+        <input id="volume-music" type="range" min="0" max="100" step="5" data-volume="music">
+        <output for="volume-music"></output>
+      </fieldset>
       <button id="resume-btn" class="btn btn--ember" type="button">Reprendre</button>
     </div>
   </div>
