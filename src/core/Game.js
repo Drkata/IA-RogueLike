@@ -3,6 +3,7 @@ import { Input } from './Input.js';
 import { CONSTANTS } from './Constants.js';
 import { Player } from '../entities/Player.js';
 import { LevelManager } from '../systems/LevelManager.js';
+import { mapSizeForLevel } from '../systems/MapGenerator.js';
 import { EntityManager } from '../systems/EntityManager.js';
 import { Enemy } from '../entities/Enemy.js';
 import { EnemyAI } from '../entities/EnemyAI.js';
@@ -24,6 +25,10 @@ import { num, pct, unit, esc } from '../ui/format.js';
 
 const H = CONSTANTS.WALL_HEIGHT;
 const REEL_LENGTH = 20; // Random items spun before the real upgrade shows up
+const REEL_SPIN = 800; // ms, matches the .reel-strip transition in hud.css
+const LEVEL_CLEAR_DELAY = 2; // s between the last kill and the upgrade menu
+const MAX_DT = 0.05; // s: a longer frame (hitch, tab switch) is simulated as this one, so nothing jumps
+const RELOCK_DELAY = 1000; // ms: Chrome refuses to lock the pointer again for about a second after Escape
 
 const UPGRADES = [
     { id: 'damage', source: 'weapon', label: 'Dégâts' },
@@ -63,7 +68,7 @@ const formatUpgradeValue = (stat, n) => {
     if (PERCENT_STATS.has(stat)) return pct(n);
     if (stat === 'homing') return `rang ${n}`;
     if (stat === 'immolation') return unit(n, 'dégâts/s');
-    if (stat === 'magnet') return n > 0 ? unit(n, 'm') : 'aucun';
+    if (stat === 'magnet') return unit(n, 'm');
     if (stat === 'regen') return unit(n, 'PV/s');
     return num(n);
 };
@@ -91,7 +96,7 @@ const PACTS = [
 const POTION = { heal: 50, price: 20 };
 const MANA = { amount: 150, price: 15 };
 const WARD = { shield: 30, price: 25 };
-const SHARD_PRICE = 50;
+const SHARD_PRICE = 250;
 const SHIELD_FULL = 100; // The shield bar is drawn on 100 points
 const BULK = 10;
 
@@ -102,11 +107,6 @@ const SHOP_ITEMS = [
     { icon: 'ward', name: 'Sceau de protection', desc: `Un bouclier qui absorbe ${WARD.shield} dégâts, ou le bouclier plein (${SHIELD_FULL}).`, offers: ['shield', 'shieldFull'] },
     { icon: 'soul_shard', name: "Fragment d'âme", desc: 'Une amélioration tirée au hasard.', offers: ['upgrade', 'upgrade10'] }
 ];
-
-const randomEventType = () => {
-    const r = Math.random();
-    return r < 0.4 ? 'altar' : (r < 0.8 ? 'shop' : 'fountain');
-};
 
 const shuffle = (array) => {
     for (let i = array.length - 1; i > 0; i--) {
@@ -119,7 +119,7 @@ const shuffle = (array) => {
 const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export class Game {
-    // Regular enemies spawned at a level (sentinels and bosses come on top)
+    // Regular enemies spawned at a level (special-room guardians and bosses come on top)
     static getEnemyCount(level) {
         const D = CONSTANTS.DIFFICULTY;
         return D.ENEMY_COUNT_BASE + level * D.ENEMY_COUNT_PER_LEVEL + Math.max(0, level - 10) * D.ENEMY_COUNT_SCALING_POST_10;
@@ -170,15 +170,23 @@ export class Game {
         this.camera.aspect = window.innerWidth / window.innerHeight;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.needsRender = true; // Resizing clears the canvas, even while paused
     }
 
     init() {
         this.startNewLevel();
+        this.start();
+        this.isRunning = true;
 
         window.addEventListener('keydown', (e) => {
-            if (e.code === 'KeyP') {
+            const digit = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
+            if (digit && this._isOverlayOpen('upgrade-menu')) {
+                // Keyboard choice: the first press reveals the cards, the next ones pick
+                const card = document.querySelectorAll('#upgrade-menu .upgrade-card')[digit[1] - 1];
+                if (card && !card.disabled) card.click();
+            } else if (e.code === 'KeyP') {
                 // Dev cheat: skip to the boss with every upgrade on offer
-                this.currentLevel = 9; // Becomes 10 after the menu
+                this.currentLevel = 9; // Becomes 10 when the menu opens
                 this.showUpgradeMenu(27, false, true);
             } else if (e.code === 'KeyU') {
                 this.showUpgradeMenu(1); // Dev cheat: test the upgrade menu
@@ -215,6 +223,54 @@ export class Game {
             this._setOverlay('game-over-screen', false);
             this.resetGame();
         });
+        on('resume-btn', () => {
+            soundManager.play('uiClick');
+            this._resume(); // The pause screen stays up until the pointer is locked
+        });
+
+        document.addEventListener('pointerlockchange', () => {
+            if (!document.pointerLockElement) this.pause(); // Escape or focus lost during play (ignored under a menu)
+            else if (this.resumePending) this._play();
+            else if (this.isPaused) this.input.exitPointerLock(); // Locked late, under a menu: give the cursor back
+        });
+        // Refused (menu closed with Escape, or too soon after Escape): the pause screen asks for a click
+        document.addEventListener('pointerlockerror', () => {
+            if (!this.resumePending) return;
+            this.resumePending = false;
+            this._showPause();
+        });
+        document.addEventListener('visibilitychange', () => document.hidden && this.pause());
+    }
+
+    // Pause screen, unless a menu already holds the game
+    pause() {
+        if (this.isPaused || !this.isRunning) return;
+        this._showPause();
+    }
+
+    _showPause() {
+        this._openMenu('pause-screen');
+        const button = document.getElementById('resume-btn');
+        button.disabled = this.input.canLockPointer; // A click in Chrome's cooldown would fail: the button waits it out
+        clearTimeout(this.resumeTimer);
+        this.resumeTimer = setTimeout(() => {
+            button.disabled = false;
+            button.focus();
+        }, button.disabled ? RELOCK_DELAY : 0);
+    }
+
+    // Back to play: at once on touch screens, with a mouse once the pointer is locked again (pointerlockchange)
+    _resume() {
+        if (!this.input.canLockPointer || document.pointerLockElement) return this._play();
+        this.resumePending = true;
+        this.input.requestPointerLock();
+    }
+
+    _play() {
+        this.resumePending = false;
+        this._setOverlay('pause-screen', false);
+        this.isPaused = false;
+        this.isRunning = true;
     }
 
     _setOverlay(id, visible) {
@@ -236,9 +292,7 @@ export class Game {
 
     _closeMenu(id) {
         this._setOverlay(id, false);
-        this.isPaused = false;
-        this.isRunning = true;
-        this.input.requestPointerLock();
+        this._resume();
     }
 
     // ─── Game flow ───────────────────────────────────────────────────────────
@@ -314,12 +368,11 @@ export class Game {
 
     resetGame() {
         this.hudManager.setBossVisible(false);
-        this.isPaused = false;
-        this.isRunning = true;
         this.currentLevel = 1;
         this.upgradePoints = 0;
         this.player.reset();
         this.startNewLevel();
+        this._resume();
     }
 
     startNewLevel() {
@@ -329,17 +382,11 @@ export class Game {
 
         this.entityManager.clear();
 
-        // Map grows with the level: base 55, +1.3 per level, capped at 95
-        const mapSize = Math.min(95, 55 + Math.floor(this.currentLevel * 1.3));
+        const mapSize = mapSizeForLevel(this.currentLevel);
         const startPos = this.levelManager.generateLevel(mapSize, mapSize, this.currentLevel);
 
         this._applyThemeLighting();
         this._placePlayer(startPos);
-
-        if (!this.isRunning) {
-            this.start();
-            this.isRunning = true;
-        }
 
         if (this.currentLevel % 10 === 0) {
             this.spawnBoss();
@@ -378,33 +425,27 @@ export class Game {
         this.player.updateHUD();
     }
 
-    // Chests, traps, sentinels and the event room (altar / shop / fountain) of every floor
+    // Special rooms' reward (chest, altar, shop, fountain) sealed by its guardian, then the traps
     _spawnLevelEntities() {
         const lm = this.levelManager;
         const ld = lm.levelData;
         const em = this.entityManager;
-        const floors = [
-            { checkY: 0, chests: lm.chestPositions, traps: ld.spikeTraps, sentinels: ld.sentinels, event: ld.eventSpawn, eventType: ld.eventType },
-            { checkY: H, chests: lm.chestPositionsFloor1, traps: ld.spikeTrapsFloor1, sentinels: ld.sentinelsFloor1, event: ld.eventSpawnFloor1, eventType: ld.eventTypeFloor1 },
-            { checkY: H * 2, event: ld.eventSpawnFloor2 }
-        ];
         const eventClasses = { altar: MagicAltar, fountain: HealingFountain, shop: MagicalShop };
 
-        for (const floor of floors) {
-            for (const pos of floor.chests || []) {
-                em.add(new LootChest(lm.floorPositionAt(pos.x, pos.z, floor.checkY), this.player, () => this._openChest()));
-            }
-            for (const pos of floor.traps || []) {
-                em.add(new SpikeTrap(pos.x, pos.z, lm, floor.checkY));
-            }
-            for (const pos of floor.sentinels || []) {
-                em.add(new MagicalSentinel(pos.x, pos.z, lm, em, this.currentLevel, floor.checkY));
-            }
-            if (floor.event) {
-                const EventClass = eventClasses[floor.eventType || randomEventType()];
-                em.add(new EventClass(floor.event.x, floor.event.z, lm, floor.checkY));
-            }
+        for (const { kind, floor, spawn } of ld.specials || []) {
+            const reward = kind === 'treasure'
+                ? new LootChest(lm.floorPositionAt(spawn.x, spawn.z, floor * H), this.player, () => this._openChest())
+                : new eventClasses[kind](spawn.x, spawn.z, lm, floor * H);
+            reward.guardian = new MagicalSentinel(spawn.x, spawn.z, lm, em, this.currentLevel, floor * H);
+            reward.guardian.onDeath = () => {
+                this.hudManager.showMessage('Gardien détruit : la récompense est libérée');
+                soundManager.play('uiConfirm');
+            };
+            em.add(reward);
+            em.add(reward.guardian);
         }
+        for (const pos of ld.spikeTraps || []) em.add(new SpikeTrap(pos.x, pos.z, lm, 0));
+        for (const pos of ld.spikeTrapsFloor1 || []) em.add(new SpikeTrap(pos.x, pos.z, lm, H));
     }
 
     _openChest() {
@@ -412,25 +453,23 @@ export class Game {
         const goldBonus = 25 + Math.floor(Math.random() * 16);
         player.addGold(goldBonus);
 
+        // 28% mana, then 18% each: full health, shield, berserk, upgrade
         const r = Math.random();
         let message;
-        if (r < 0.25) {
+        if (r < 0.28) {
             player.weapon.reserveAmmo += 100;
             player.weapon.refill();
             player.updateHUD();
             message = 'Mana rechargé';
-        } else if (r < 0.40) {
+        } else if (r < 0.46) {
             player.heal(player.maxHealth);
             message = 'Vie entièrement restaurée';
-        } else if (r < 0.55) {
+        } else if (r < 0.64) {
             player.addShield(50);
             message = 'Bouclier de 50 points';
-        } else if (r < 0.70) {
+        } else if (r < 0.82) {
             player.activateBerserk(10);
             message = 'Furie berserk';
-        } else if (r < 0.85) {
-            player.triggerShockwave();
-            message = 'Onde de choc';
         } else {
             this.showChestUpgradeMenu();
             message = 'Amélioration trouvée';
@@ -449,7 +488,8 @@ export class Game {
 
     spawnEnemies(count) {
         const lm = this.levelManager;
-        const minPlayerDistSq = 30 * 30;
+        const minPlayerDist = Math.min(30, lm.width * lm.cellSize * 0.4); // 30 m, less on small maps
+        const minPlayerDistSq = minPlayerDist * minPlayerDist;
         const minEnemyDistSq = 2 * 2;
         // Probes around the spawn point that must be free of walls (3m radius)
         const r = 3.0;
@@ -491,11 +531,12 @@ export class Game {
     update() {
         if (window.stats) window.stats.update();
 
-        const dt = this.clock.getDelta();
+        const dt = Math.min(this.clock.getDelta(), MAX_DT);
 
-        // Menus (and a phone held upright) pause the simulation but keep rendering the frozen scene
+        // Menus (and a phone held upright) pause the simulation; the canvas keeps showing the last frame
         if (this.isPaused || this.portrait?.matches) {
-            this.renderer.render(this.scene, this.camera);
+            if (this.needsRender) this.renderer.render(this.scene, this.camera);
+            this.needsRender = false;
             return;
         }
 
@@ -513,20 +554,21 @@ export class Game {
         this.renderer.render(this.scene, this.camera);
     }
 
-    // 5 second countdown once the level is cleared, then the upgrade menu
+    // Short countdown once the level is cleared, then the upgrade menu
     _updateLevelComplete(dt) {
         if (!this.levelCompleteTimerStarted) {
             this.levelCompleteTimerStarted = true;
-            this.levelCompleteTimer = 5.0;
-            this.hudManager.showCountdown(5);
+            this.levelCompleteTimer = LEVEL_CLEAR_DELAY;
+            this.hudManager.showCountdown(LEVEL_CLEAR_DELAY);
             soundManager.play('levelClear');
+            for (const entity of this.entityManager.entities) entity.pullToPlayer?.(); // The loot left flies to the player
         }
 
         this.levelCompleteTimer -= dt;
         const currentSecond = Math.ceil(this.levelCompleteTimer);
         if (currentSecond !== this.lastCountdownSecond) {
             this.lastCountdownSecond = currentSecond;
-            if (currentSecond > 0 && currentSecond < 5) {
+            if (currentSecond > 0 && currentSecond < LEVEL_CLEAR_DELAY) {
                 this.hudManager.updateCountdown(currentSecond);
                 soundManager.play('tick');
             }
@@ -583,21 +625,36 @@ export class Game {
         this.currentUpgradeChoices = choices;
         this.upgradePoints = points;
         this.isMidLevelUpgrade = isMidLevel;
+        if (!isMidLevel) {
+            // The next level is built behind the menu once it shows: its freeze is hidden there, not in play
+            this.currentLevel++;
+            this.nextLevelPending = true;
+            requestAnimationFrame(() => setTimeout(() => this._buildNextLevel()));
+        }
         this._openMenu('upgrade-menu');
-        this.renderUpgradeUI(!prefersReducedMotion());
+        this.renderUpgradeUI(!isMidLevel && !prefersReducedMotion()); // A chest's pick shows its cards at once
+    }
+
+    _buildNextLevel() {
+        if (!this.nextLevelPending) return;
+        this.nextLevelPending = false;
+        this.startNewLevel();
+        this.renderer.compileAsync(this.scene, this.camera).catch(() => {}); // Shaders ready before play resumes
     }
 
     _finishUpgradeMenu() {
         this.menuShown = false;
         this.currentUpgradeChoices = null;
+        this._buildNextLevel(); // Not built yet if the choice was very quick
         this._closeMenu('upgrade-menu');
-        if (!this.isMidLevelUpgrade) this._advanceLevel();
     }
 
     renderUpgradeUI(animate = true) {
+        // Between levels, currentLevel is already the next one (built behind the menu)
+        const nextLevel = this.isMidLevelUpgrade ? this.currentLevel + 1 : this.currentLevel;
         document.getElementById('upgrade-title').textContent = this.isMidLevelUpgrade
             ? 'Une amélioration vous attend'
-            : `Niveau ${this.currentLevel} franchi`;
+            : `Niveau ${nextLevel - 1} franchi`;
 
         const points = this.upgradePoints;
         document.getElementById('upgrade-points').innerHTML = points > 0
@@ -605,8 +662,9 @@ export class Game {
             : '<span>Points dépensés</span>';
 
         document.getElementById('upgrade-ledger-player').innerHTML = StatsDisplay.render(this.player);
-        document.getElementById('upgrade-ledger-threat').innerHTML = this._renderThreat(this.currentLevel + 1);
+        document.getElementById('upgrade-ledger-threat').innerHTML = this._renderThreat(nextLevel);
 
+        this.reveals = []; // Filled by _spinReel: shows a spinning card at once
         const choices = this.currentUpgradeChoices || UPGRADES;
         document.querySelector('#upgrade-menu .upgrade-grid')
             .replaceChildren(...choices.map((item, index) => this._createUpgradeCard(item, index, animate)));
@@ -621,9 +679,9 @@ export class Game {
                 <h3 class="ledger__title ledger__title--boss">Niveau ${level} : la Sentinelle colossale</h3>
                 <dl class="ledger__col">${rows([
                     ['Vie', BossSentinel.getHP(level)],
-                    ['Balayage laser', num(BossSentinel.getLaserDamage(level))],
-                    ['Tir en spirale', num(BossSentinel.getSpiralDamage(level))],
-                    ['Pluie de météores', num(BossSentinel.getMissileDamage(level))]
+                    ["Vague d'énergie", num(BossSentinel.getNovaDamage(level))],
+                    ['Tourbillon', num(BossSentinel.getSpiralDamage(level))],
+                    ['Pluie de météores', num(BossSentinel.getMeteorDamage(level))]
                 ])}</dl>`;
         }
 
@@ -665,21 +723,23 @@ export class Game {
             </span>`;
 
         card.addEventListener('click', () => {
+            // A click while the cards spin skips the spin instead of picking
+            if (card.classList.contains('is-sealed')) return this.reveals.forEach(reveal => reveal());
             if (this.upgradePoints <= 0 || !source.upgrade(item.id)) return;
             soundManager.play('uiConfirm');
             this.upgradePoints--;
             this.renderUpgradeUI(false);
             if (this.upgradePoints === 0 || this.getAvailableUpgrades().length === 0) {
-                setTimeout(() => this._finishUpgradeMenu(), 500);
+                setTimeout(() => this._finishUpgradeMenu(), 250);
             }
         });
 
-        if (animate) this._spinReel(card, item, index, usable);
+        if (animate) this._spinReel(card, item, index);
         return card;
     }
 
     // Slot-machine reveal: a reel of random upgrades spins and lands on the real one
-    _spinReel(card, item, index, usable) {
+    _spinReel(card, item, index) {
         const reelItems = Array.from({ length: REEL_LENGTH }, () => UPGRADES[Math.floor(Math.random() * UPGRADES.length)]);
         reelItems.push(item);
 
@@ -696,21 +756,28 @@ export class Game {
         reel.appendChild(strip);
         card.prepend(reel);
 
-        card.classList.add('is-sealed');
-        card.disabled = true; // Not clickable until revealed
+        card.classList.add('is-sealed'); // Clicking it now skips the spin (see the click handler)
 
-        setTimeout(() => {
+        const landed = `translateY(${-(REEL_LENGTH / (REEL_LENGTH + 1)) * 100}%)`;
+        const timers = [];
+        const reveal = () => {
+            if (!card.classList.contains('is-sealed')) return;
+            timers.forEach(clearTimeout);
+            card.classList.add('is-dealt');
+            strip.style.transform = landed;
+            card.classList.replace('is-sealed', 'is-revealed');
+            soundManager.play('reelStop');
+        };
+        this.reveals.push(reveal);
+
+        timers.push(setTimeout(() => {
             card.classList.add('is-dealt');
             soundManager.play('cardDeal');
-            setTimeout(() => {
-                strip.style.transform = `translateY(${-(REEL_LENGTH / (REEL_LENGTH + 1)) * 100}%)`;
-                setTimeout(() => {
-                    card.classList.replace('is-sealed', 'is-revealed');
-                    soundManager.play('reelStop');
-                    card.disabled = !usable;
-                }, 2500); // Matches the reel transition in hud.css
-            }, 300);
-        }, index * 200);
+            timers.push(setTimeout(() => {
+                strip.style.transform = landed;
+                timers.push(setTimeout(reveal, REEL_SPIN));
+            }, 200));
+        }, index * 150));
     }
 
     // ─── Altar ───────────────────────────────────────────────────────────────

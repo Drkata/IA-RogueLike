@@ -49,7 +49,7 @@ export class StatsDisplay {
             row('arcana', SVG_ICONS.knockback, 'Recul', num(w.knockback) + rankBadge(s.knockback)),
             row('arcana', SVG_ICONS.explosion, 'Explosion', pct(w.explosion * 100) + rankBadge(s.explosion)),
             row('arcana', SVG_ICONS.ricochet, 'Ricochets', w.ricochet + rankBadge(s.ricochet)),
-            row('arcana', SVG_ICONS.magnet, 'Aimant', (player.magnetRange ? unit(player.magnetRange, 'm') : '—') + rankBadge(p.magnet))
+            row('arcana', SVG_ICONS.magnet, 'Aimant', unit(player.magnetRange, 'm') + rankBadge(p.magnet))
         ];
 
         return [body, weapon, precision, arcana].map(rows => `<dl class="ledger__col">${rows.join('')}</dl>`).join('');

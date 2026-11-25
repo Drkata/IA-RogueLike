@@ -508,7 +508,7 @@ const FLOORS = {
 
 // ─── Special rooms ───────────────────────────────────────────────────────────
 
-// Magic circle used on event-room walls (drawn identically on albedo, height and glow)
+// Magic circle, used for the floor sigils of special rooms
 function drawRuneCircle(ctx, rng, size) {
     const cx = size / 2;
     const cy = size / 2;
@@ -660,107 +660,76 @@ export class TextureGenerator {
         return (FLOORS[biome] || FLOORS.city)(seededRandom(2000 + biome.length * 31));
     }
 
-    // Event room walls: dark violet obsidian blocks engraved with a glowing magic circle
-    static runeWallSurface(variant = 0) {
+    // Special room walls: the biome's stone with a carved frieze of runes, 2.1 to 2.5 m high. The glow
+    // map is white: the material's emissive colour gives the frieze the colour of the room's content.
+    static sanctumWallSurface(biome) {
         const size = WALL_SIZE;
-        const rng = seededRandom(3000 + variant * 104729);
-        const m = masonry(size, rng, 3, 1.0, 1.6);
-        const grain = fbm(size, rng, 32, 3);
-        const base = [rgb(0x1c1426), rgb(0x261a33), rgb(0x302140)];
-        const stone = [0, 0, 0];
-        const surface = paintSurface(size, true, (x, y, i, px) => {
-            const e = m.edge[i];
-            rampInto(stone, base[0], base[1], base[2], m.blockRand[m.block[i]]);
-            scaleInto(copyInto(px.color, stone), (0.75 + 0.25 * smoothstep(1.5, 6, e)) * (0.85 + 0.3 * grain[i]));
-            px.height = e < 2 ? 0.2 : 0.6 + 0.1 * grain[i];
-        });
+        const surface = TextureGenerator.wallSurface(biome, 0);
+        surface.glow = createCanvas(size);
+        const [top, bottom] = [78, 150]; // Frieze band, in pixels from the top of the 3 m face
+        const ledge = 8;
+        const layers = {
+            albedo: surface.albedo.getContext('2d'),
+            height: surface.height.getContext('2d'),
+            glow: surface.glow.getContext('2d')
+        };
+        layers.glow.fillStyle = '#000';
+        layers.glow.fillRect(0, 0, size, size);
 
-        const seed = rng() * 1e9;
-        const layers = [
-            [surface.albedo, '#a985e0', 0],
-            [surface.glow, '#b98cff', 14],
-            [surface.height, '#202020', 0] // Engraved: runes sit lower
-        ];
-        for (const [canvas, color, blur] of layers) {
-            const ctx = canvas.getContext('2d');
-            ctx.strokeStyle = ctx.fillStyle = color;
-            ctx.shadowColor = color;
+        // Recessed band between two raised ledges
+        layers.albedo.fillStyle = 'rgba(0, 0, 0, 0.55)';
+        layers.albedo.fillRect(0, top, size, bottom - top);
+        layers.albedo.fillStyle = 'rgba(255, 255, 255, 0.14)';
+        layers.albedo.fillRect(0, top - ledge, size, ledge);
+        layers.albedo.fillRect(0, bottom, size, ledge);
+        layers.height.fillStyle = '#2a2a2a';
+        layers.height.fillRect(0, top, size, bottom - top);
+        layers.height.fillStyle = '#d8d8d8';
+        layers.height.fillRect(0, top - ledge, size, ledge);
+        layers.height.fillRect(0, bottom, size, ledge);
+
+        // 8 runes per face (a stem and seeded branches), so the frieze runs on across walls
+        const rng = seededRandom(5000);
+        const runes = Array.from({ length: 8 }, () => Array.from({ length: 1 + Math.floor(rng() * 3) }, () =>
+            [rng() < 0.5 ? -1 : 1, 0.15 + rng() * 0.55, rng() < 0.5 ? -1 : 1, rng() < 0.25]));
+        const [y0, y1] = [top + 14, bottom - 14];
+        const draw = (ctx, color, blur, width) => {
+            ctx.strokeStyle = ctx.fillStyle = ctx.shadowColor = color;
             ctx.shadowBlur = blur;
-            drawRuneCircle(ctx, seededRandom(seed), size);
-        }
+            ctx.lineWidth = width;
+            ctx.lineCap = 'round';
+            runes.forEach((branches, k) => {
+                const x = 32 + k * 64;
+                ctx.beginPath();
+                ctx.moveTo(x, y0);
+                ctx.lineTo(x, y1);
+                for (const [side, at, slope, dot] of branches) {
+                    const y = y0 + (y1 - y0) * at;
+                    ctx.moveTo(x, y);
+                    ctx.lineTo(x + side * 14, y + slope * 12);
+                    if (dot) {
+                        ctx.moveTo(x - side * 9 + 2.5, y1 - 6);
+                        ctx.arc(x - side * 9, y1 - 6, 2.5, 0, Math.PI * 2);
+                    }
+                }
+                ctx.stroke();
+            });
+            ctx.shadowBlur = 0;
+        };
+        draw(layers.albedo, '#cfc6b4', 0, 4);
+        draw(layers.height, '#101010', 0, 5); // Engraved
+        draw(layers.glow, '#ffffff', 8, 4);
         return surface;
     }
 
-    // Treasure room walls: dark walnut panels in gilded frames with a medallion
-    static vaultWallSurface() {
-        const size = WALL_SIZE;
-        const rng = seededRandom(4000);
-        const grain = fbm(size, rng, 8, 4);
-        const fine = fbm(size, rng, 64, 2);
-        const woodA = rgb(0x2c1c10);
-        const woodB = rgb(0x4a3018);
-        const gold = rgb(0xc8a24e);
-        const goldDark = rgb(0x6e5222);
-        const wood = [0, 0, 0];
-        return paintSurface(size, true, (x, y, i, px) => {
-            // Vertical wood grain
-            const rings = Math.sin(x * 0.16 + grain[i] * 2.5) * 0.5 + 0.5;
-            mixInto(wood, woodA, woodB, rings * 0.55 + fine[i] * 0.25 + grain[i] * 0.2);
-
-            // Gilded frame: outer border and inner panel moulding
-            const d = Math.min(x, y, size - 1 - x, size - 1 - y);
-            const frame = d < 22 || (d > 44 && d < 52);
-            const dx = x - size / 2;
-            const dy = y - size / 2;
-            const r = Math.sqrt(dx * dx + dy * dy);
-            const medallion = r < 70 ? 1 : 0;
-            const star = r < 30 + 26 * Math.pow(Math.abs(Math.cos(Math.atan2(dy, dx) * 4)), 4); // Engraved 8-point star
-            const ring = r > 78 && r < 86 ? 1 : 0;
-
-            if (frame || medallion || ring) {
-                const shine = frame ? smoothstep(0, 11, Math.min(d, 22 - d, Math.abs(d - 48) + 4)) : 1 - r / 90;
-                mixInto(px.color, goldDark, gold, (0.4 + 0.6 * shine) * (medallion && star ? 0.55 : 1));
-                px.glow[0] = gold[0] * 0.25;
-                px.glow[1] = gold[1] * 0.25;
-                px.glow[2] = gold[2] * 0.25;
-                px.height = medallion && star ? 0.7 : 0.85;
-            } else {
-                copyInto(px.color, wood);
-                px.height = d < 44 ? 0.55 : 0.4 + 0.1 * grain[i];
-            }
-        });
-    }
-
-    // Glowing pentacle drawn on the floor of event rooms (transparent decal)
-    static pentacleCanvas() {
+    // Floor sigil of a special room: a white magic circle on transparent black, tinted by its material
+    static sigilCanvas(seed) {
         const size = 512;
         const canvas = createCanvas(size);
         const ctx = canvas.getContext('2d');
-        const c = size / 2;
-        const radius = size * 0.42;
-        ctx.strokeStyle = ctx.fillStyle = '#c9a6ff';
-        ctx.shadowColor = '#9b6bff';
-        ctx.shadowBlur = 18;
-        ctx.lineWidth = 10;
-        ctx.beginPath();
-        ctx.arc(c, c, radius, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.arc(c, c, radius * 0.88, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.beginPath();
-        for (let i = 0; i <= 5; i++) {
-            const angle = (i * 2 / 5) * Math.PI * 2 - Math.PI / 2;
-            const px = c + Math.cos(angle) * radius * 0.88;
-            const py = c + Math.sin(angle) * radius * 0.88;
-            if (i === 0) ctx.moveTo(px, py);
-            else ctx.lineTo(px, py);
-        }
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(c, c, 12, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.strokeStyle = ctx.fillStyle = ctx.shadowColor = '#ffffff';
+        ctx.shadowBlur = 10;
+        drawRuneCircle(ctx, seededRandom(seed), size);
         return canvas;
     }
 

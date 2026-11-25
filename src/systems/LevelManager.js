@@ -6,10 +6,11 @@ import { TextureGenerator } from './TextureGenerator.js';
 import { ThemeManager } from './themes/ThemeManager.js';
 import { Pathfinder } from './Pathfinder.js';
 import { SkyColliders } from './SkyColliders.js';
+import { SHRINE_COLORS } from '../core/Palette.js';
 
 const H = CONSTANTS.WALL_HEIGHT;
 const FLOOR_TILE = 4; // Metres covered by one floor texture tile
-const RUNE_VARIANTS = 4;
+const LIGHT_POOL = 8; // Point lights shared by rooms and shrines, see takeLight
 
 // Every material of one theme. Built when the theme changes (every 5 levels) and shared by all its
 // levels, so textures are painted once per theme. See ART_DIRECTION.md for the rules they follow.
@@ -34,9 +35,31 @@ class ThemeKit {
         };
 
         this.walls = [0, 1, 2].map(v => surface(TextureGenerator.wallSurface(biome, v)));
-        this.runeWalls = Array.from({ length: RUNE_VARIANTS }, (_, v) =>
-            surface(TextureGenerator.runeWallSurface(v), { roughness: 0.55, emissiveIntensity: 1.3 }));
-        this.vaultWall = surface(TextureGenerator.vaultWallSurface(), { roughness: 0.5, metalness: 0.25, emissiveIntensity: 0.6 });
+        // Special rooms: the biome's stone with a rune frieze, and a floor sigil, in the colour of their content
+        const sanctum = TextureGenerator.toTextures(TextureGenerator.sanctumWallSurface(biome));
+        this.sanctumWalls = {};
+        this.sigils = {};
+        Object.entries(SHRINE_COLORS).forEach(([kind, color], k) => {
+            this.sanctumWalls[kind] = this._keep(new THREE.MeshStandardMaterial({
+                map: sanctum.map,
+                bumpMap: sanctum.bumpMap,
+                bumpScale: 1,
+                emissiveMap: sanctum.emissiveMap,
+                emissive: color,
+                emissiveIntensity: 1.4,
+                roughness: 0.9,
+                metalness: 0
+            }));
+            this.sigils[kind] = this._keep(new THREE.MeshBasicMaterial({
+                map: TextureGenerator.toTexture(TextureGenerator.sigilCanvas(6000 + k * 7919), { repeat: false }),
+                color,
+                transparent: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                polygonOffset: true,
+                polygonOffsetFactor: -2
+            }));
+        });
 
         // The floor tile is shared with the island caps; only the floor gets the per-level aoMap
         this.floor = surface(TextureGenerator.floorSurface(biome), { roughness: 0.95 });
@@ -51,14 +74,6 @@ class ThemeKit {
             map: TextureGenerator.toTexture(TextureGenerator.skyCanvas(biome), { repeat: false }),
             side: THREE.BackSide,
             fog: false // The sky is the backdrop the fog fades into
-        }));
-        this.pentacle = this._keep(new THREE.MeshBasicMaterial({
-            map: TextureGenerator.toTexture(TextureGenerator.pentacleCanvas(), { repeat: false }),
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            polygonOffset: true,
-            polygonOffsetFactor: -2
         }));
 
         // Floating island details
@@ -95,25 +110,36 @@ export class LevelManager {
         this.scene.add(this.levelMeshGroup);
         this.currentLevelIndex = 1;
         this.decorationPositions = []; // Track decoration positions
+        this.solidProps = []; // See addSolidProp
         this.themeManager = new ThemeManager();
         this.kit = null;
         this.floorShadow = null;
         // Shared by every enemy: A* is synchronous, so one set of search buffers is enough
         this.pathfinder = new Pathfinder(this);
+        // The same point lights for every level: a changing light count recompiles every shader
+        this.lights = Array.from({ length: LIGHT_POOL }, () => new THREE.PointLight(0xffffff, 0));
+        this.scene.add(...this.lights);
+        this.lightsUsed = 0;
+    }
+
+    // Next free point light of the pool, lit and placed; null once all are taken
+    takeLight(color, intensity, distance, x, y, z) {
+        const light = this.lights[this.lightsUsed];
+        if (!light) return null;
+        this.lightsUsed++;
+        light.color.set(color);
+        light.intensity = intensity;
+        light.distance = distance;
+        light.position.set(x, y, z);
+        return light;
     }
 
     generateLevel(width, height, levelIndex = 1) {
         this.currentLevelIndex = levelIndex;
         const isBossLevel = levelIndex % 10 === 0;
         const generator = new MapGenerator(width, height);
-        const levelData = isBossLevel ? generator.generateArena() : generator.generate();
-
+        const levelData = isBossLevel ? generator.generateArena() : generator.generate(levelIndex);
         this.loadLevelData(levelData);
-
-        // Chests sit in the dedicated treasure rooms
-        this.chestPositions = !isBossLevel && levelData.treasureSpawn ? [levelData.treasureSpawn] : [];
-        this.chestPositionsFloor1 = !isBossLevel && levelData.treasureSpawnFloor1 ? [levelData.treasureSpawnFloor1] : [];
-
         return levelData.playerStart;
     }
 
@@ -146,39 +172,32 @@ export class LevelManager {
             obj.material.dispose();
         });
         this.levelMeshGroup.clear();
+        for (const light of this.lights) light.intensity = 0;
+        this.lightsUsed = 0;
         if (this.floorShadow) this.floorShadow.dispose();
         this.floorShadow = null;
         this.skyColliders = null;
+        this.solidProps = [];
     }
 
-    // Special room type ('event' | 'treasure') of each Floor 0 floor cell, null otherwise
-    _computeSpecialFloorCells() {
-        const cells = new Array(this.width * this.height).fill(null);
-        for (const room of this.levelData.rooms || []) {
-            if (room.type !== 'event' && room.type !== 'treasure') continue;
-            for (let z = Math.max(0, room.z); z < Math.min(this.height, room.z + room.h); z++) {
-                for (let x = Math.max(0, room.x); x < Math.min(this.width, room.x + room.w); x++) {
-                    const i = z * this.width + x;
-                    if (cells[i] === null && this.data[i] === 0) cells[i] = room.type;
-                }
+    // Content kind of the special room whose wall ring holds (floor, cell index), keyed floor * cells + index
+    _sanctumCells() {
+        const cells = new Map();
+        const count = this.width * this.height;
+        for (const { kind, floor, room } of this.levelData.specials || []) {
+            for (let z = room.z - 1; z <= room.z + room.h; z++) {
+                for (let x = room.x - 1; x <= room.x + room.w; x++) cells.set(floor * count + z * this.width + x, kind);
             }
         }
         return cells;
     }
 
-    // Walls next to an event/treasure room get that room's look
-    getRoomTypeForWall(x, z, specialCells) {
-        for (let dz = -1; dz <= 1; dz++) {
-            for (let dx = -1; dx <= 1; dx++) {
-                const nx = x + dx;
-                const nz = z + dz;
-                if (nx >= 0 && nx < this.width && nz >= 0 && nz < this.height) {
-                    const type = specialCells[nz * this.width + nx];
-                    if (type) return type;
-                }
-            }
-        }
-        return null;
+    // Round solid furniture (altar, stall, fountain, the stunned boss): moving bodies are pushed out of
+    // it. `position` is its foot, `height` how high it blocks (0: not solid). Returns it, to be changed.
+    addSolidProp(position, radius, height) {
+        const prop = { x: position.x, y: position.y, z: position.z, radius, height };
+        this.solidProps.push(prop);
+        return prop;
     }
 
     buildLevel() {
@@ -191,11 +210,6 @@ export class LevelManager {
         const boxHalfGeo = new THREE.BoxGeometry(this.cellSize, H / 2, this.cellSize);
         const randomWall = () => kit.walls[Math.floor(Math.random() * kit.walls.length)];
 
-        const pickWallMat = (roomType) => {
-            if (roomType === 'event') return kit.runeWalls[Math.floor(Math.random() * kit.runeWalls.length)];
-            if (roomType === 'treasure') return kit.vaultWall;
-            return randomWall();
-        };
 
         // Every wall, ramp and ramp base is an instance: one draw call per (geometry, material)
         const instances = new Map(); // geometry -> material -> matrices
@@ -218,7 +232,8 @@ export class LevelManager {
         };
 
         const floors = [this.data, this.dataFloor1, this.dataFloor2];
-        const specialCells = this._computeSpecialFloorCells();
+        const sanctum = this._sanctumCells();
+        const cellCount = this.width * this.height;
 
         for (let z = 0; z < this.height; z++) {
             for (let x = 0; x < this.width; x++) {
@@ -230,7 +245,8 @@ export class LevelManager {
                     if (!grid) return;
                     const cellType = grid[index];
                     if (cellType === 1) {
-                        addWall(pickWallMat(this.getRoomTypeForWall(x, z, specialCells)), posX, H * floor + H / 2, posZ);
+                        const kind = sanctum.get(floor * cellCount + index);
+                        addWall(kind ? kit.sanctumWalls[kind] : randomWall(), posX, H * floor + H / 2, posZ);
                     } else if (cellType >= 2 && cellType <= 9 && floor < 2) {
                         addRamp(cellType, posX, posZ, H * floor);
                     }
@@ -256,7 +272,7 @@ export class LevelManager {
         }
     }
 
-    // Tiled floor (one texture tile per FLOOR_TILE metres) with soft wall shadows and pentacles in event rooms
+    // Tiled floor (one texture tile per FLOOR_TILE metres) with soft wall shadows, and the special rooms' sigils
     _buildFloor(kit) {
         const w = this.width * this.cellSize;
         const d = this.height * this.cellSize;
@@ -275,11 +291,11 @@ export class LevelManager {
         floor.position.set(w / 2, 0, d / 2);
         this.levelMeshGroup.add(floor);
 
-        for (const room of this.levelData.rooms || []) {
-            if (room.type !== 'event') continue;
-            const decal = new THREE.Mesh(new THREE.PlaneGeometry(room.w * this.cellSize * 0.9, room.h * this.cellSize * 0.9), kit.pentacle);
+        for (const { kind, floor, room, spawn } of this.levelData.specials || []) {
+            const size = Math.min(room.w, room.h) * this.cellSize * 0.6;
+            const decal = new THREE.Mesh(new THREE.PlaneGeometry(size, size), kit.sigils[kind]);
             decal.rotation.x = -Math.PI / 2;
-            decal.position.set((room.x + room.w / 2) * this.cellSize, 0.02, (room.z + room.h / 2) * this.cellSize);
+            decal.position.set(this.gridToWorld(spawn.x), floor * H + 0.02, this.gridToWorld(spawn.z));
             this.levelMeshGroup.add(decal);
         }
     }
@@ -306,8 +322,10 @@ export class LevelManager {
         const mapH = this.height * this.cellSize;
         const islands = [];
 
-        // 80 to 120 islands, spawned with a +100% margin around the map
-        const totalIslands = 80 + Math.floor(Math.random() * 40);
+        // Spawned with a +100% margin around the map
+        // Same density per square metre as on a 56-cell map: fewer on smaller maps, never more than 120
+        const density = Math.min(1, (this.width / 56) ** 2);
+        const totalIslands = Math.max(12, Math.round((80 + Math.random() * 40) * density));
         for (let k = 0; k < totalIslands; k++) {
             const island = new THREE.Group();
             island.position.set(-mapW / 2 + Math.random() * (mapW * 2), 8.0 + Math.random() * 32.0, -mapH / 2 + Math.random() * (mapH * 2));
@@ -500,13 +518,15 @@ export class LevelManager {
     addDecorations(rooms, theme) {
         this.decorationPositions = [];
         const { point, pointIntensity } = theme.lighting;
+        // Leaves one light per special room for its shrine, taken when Game spawns it
+        let free = LIGHT_POOL - (this.levelData.specials?.length || 0);
         for (const room of rooms) {
+            if (free <= 0) break;
             if (Math.random() >= 0.4) continue;
             const cx = Math.floor(room.x + room.w / 2);
             const cz = Math.floor(room.z + room.h / 2);
-            const light = new THREE.PointLight(point, pointIntensity, 14);
-            light.position.set(cx * this.cellSize + this.cellSize / 2, 2.2, cz * this.cellSize + this.cellSize / 2);
-            this.levelMeshGroup.add(light);
+            this.takeLight(point, pointIntensity, 14, this.gridToWorld(cx), 2.2, this.gridToWorld(cz));
+            free--;
         }
     }
 
@@ -667,6 +687,23 @@ export class LevelManager {
                         }
                     }
                 }
+            }
+        }
+
+        // Round furniture standing in this floor band: push out radially
+        for (const p of this.solidProps) {
+            if (checkY < p.y - 0.5 || checkY >= p.y + p.height) continue;
+            const dx = pos.x - p.x;
+            const dz = pos.z - p.z;
+            const min = r + p.radius;
+            const distSq = dx * dx + dz * dz;
+            if (distSq >= min * min) continue;
+            const dist = Math.sqrt(distSq);
+            if (dist > 0.0001) {
+                pos.x = p.x + (dx / dist) * min;
+                pos.z = p.z + (dz / dist) * min;
+            } else {
+                pos.x = p.x + min;
             }
         }
     }

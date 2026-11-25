@@ -1,10 +1,11 @@
 // Generates many seeded levels and checks the structural invariants the game relies on.
 // Runs in plain Node, no browser needed: `npm run check:levels` (or `node scripts/check-levels.mjs 1000`).
-//   - every spawn (start, chests, events, sentinels, traps) stands on its floor, not inside a wall
+//   - every spawn (start, special rooms' rewards, traps) stands on its floor, not inside a wall
 //   - the player can walk or jump to every spawn from the start
+//   - at most maxSpecialRooms(level) special rooms, none overlapping another or the safe room
 //   - no upper-floor structure floats over an empty cell
 //   - Floor 0 is one connected area
-import { MapGenerator } from '../src/systems/MapGenerator.js';
+import { MapGenerator, maxSpecialRooms, mapSizeForLevel } from '../src/systems/MapGenerator.js';
 import { LevelManager } from '../src/systems/LevelManager.js';
 import { Pathfinder } from '../src/systems/Pathfinder.js';
 import { CONSTANTS } from '../src/core/Constants.js';
@@ -52,10 +53,12 @@ const fail = (what, seed) => {
 
 console.warn = () => {};
 const t0 = performance.now();
+const specialsByTen = new Map(); // tens of levels -> [special rooms built, levels]
 for (let seed = 1; seed <= SEEDS; seed++) {
     Math.random = mulberry32(seed);
-    const size = Math.min(95, 55 + Math.floor((seed % 30) * 1.3)); // Same range as Game.startNewLevel
-    const ld = new MapGenerator(size, size).generate();
+    const level = (seed % 10 === 0 ? seed + 1 : seed) % 60; // Levels 1-59, no boss arena
+    const size = mapSizeForLevel(level); // As in Game.startNewLevel
+    const ld = new MapGenerator(size, size).generate(level);
     const { width, height } = ld;
 
     // Query the level the way the game does, without building any mesh
@@ -77,13 +80,18 @@ for (let seed = 1; seed <= SEEDS; seed++) {
         if (!reach[cell]) fail(`${label} (étage ${floor}) inatteignable`, seed);
     };
     checkSpawn('départ du joueur', (start.y || 0) / H, start);
-    checkSpawn('coffre', 0, ld.treasureSpawn);
-    checkSpawn('coffre', 1, ld.treasureSpawnFloor1);
-    checkSpawn('événement', 0, ld.eventSpawn);
-    checkSpawn('événement', 1, ld.eventSpawnFloor1);
-    checkSpawn('événement', 2, ld.eventSpawnFloor2);
-    ld.sentinels.forEach(p => checkSpawn('tourelle', 0, p));
-    ld.sentinelsFloor1.forEach(p => checkSpawn('tourelle', 1, p));
+    ld.specials.forEach(s => checkSpawn(s.kind, s.floor, s.spawn));
+
+    // Special rooms: their number, and no overlap (wall rings included)
+    const ten = Math.floor((level - 1) / 10);
+    const [built, levels] = specialsByTen.get(ten) || [0, 0];
+    specialsByTen.set(ten, [built + ld.specials.length, levels + 1]);
+    if (ld.specials.length > maxSpecialRooms(level)) fail('trop de salles spéciales', seed);
+    const overlap = (a, b) => a.x - 1 <= b.x + b.w && b.x - 1 <= a.x + a.w && a.z - 1 <= b.z + b.h && b.z - 1 <= a.z + a.h;
+    ld.specials.forEach((s, i) => {
+        if (s.floor === 0 && overlap(s.room, ld.safeRoom)) fail('salle spéciale sur la salle de départ', seed);
+        if (ld.specials.some((o, j) => j > i && o.floor === s.floor && overlap(s.room, o.room))) fail('salles spéciales qui se chevauchent', seed);
+    });
     ld.spikeTraps.forEach(p => checkSpawn('piège', 0, p));
     ld.spikeTrapsFloor1.forEach(p => checkSpawn('piège', 1, p));
 
@@ -100,6 +108,9 @@ for (let seed = 1; seed <= SEEDS; seed++) {
 }
 
 const ms = (performance.now() - t0) / SEEDS;
+for (const [ten, [built, levels]] of [...specialsByTen].sort((a, b) => a[0] - b[0])) {
+    console.log(`Niveaux ${ten * 10 + 1}-${ten * 10 + 9} : ${(built / levels).toFixed(2)} salles spéciales en moyenne (max ${maxSpecialRooms(ten * 10 + 1)})`);
+}
 if (failures.size === 0) {
     console.log(`OK: ${SEEDS} niveaux, tous les invariants tiennent (${ms.toFixed(1)} ms par niveau).`);
 } else {

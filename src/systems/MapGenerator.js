@@ -34,23 +34,28 @@ const SLOPE_ORDER = [SLOPES.south, SLOPES.north, SLOPES.east, SLOPES.west];
 
 const DIRS4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
-const SENTINEL_OFFSETS_FLOOR0 = [
-    { x: 2, z: 2 }, { x: -2, z: -2 }, { x: 2, z: -2 }, { x: -2, z: 2 },
-    { x: 3, z: 0 }, { x: -3, z: 0 }, { x: 0, z: 3 }, { x: 0, z: -3 }
-];
-const SENTINEL_OFFSETS_FLOOR1 = [
-    { x: 1, z: 1 }, { x: -1, z: -1 }, { x: 1, z: -1 }, { x: -1, z: 1 },
-    { x: 2, z: 0 }, { x: -2, z: 0 }, { x: 0, z: 2 }, { x: 0, z: -2 }
-];
-
 const FLOOR2_ROOM_SIZE = 8;
+const FLOOR2_MIN_MAP = 44; // Map side under which no special room is planned on Floor 2
 const RAMPS_PER_FLOOR = 9; // Planned ramps up to Floor 1 and up to Floor 2 (rescue ramps come on top)
 const RAMP_SPACING = 8; // Minimum distance between two ramp centres, in cells, so they spread over the map
 const MIN_FLOOR1_ISLAND = 4; // Smaller wall-top islands get no ramp (nothing spawns there)
 
-const randomEventType = () => {
-    const r = Math.random();
-    return r < 0.4 ? 'altar' : (r < 0.8 ? 'shop' : 'fountain');
+// Side of a level's map, in cells (2 m): 35 at level 1, +1.3 per level, at most 95. Boss arenas keep
+// the larger size their attacks are tuned for (meteors land up to 40 m from the boss).
+export const mapSizeForLevel = (level) => Math.min(95, (level % 10 === 0 ? 55 : 34) + Math.floor(level * 1.3));
+
+// Special rooms (treasure or event) per level: 2 on levels 1-10, 3 on 11-20, +1 every 10 levels
+export const maxSpecialRooms = (level) => 2 + Math.floor((level - 1) / 10);
+
+// Event content, 40% altar, 40% shop, 20% fountain, never twice in a level while another is left
+const EVENT_KINDS = ['altar', 'shop', 'fountain'];
+const pickEventKind = (used) => {
+    const left = EVENT_KINDS.filter(k => !used.has(k));
+    for (;;) {
+        const r = Math.random();
+        const kind = r < 0.4 ? 'altar' : (r < 0.8 ? 'shop' : 'fountain');
+        if (!left.length || left.includes(kind)) return kind;
+    }
 };
 
 const isSpecial = (room) => room.type === 'event' || room.type === 'treasure';
@@ -61,7 +66,7 @@ const isSpecial = (room) => room.type === 'event' || room.type === 'treasure';
  *      spread-out ramps per floor around them. Nothing is built over `reserved` cells
  *      (special rooms, ramps).
  *   2. Repair: reconnect Floor 0, drop anything floating, give Floor 1 islands their ramps.
- *   3. Population: player start, chests, events, sentinels and traps are placed on the final
+ *   3. Population: player start, special rooms' rewards and traps are placed on the final
  *      grids, only on cells where they stand on their floor and the player can reach them.
  */
 export class MapGenerator {
@@ -196,27 +201,28 @@ export class MapGenerator {
     }
 
     // ─── Generation ──────────────────────────────────────────────────────────
-    generate() {
+    generate(level = 1) {
+        const plan = this._planSpecialRooms(maxSpecialRooms(level));
         const MAX_ATTEMPTS = 50;
         let layout = null;
         for (let attempt = 1; attempt <= MAX_ATTEMPTS && !layout; attempt++) {
-            const candidate = this._layoutFloor0();
+            const candidate = this._layoutFloor0(plan[0]);
             if (this.isValidMap(candidate.playerStart)) layout = candidate;
         }
         if (!layout) {
             console.warn("Failed to generate fully connected map after", MAX_ATTEMPTS, "attempts. Returning fallback.");
-            layout = this._layoutFloor0();
+            layout = this._layoutFloor0(plan[0]);
         }
 
         // 1. Structure
         this.reserved = new Uint8Array(this.data.length);
         this.locked = new Uint8Array(this.data.length);
-        for (const room of [layout.safeRoom, layout.eventRoom, layout.treasureRoom]) {
+        for (const room of [layout.safeRoom, ...layout.specialRooms]) {
             this._markRect(room.x - 1, room.z - 1, room.x + room.w, room.z + room.h);
         }
         // Rooms first (they hold content), then ramps around them
-        this.generateFloor1();
-        this.generateFloor2();
+        this.generateFloor1(plan[1]);
+        this.generateFloor2(plan[2].length > 0);
         this.generateRamps();
         this.generateFloor2Ramps();
 
@@ -231,13 +237,28 @@ export class MapGenerator {
         return this._populate(layout);
     }
 
-    // Floor 0 rooms and corridors; the event and treasure rooms are walled in with 1-2 doors
-    _layoutFloor0() {
+    // Room types ('treasure' | 'event') per floor for `count` special rooms: a treasure and an event
+    // first, then either. Treasures go on Floor 0 or 1; an event may also take the single Floor 2 room,
+    // on maps of at least FLOOR2_MIN_MAP cells (it seldom finds thick enough walls on smaller ones).
+    _planSpecialRooms(count) {
+        const plan = [[], [], []];
+        for (let k = 0; k < count; k++) {
+            const type = k === 0 ? 'treasure' : (k === 1 || Math.random() < 0.5 ? 'event' : 'treasure');
+            const floor2 = type === 'event' && plan[2].length === 0 && this.width >= FLOOR2_MIN_MAP && Math.random() < 0.25;
+            const floor = floor2 ? 2 : (Math.random() < 0.55 ? 0 : 1);
+            plan[floor].push(type);
+        }
+        return plan;
+    }
+
+    // Floor 0 rooms and corridors; special rooms (`types`) are walled in with 1-2 doors
+    _layoutFloor0(types) {
         this.data = new Array(this.width * this.height).fill(1);
         this.corridorCells = [];
 
         // First room is forced into a corner: the Safe Room
-        const rooms = this._placeRooms(15, 6, 13, (w, h, placedCount) => {
+        const [minRoom, maxRoom] = this._roomSizes();
+        const rooms = this._placeRooms(15, minRoom, maxRoom, (w, h, placedCount) => {
             if (placedCount === 0) {
                 const corners = [
                     { x: 2, z: 2 },
@@ -252,22 +273,18 @@ export class MapGenerator {
                 z: Math.floor(Math.random() * (this.height - h - 2)) + 1
             };
         });
-        this._assignRoomTypes(rooms, 'safe');
+        this._assignRoomTypes(rooms, types, 'safe');
         this._connectRooms(rooms, room => this.createRoom(room), this.data, this.corridorCells);
 
-        const eventRoom = rooms.find(r => r.type === 'event') || rooms[rooms.length - 1];
-        const treasureRoom = rooms.find(r => r.type === 'treasure') || rooms[Math.floor(rooms.length / 2)];
-
         // Enclose special rooms after the corridors have opened them up too much
+        const specialRooms = rooms.filter(isSpecial);
         const doorCells = [];
-        this.encloseRoom(eventRoom, { traps: doorCells });
-        this.encloseRoom(treasureRoom, { traps: doorCells });
+        for (const room of specialRooms) this.encloseRoom(room, { traps: doorCells });
 
         return {
             rooms,
             safeRoom: rooms[0],
-            eventRoom,
-            treasureRoom,
+            specialRooms,
             doorCells,
             playerStart: this.getCenter(rooms[0])
         };
@@ -321,15 +338,16 @@ export class MapGenerator {
 
     // Floor 1: rooms and corridors on top of the Floor 0 walls. Its special rooms are solid blocks
     // down to the ground, so they are moved off reserved cells (or dropped if there is no room).
-    generateFloor1() {
+    generateFloor1(types) {
         // Start from Floor 0 walls stacked one level higher
         this.dataFloor1 = this.data.map(v => (v === 1 ? 1 : 0));
 
-        const rooms = this._placeRooms(10, 6, 12, (w, h) => ({
+        const [minRoom, maxRoom] = this._roomSizes();
+        const rooms = this._placeRooms(10, minRoom, Math.min(12, maxRoom), (w, h) => ({
             x: Math.floor(Math.random() * (this.width - w - 4)) + 2,
             z: Math.floor(Math.random() * (this.height - h - 4)) + 2
         }));
-        this._assignRoomTypes(rooms);
+        this._assignRoomTypes(rooms, types);
 
         for (const room of rooms.filter(isSpecial)) {
             this._resizeSpecialRoom(room);
@@ -349,13 +367,11 @@ export class MapGenerator {
 
         // Doors of special rooms open onto an actual walkway
         const walkway = i => this._standable(i, 1);
-        const eventRoom = rooms.find(r => r.type === 'event') || null;
-        const treasureRoom = rooms.find(r => r.type === 'treasure') || null;
-        for (const room of [eventRoom, treasureRoom]) {
-            if (room) this.encloseRoom(room, { grid: this.dataFloor1, support: this.data, isOpen: walkway });
+        this.floor1Specials = rooms.filter(isSpecial);
+        for (const room of this.floor1Specials) {
+            this.encloseRoom(room, { grid: this.dataFloor1, support: this.data, isOpen: walkway });
         }
-
-        this.floor1Rooms = { eventRoom, treasureRoom, count: rooms.length };
+        this.floor1RoomCount = rooms.length;
     }
 
     // Move a room (top-left x/z, size w/h) to the nearest spot where it and its walls touch no reserved cell
@@ -381,12 +397,13 @@ export class MapGenerator {
         return true;
     }
 
-    // Floor 2: one walled room on solid columns, entered through a door with a ramp up from Floor 1.
-    // Picks the spot that destroys the least walkable space below.
-    generateFloor2() {
+    // Floor 2: one walled event room on solid columns (if `wanted`), entered through a door with a
+    // ramp up from Floor 1. Picks the spot that destroys the least walkable space below.
+    generateFloor2(wanted) {
         this.dataFloor2 = new Array(this.width * this.height).fill(0);
         this.floor2Room = null;
         this.floor2Ramps = [];
+        if (!wanted) return;
         const size = FLOOR2_ROOM_SIZE;
 
         let best = null;
@@ -405,7 +422,7 @@ export class MapGenerator {
                 }
                 if (best && cost >= best.cost) continue;
 
-                const room = { x, z, w: size, h: size };
+                const room = { x, z, w: size, h: size, type: 'event' };
                 const door = this._rampDoorOptions(room, 2)[0];
                 if (door) best = { room, door, cost };
             }
@@ -606,8 +623,7 @@ export class MapGenerator {
     // A Floor 1 special room the player still can't reach gets its own door and ramp from the ground
     _linkFloor1SpecialRooms(safeRoom) {
         const center = this.getCenter(safeRoom);
-        for (const room of [this.floor1Rooms.eventRoom, this.floor1Rooms.treasureRoom]) {
-            if (!room) continue;
+        for (const room of this.floor1Specials) {
             const reach = this._reachFrom(center.x, center.z);
             let reachable = false;
             for (let z = room.z; z < room.z + room.h && !reachable; z++) {
@@ -777,7 +793,7 @@ export class MapGenerator {
     }
 
     _populate(layout) {
-        const { rooms, safeRoom, eventRoom, treasureRoom, doorCells } = layout;
+        const { rooms, safeRoom, specialRooms, doorCells } = layout;
         const playerStart = this._choosePlayerStart(safeRoom);
         const reach = this._reachFrom(playerStart.x, playerStart.z);
         const occupied = new Uint8Array(this.data.length);
@@ -807,17 +823,6 @@ export class MapGenerator {
                 x >= room.x && x < room.x + room.w && z >= room.z && z < room.z + room.h && usable({ x, z }, floor));
             return cell ? claim(cell) : null;
         };
-        const sentinelsAround = (center, count, offsets, floor, out) => {
-            if (!center) return;
-            let placed = 0;
-            for (let i = 0; i < offsets.length && placed < count; i++) {
-                const spot = { x: Math.floor(center.x) + offsets[i].x, z: Math.floor(center.z) + offsets[i].z };
-                if (usable(spot, floor)) {
-                    out.push(claim(spot));
-                    placed++;
-                }
-            }
-        };
         const pickSpots = (cells, count, floor, out) => {
             for (const c of [...cells].sort(() => 0.5 - Math.random())) {
                 if (out.length >= count) break;
@@ -826,44 +831,29 @@ export class MapGenerator {
         };
         claim(playerStart);
 
-        // Floor 0: event and treasure rooms, their guards, traps on doors and corridors
-        const eventSpawn = spawnIn(this.getExactCenter(eventRoom), 0, eventRoom);
-        const eventType = randomEventType();
-        const treasureSpawn = spawnIn(this.getExactCenter(treasureRoom), 0, treasureRoom);
+        // Special rooms: their reward at the centre (its guardian floats above it, see Game)
+        const specials = [];
+        const usedEvents = new Set();
+        const addSpecial = (room, floor) => {
+            const spawn = spawnIn(this.getExactCenter(room), floor, room);
+            if (!spawn) return;
+            const kind = room.type === 'treasure' ? 'treasure' : pickEventKind(usedEvents);
+            usedEvents.add(kind);
+            specials.push({ kind, floor, room: { x: room.x, z: room.z, w: room.w, h: room.h }, spawn });
+        };
+        specialRooms.forEach(room => addSpecial(room, 0));
+        this.floor1Specials.forEach(room => addSpecial(room, 1));
+        if (this.floor2Room) addSpecial(this.floor2Room, 2);
 
-        const sentinels = [];
-        sentinelsAround(treasureSpawn, 4, SENTINEL_OFFSETS_FLOOR0, 0, sentinels);
-        sentinelsAround(eventSpawn, 2, SENTINEL_OFFSETS_FLOOR0, 0, sentinels);
-
+        // Traps on Floor 0 doors and corridors
         const spikeTraps = [];
         pickSpots(doorCells, doorCells.length, 0, spikeTraps);
         const minTrapDistFromStart = 8;
         const corridorTraps = this.corridorCells.filter(c => Math.hypot(c.x - playerStart.x, c.z - playerStart.z) > minTrapDistFromStart);
         pickSpots(corridorTraps, spikeTraps.length + 4 + Math.floor(rooms.length * 0.7), 0, spikeTraps);
 
-        // Floor 1: a random spot inside each special room
-        const randomSpotIn = (room, floor) => {
-            if (!room) return null;
-            const cells = [];
-            for (let z = room.z; z < room.z + room.h; z++) {
-                for (let x = room.x; x < room.x + room.w; x++) if (usable({ x, z }, floor)) cells.push({ x, z });
-            }
-            return cells.length ? claim(cells[Math.floor(Math.random() * cells.length)]) : null;
-        };
-        const eventSpawnFloor1 = randomSpotIn(this.floor1Rooms.eventRoom, 1);
-        const treasureSpawnFloor1 = randomSpotIn(this.floor1Rooms.treasureRoom, 1);
-        const eventTypeFloor1 = randomEventType();
-
-        const sentinelsFloor1 = [];
-        sentinelsAround(treasureSpawnFloor1, 4, SENTINEL_OFFSETS_FLOOR1, 1, sentinelsFloor1);
-        sentinelsAround(eventSpawnFloor1, 2, SENTINEL_OFFSETS_FLOOR1, 1, sentinelsFloor1);
-
         const spikeTrapsFloor1 = [];
-        pickSpots(this.corridorCellsFloor1, 3 + Math.floor(this.floor1Rooms.count * 0.5), 1, spikeTrapsFloor1);
-
-        // Floor 2: the event at the centre of the room
-        const room2 = this.floor2Room;
-        const eventSpawnFloor2 = room2 ? spawnIn({ x: room2.x + room2.w / 2, z: room2.z + room2.h / 2 }, 2, room2) : null;
+        pickSpots(this.corridorCellsFloor1, 3 + Math.floor(this.floor1RoomCount * 0.5), 1, spikeTrapsFloor1);
 
         return {
             width: this.width,
@@ -875,31 +865,32 @@ export class MapGenerator {
             rooms,
             safeRoom,
             playerStart,
+            specials, // { kind: 'treasure' | 'altar' | 'shop' | 'fountain', floor, room, spawn }
             spikeTraps,
-            sentinels,
-            eventSpawn,
-            eventType,
-            treasureSpawn,
-            spikeTrapsFloor1,
-            sentinelsFloor1,
-            eventSpawnFloor1,
-            eventTypeFloor1,
-            treasureSpawnFloor1,
-            eventSpawnFloor2
+            spikeTrapsFloor1
         };
     }
 
     // ─── Rooms and corridors ─────────────────────────────────────────────────
+    // Room sides follow the map's: 4 to 7 cells on the smallest maps, 6 to 13 from 46 cells
+    _roomSizes() {
+        return [Math.min(6, Math.max(4, Math.floor(this.width / 6))), Math.min(13, Math.max(7, Math.floor(this.width / 3.5)))];
+    }
+
+    // Special rooms are isolated square chambers, centred on the room they replace. Their side
+    // follows the map's: 7 (treasure) and 6 (event) cells on the smallest maps, 11 and 8 from 33 cells.
+    _specialRect(room, type) {
+        const size = type === 'event' ? Math.min(8, Math.max(6, Math.floor(this.width / 4))) : Math.min(11, Math.max(7, Math.floor(this.width / 3)));
+        return {
+            x: Math.max(2, Math.min(this.width - size - 2, Math.floor(room.x + (room.w - size) / 2))),
+            z: Math.max(2, Math.min(this.height - size - 2, Math.floor(room.z + (room.h - size) / 2))),
+            w: size,
+            h: size
+        };
+    }
+
     _resizeSpecialRoom(room) {
-        if (!isSpecial(room)) return;
-        // Force special rooms to be isolated chambers of a fixed size
-        const size = room.type === 'event' ? 8 : 11;
-        const startX = Math.floor(room.x + (room.w - size) / 2);
-        const startZ = Math.floor(room.z + (room.h - size) / 2);
-        room.x = Math.max(2, Math.min(this.width - size - 2, startX));
-        room.z = Math.max(2, Math.min(this.height - size - 2, startZ));
-        room.w = size;
-        room.h = size;
+        if (isSpecial(room)) Object.assign(room, this._specialRect(room, room.type));
     }
 
     _placeRooms(count, minSize, maxSize, pickPosition) {
@@ -913,13 +904,20 @@ export class MapGenerator {
         return rooms;
     }
 
-    _assignRoomTypes(rooms, firstType = null) {
-        rooms.forEach((room, i) => {
-            if (i === 0 && firstType) room.type = firstType;
-            else if (i === rooms.length - 1) room.type = 'event';
-            else if (i === Math.floor(rooms.length / 2)) room.type = 'treasure';
-            else room.type = 'normal';
-        });
+    // The first room gets `firstType` (if any); `types` go to other rooms picked at random, as long as
+    // their chamber (wall ring included) stays clear of that first room and of the other chambers
+    _assignRoomTypes(rooms, types, firstType = null) {
+        rooms.forEach((room, i) => { room.type = i === 0 && firstType ? firstType : 'normal'; });
+        const taken = firstType && rooms.length ? [rooms[0]] : [];
+        const apart = (a, b) => a.x + a.w + 1 < b.x || b.x + b.w + 1 < a.x || a.z + a.h + 1 < b.z || b.z + b.h + 1 < a.z;
+        let next = 0;
+        for (const room of this._pickRandom(rooms.filter(r => r.type === 'normal'), rooms.length)) {
+            if (next === types.length) break;
+            const rect = this._specialRect(room, types[next]);
+            if (!taken.every(other => apart(rect, other))) continue;
+            room.type = types[next++];
+            taken.push(rect);
+        }
     }
 
     _connectRooms(rooms, carveRoom, grid, cells) {
@@ -1142,6 +1140,7 @@ export class MapGenerator {
             rooms: [room],
             safeRoom: room,
             isArena: true,
+            specials: [],
             bossSpawn: { x: cx, z: cz }
         };
     }

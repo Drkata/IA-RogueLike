@@ -4,22 +4,57 @@ import { Enemy } from './Enemy.js';
 import { FloatingText } from './FloatingText.js';
 import { PALETTE } from '../core/Palette.js';
 import { soundManager } from '../systems/SoundManager.js';
+import { TextureGenerator } from '../systems/TextureGenerator.js';
+
+/*
+ * The colossal Sentinel: a giant stone eye in three spiked rings (see ART_DIRECTION.md « Boss »).
+ *
+ * It attacks one move at a time, in a fixed cycle a player can learn. Every move is announced:
+ * the eye and the rings' runes take the move's colour, a sound starts, and three rising ticks
+ * count down to the hit (it lands on the fourth beat). A hint is shown the first time. After its
+ * big moves the boss crashes to the ground, stunned: it can then be hit with the staff and
+ * takes double damage.
+ *
+ * A move is a timeline of beats, [seconds from its start, action or null]; the last beat ends it.
+ */
+
+const HOVER_Y = 12;
+const STUNNED_Y = 4.2; // The eye (radius 4) resting just above the ground: in staff reach
+const EYE_RADIUS = 4;
+const SHOT_Y = 1.0; // Waves and spiral shots fly waist high: a jump clears them
+const STUN_DAMAGE = 2; // Damage multiplier while stunned
+const STUNNED_SOLID_RADIUS = 3.4; // Width of the eye at the player's height when it lies on the ground
+
+const CYCLE = ['nova', 'spiral', 'stun', 'nova', 'meteors', 'stun', 'summon', 'nova'];
+const COLORS = {
+    idle: PALETTE.ember,
+    nova: PALETTE.hexBright,
+    spiral: PALETTE.emberBright,
+    meteors: PALETTE.ember,
+    summon: PALETTE.hex,
+    stun: PALETTE.vellum
+};
+const HINTS = {
+    nova: "Vague d'énergie : sautez au 4e signal, quand elle arrive sur vous",
+    spiral: 'Tourbillon : reculez et sautez par-dessus les tirs',
+    meteors: 'Pluie de météores : sortez des cercles avant qu’ils soient pleins',
+    summon: 'Le boss appelle des renforts : les portails violets'
+};
 
 const _dir = new THREE.Vector3();
 const _spawnPos = new THREE.Vector3();
-
-const MISSILE_COUNT = 50;
-const MISSILE_INTERVAL = 0.15; // Seconds between two meteors of a rain
+const _color = new THREE.Color();
+const _target = new THREE.Color();
 
 export class BossSentinel {
     static idCounter = 1000; // Start high to avoid conflict with minions
-    static laserGeometry = new THREE.SphereGeometry(0.2, 8, 8);
+    static orbGeometry = new THREE.SphereGeometry(0.2, 8, 8);
 
     static getHP(level) {
         return level * 100; // Level 10 = 1000 HP
     }
 
-    static getLaserDamage(level) {
+    static getNovaDamage(level) {
         return 10 + level;
     }
 
@@ -27,103 +62,172 @@ export class BossSentinel {
         return 7 + level;
     }
 
-    static getMissileDamage(level) {
+    static getMeteorDamage(level) {
         return 20 + (level * 1.5);
     }
 
     constructor(position, levelManager, entityManager, level) {
         this.id = BossSentinel.idCounter++;
         this.position = position.clone();
-        this.position.y = 12; // Floating high above the arena
+        this.position.y = HOVER_Y;
         this.levelManager = levelManager;
         this.entityManager = entityManager;
         this.level = level;
+        this.entityType = 'enemy'; // Fix for minified builds
 
         this.isDead = false;
         this.maxHealth = BossSentinel.getHP(level);
         this.health = this.maxHealth;
-        this.radius = 6.0; // Huge hitbox
-        this.entityType = 'enemy'; // Fix for minified builds
+        this.radius = EYE_RADIUS + 0.5; // Hitbox for shots and the staff
 
-        this.mesh = this.createMesh();
+        // Every 10 boss levels: faster shots, shorter warnings and rests, more of everything
+        this.tier = Math.max(1, Math.floor(level / 10));
+        this.speedMult = 1 + this.tier * 0.05;
+        this.tell = Math.max(0.9, 1.5 - 0.15 * (this.tier - 1)); // Warning before a move lands
+        this.rest = Math.max(1.0, 2.0 - 0.25 * (this.tier - 1)); // Pause after a move
+
+        this.disposables = [];
+        this.mesh = this._buildMesh();
         this.mesh.position.copy(this.position);
         this.mesh.userData.entity = this;
 
-        this.targetPlayer = null;
+        // Solid only while it lies on the ground (height 0 = not solid)
+        this.solid = levelManager.addSolidProp(new THREE.Vector3(position.x, 0, position.z), STUNNED_SOLID_RADIUS, 0);
 
-        // Independent cooldowns (combos)
-        this.cooldowns = {
-            missile: 2.0,
-            summon: 5.0,
-            spiral: 10.0,
-            laser: 0.4
-        };
-
-        // Blocking state (only for full-body animations like Spiral)
+        this.player = null;
+        this.step = 0;
+        this.clock = 0;
+        // Roar on arrival (first frame of play: the arena is built behind the upgrade menu), then a grace period
+        this.beats = [[0, () => soundManager.play('bossRoar')], [3, null]];
+        this.charge = null; // { color, start, end }: the eye lights up towards the move's colour
+        this.hinted = new Set();
+        this.targetY = HOVER_Y;
+        this.stunned = false;
+        this.spinDir = 1;
+        this.spiralAngle = 0;
         this.isSpiraling = false;
-        this.spiralTimer = 0;
-        this.spiralShotTimer = 0;
-        this.spiralDirection = 1;
-        this.spiralDirTimer = 0;
-        this.globalCooldown = 0; // Pause between attacks
-
-        // Meteor rain in progress (spawned over time by update, so it pauses with the game)
-        this.pendingMissiles = 0;
-        this.missileTimer = 0;
-
-        // Projectiles get faster every 10 levels (+5% per tier)
-        this.speedMult = 1 + Math.max(1, Math.floor(level / 10)) * 0.05;
+        this.flash = 0;
 
         this.healthContainer = document.getElementById('boss-health-container');
         this.healthBar = document.getElementById('boss-health-bar');
         this.healthText = document.getElementById('boss-health-text');
         if (this.healthContainer) this.healthContainer.hidden = false;
-        soundManager.play('bossRoar');
         this.updateHealthBar();
     }
 
-    createMesh() {
+    // ─── Look ────────────────────────────────────────────────────────────────
+
+    _buildMesh() {
+        const keep = (thing) => (this.disposables.push(thing), thing);
+        const stone = keep(new THREE.MeshStandardMaterial({ color: 0x2e2a2e, roughness: 0.65, metalness: 0.15 }));
+        this.irisMat = keep(new THREE.MeshStandardMaterial({ color: PALETTE.ember, emissive: PALETTE.ember, emissiveIntensity: 0.8, roughness: 0.25 }));
+        this.runeMat = keep(new THREE.MeshStandardMaterial({ color: 0x120c10, emissive: PALETTE.ember, emissiveIntensity: 1.2 }));
+        const pupilMat = keep(new THREE.MeshStandardMaterial({ color: 0x080506, roughness: 0.4 }));
+        const mesh = (geometry, material) => new THREE.Mesh(keep(geometry), material);
         const group = new THREE.Group();
 
-        // Central Eye (Core)
-        this.core = new THREE.Mesh(
-            new THREE.SphereGeometry(4.5, 32, 32),
-            new THREE.MeshStandardMaterial({ color: PALETTE.ember, emissive: PALETTE.ember, emissiveIntensity: 0.6, roughness: 0.25, metalness: 0.3 })
-        );
-        group.add(this.core);
+        // The eye, turned to the player: stone ball, glowing iris cap and a vertical slit pupil on +z
+        this.eye = new THREE.Group();
+        this.eye.add(mesh(new THREE.SphereGeometry(EYE_RADIUS, 48, 32), stone));
+        this.eye.add(mesh(new THREE.SphereGeometry(EYE_RADIUS + 0.03, 48, 12, 0, Math.PI * 2, 0, 0.55).rotateX(Math.PI / 2), this.irisMat));
+        this.pupil = mesh(new THREE.SphereGeometry(EYE_RADIUS + 0.06, 8, 12, Math.PI / 2 - 0.1, 0.2, Math.PI / 2 - 0.45, 0.9), pupilMat);
+        this.eye.add(this.pupil);
+        group.add(this.eye);
 
-        // Outer Rings (Shields)
-        const ringGeo = new THREE.TorusGeometry(7.5, 0.6, 16, 100);
-        const ringMat = new THREE.MeshStandardMaterial({ color: 0x5a5048, roughness: 0.4, metalness: 0.8 });
-        this.ring1 = new THREE.Mesh(ringGeo, ringMat);
-        this.ring2 = new THREE.Mesh(ringGeo, ringMat);
-        this.ring2.rotation.x = Math.PI / 2;
-        group.add(this.ring1);
-        group.add(this.ring2);
+        // Three rings turning like a gyroscope, studded with runes; the outer one bristles with spikes
+        const studGeo = keep(new THREE.BoxGeometry(0.6, 0.6, 0.6));
+        const spikeGeo = keep(new THREE.ConeGeometry(0.3, 1.6, 6));
+        this.rings = [[6.0, 0.35], [7.2, 0.3], [8.4, 0.25]].map(([radius, tube], k) => {
+            const ring = mesh(new THREE.TorusGeometry(radius, tube, 10, 96), stone);
+            for (let i = 0; i < 8; i++) {
+                const a = (i / 8) * Math.PI * 2 + k * 0.4;
+                const part = new THREE.Mesh(k === 2 && i % 2 ? spikeGeo : studGeo, k === 2 && i % 2 ? stone : this.runeMat);
+                part.position.set(Math.cos(a) * radius, Math.sin(a) * radius, 0);
+                part.rotation.z = a - Math.PI / 2; // Spikes point outwards
+                if (k === 2 && i % 2) part.position.multiplyScalar(1 + 0.9 / radius);
+                ring.add(part);
+            }
+            ring.rotation.set(k * 1.1, k * 0.7, 0);
+            group.add(ring);
+            return ring;
+        });
 
-        // Base (Ground connection visual)
-        const base = new THREE.Mesh(
-            new THREE.CylinderGeometry(1.5, 6, 12, 16),
-            new THREE.MeshStandardMaterial({ color: PALETTE.ink, roughness: 0.8 })
-        );
-        base.position.y = -9;
-        group.add(base);
+        // Rocks in orbit
+        this.debris = new THREE.Group();
+        const rockGeo = keep(new THREE.DodecahedronGeometry(0.7, 0));
+        for (let i = 0; i < 8; i++) {
+            const a = (i / 8) * Math.PI * 2;
+            const rock = new THREE.Mesh(rockGeo, stone);
+            rock.position.set(Math.cos(a) * 10.5, Math.sin(i * 1.7) * 2, Math.sin(a) * 10.5);
+            rock.scale.setScalar(0.7 + (i % 3) * 0.3);
+            this.debris.add(rock);
+        }
+        group.add(this.debris);
 
+        // Aura in the colour of the coming move (a sprite: no light is added in the middle of a level)
+        this.auraMat = keep(new THREE.SpriteMaterial({
+            map: TextureGenerator.getGlowTexture(),
+            color: PALETTE.ember,
+            transparent: true,
+            opacity: 0.55,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        }));
+        const aura = new THREE.Sprite(this.auraMat);
+        aura.scale.setScalar(20);
+        group.add(aura);
         return group;
     }
 
+    // Eye colour, pupil, rings and height, every frame
+    _updateBody(dt) {
+        const time = performance.now() / 1000;
+        const c = this.charge;
+        const t = c ? Math.min(1, (this.clock - c.start) / Math.max(0.01, c.end - c.start)) : 0;
+        _color.setHex(COLORS.idle).lerp(_target.setHex(c ? c.color : COLORS.idle), t);
+        let glow = 0.8 + 2.2 * t;
+        if (this.stunned) glow = 0.3 + 0.25 * Math.max(0, Math.sin(time * 9)); // Dazed flicker
+        if (this.flash > 0) {
+            this.flash -= dt;
+            _color.setHex(PALETTE.vellum);
+            glow = 3;
+        }
+        this.irisMat.emissive.copy(_color);
+        this.irisMat.color.copy(_color);
+        this.irisMat.emissiveIntensity = glow;
+        this.runeMat.emissive.copy(_color);
+        this.runeMat.emissiveIntensity = 0.6 + glow * 0.6;
+        this.auraMat.color.copy(_color);
+        this.auraMat.opacity = this.stunned ? 0.15 : 0.35 + 0.25 * t;
+        this.pupil.scale.x = this.stunned ? 2.2 : 1 - 0.6 * t; // Narrows as it takes aim, wide when dazed
+
+        // Rings and rocks slow down to a crawl when stunned
+        const speed = this.stunned ? 0.15 : 1 + 2 * t;
+        this.rings[0].rotation.y += dt * 0.5 * speed;
+        this.rings[1].rotation.x += dt * 0.4 * speed;
+        this.rings[2].rotation.z -= dt * 0.3 * speed;
+        this.debris.rotation.y += dt * 0.25 * speed;
+
+        // Height: falls fast, rises slowly
+        this.position.y += (this.targetY - this.position.y) * Math.min(1, dt * (this.targetY < this.position.y ? 7 : 2.5));
+        this.mesh.position.copy(this.position);
+        this.solid.height = this.position.y < HOVER_Y * 0.6 ? 2 * STUNNED_Y : 0;
+
+        if (this.isSpiraling) this.mesh.rotation.set(0, this.spiralAngle, 0);
+        else if (this.stunned) this.mesh.rotation.x += (0.5 - this.mesh.rotation.x) * Math.min(1, dt * 3); // Slumps forward
+        else if (this.player) this.mesh.lookAt(this.player.position);
+    }
+
+    // ─── Damage ──────────────────────────────────────────────────────────────
+
     takeDamage(amount, isCritical = false) {
         if (this.isDead) return false;
+        if (this.stunned) amount *= STUN_DAMAGE;
 
         this.health -= amount;
         this.updateHealthBar();
         FloatingText.spawnDamage(this.entityManager, this.position, 5.0, amount, isCritical, isCritical ? 5.0 : 4.0);
-
-        // Flash effect
-        this.core.material.emissive.setHex(PALETTE.vellum);
-        setTimeout(() => {
-            if (!this.isDead) this.core.material.emissive.setHex(PALETTE.ember);
-        }, 50);
+        this.flash = 0.06;
 
         if (this.health <= 0) {
             this.die();
@@ -145,65 +249,50 @@ export class BossSentinel {
         this.isDead = true;
         soundManager.play('bossRoar');
         this.mesh.visible = false;
-        this.pendingMissiles = 0;
+        this.beats = [];
+        this.solid.height = 0;
         if (this.healthContainer) this.healthContainer.hidden = true;
         this.entityManager.createExplosion(this.position, 0); // Visual only
     }
 
+    dispose() {
+        this.disposables.forEach(d => d.dispose());
+    }
+
+    // ─── Moves ───────────────────────────────────────────────────────────────
+
     update(dt, player) {
         if (this.isDead) return;
-        this.targetPlayer = player;
+        this.player = player;
 
-        // Rotate Rings (Always active)
-        this.ring1.rotation.y += dt * 0.5;
-        this.ring1.rotation.x += dt * 0.2;
-        this.ring2.rotation.y -= dt * 0.3;
-        this.ring2.rotation.z += dt * 0.4;
-
-        this._updateMissileRain(dt);
-
-        // 1. Spiral is a blocking state
-        if (this.isSpiraling) {
-            this.updateSpiral(dt);
-            this.spiralTimer -= dt;
-            if (this.spiralTimer <= 0) {
-                this.isSpiraling = false;
-                this.cooldowns.spiral = 15.0;
-                this.globalCooldown = 3.0;
-            }
-            return;
+        this.clock += dt;
+        while (this.beats.length && this.beats[0][0] <= this.clock) {
+            const action = this.beats.shift()[1];
+            if (action) action();
         }
+        if (!this.beats.length) this._nextMove();
+        this._updateBody(dt);
+    }
 
-        // 2. Look at Player
-        this.mesh.lookAt(player.position);
+    _nextMove() {
+        const kind = CYCLE[this.step++ % CYCLE.length];
+        this.clock = 0;
+        this.charge = null;
+        const beats = { nova: this._novaBeats, spiral: this._spiralBeats, meteors: this._meteorBeats, summon: this._summonBeats, stun: this._stunBeats }[kind].call(this);
+        this.beats = beats.sort((a, b) => a[0] - b[0]);
+    }
 
-        // Pause between attacks
-        if (this.globalCooldown > 0) {
-            this.globalCooldown -= dt;
-            return;
-        }
+    // The eye turns to the move's colour over the warning; the first time, a hint says what to do
+    _announce(kind) {
+        this.charge = { color: COLORS[kind], start: this.clock, end: this.clock + this.tell };
+        if (this.hinted.has(kind) || !this.player.hudManager) return;
+        this.hinted.add(kind);
+        this.player.hudManager.showMessage(HINTS[kind]);
+    }
 
-        // 3. Independent cooldowns (combos)
-        for (const key in this.cooldowns) this.cooldowns[key] -= dt;
-
-        if (this.cooldowns.spiral <= 0) {
-            this.isSpiraling = true;
-            soundManager.play('bossSpiral', this.position);
-            this.spiralTimer = 4.0;
-        } else if (this.cooldowns.missile <= 0) {
-            this.fireMissiles();
-            this.cooldowns.missile = 6.0;
-            this.globalCooldown = 2.0;
-        } else if (this.cooldowns.summon <= 0) {
-            this.summonMinions();
-            this.cooldowns.summon = 20.0;
-            this.globalCooldown = 4.0; // Long pause to kill the minions
-        } else if (this.cooldowns.laser <= 0) {
-            // Default attack: laser sweep (area denial)
-            this.fireLaserSweep();
-            this.cooldowns.laser = 1.5;
-            this.globalCooldown = 1.0;
-        }
+    // Three rising ticks, the last one 0.3 s before `at`: the hit lands on the fourth beat
+    _countdown(beats, at) {
+        [0.9, 0.6, 0.3].forEach((before, i) => beats.push([at - before, () => soundManager.play('bossTick', null, 1 + i * 0.22)]));
     }
 
     _fire(origin, direction, speed, damage, sourceName, options = {}) {
@@ -217,108 +306,161 @@ export class BossSentinel {
         return proj;
     }
 
-    // 360° nova of glowing balls at player height
-    fireLaserSweep() {
-        soundManager.play('bossLaser', this.position);
-        _dir.subVectors(this.targetPlayer.position, this.position);
-        const startAngle = Math.atan2(_dir.x, _dir.z) - Math.PI;
-
-        const projectileCount = 120;
-        for (let i = 0; i < projectileCount; i++) {
-            const angle = startAngle + (Math.PI * 2 * i) / (projectileCount - 1);
-            _dir.set(Math.sin(angle), (Math.random() - 0.5) * 0.05, Math.cos(angle)).normalize();
-            _spawnPos.set(this.position.x, 1.5, this.position.z);
-
-            const proj = this._fire(_spawnPos, _dir, 35 * this.speedMult, BossSentinel.getLaserDamage(this.level), "Boss: Laser Sweep", { color: PALETTE.hexBright });
-            proj.mesh.geometry = BossSentinel.laserGeometry;
+    // Energy wave: a full ring of orbs at waist height, one more wave per 10 boss levels (up to 3)
+    _novaBeats() {
+        const at = this.tell;
+        const waves = Math.min(3, this.tier);
+        const gap = 1.1;
+        const beats = [
+            [0, () => this._announce('nova')],
+            [Math.max(0, at - 0.62), () => soundManager.play('bossCharge')] // 0.62 s: the charge swells up to the release
+        ];
+        this._countdown(beats, at);
+        for (let w = 0; w < waves; w++) {
+            if (w > 0) beats.push([at + w * gap - 0.3, () => soundManager.play('bossTick', null, 1.44)]);
+            beats.push([at + w * gap, () => this._fireNova()]);
         }
+        beats.push([at + (waves - 1) * gap + this.rest, null]);
+        return beats;
     }
 
-    // Bullet hell: spin fast and fire rings of shots, flipping direction every 1.5s
-    updateSpiral(dt) {
-        this.spiralDirTimer += dt;
-        if (this.spiralDirTimer >= 1.5) {
-            this.spiralDirection *= -1;
-            this.spiralDirTimer = 0;
-        }
-        this.mesh.rotation.y += dt * 8.0 * this.spiralDirection;
-
-        this.spiralShotTimer -= dt;
-        if (this.spiralShotTimer > 0) return;
-        this.spiralShotTimer = 0.1; // 10 rings per second
-
-        const angleCount = 20;
-        for (let i = 0; i < angleCount; i++) {
-            const angle = (i / angleCount) * Math.PI * 2 + this.mesh.rotation.y;
+    _fireNova() {
+        soundManager.play('bossLaser');
+        const count = 96; // Gaps narrower than the player: jumping is the answer
+        for (let i = 0; i < count; i++) {
+            const angle = (i / count) * Math.PI * 2;
             _dir.set(Math.sin(angle), 0, Math.cos(angle));
-            _spawnPos.set(this.position.x, 1.0, this.position.z); // Waist level
-
-            const proj = this._fire(_spawnPos, _dir, 15 * this.speedMult, BossSentinel.getSpiralDamage(this.level), "Boss: Spiral");
-            proj.mesh.scale.setScalar(0.8);
+            _spawnPos.set(this.position.x, SHOT_Y, this.position.z);
+            const proj = this._fire(_spawnPos, _dir, 22 * this.speedMult, BossSentinel.getNovaDamage(this.level), "Boss : vague d'énergie", { color: PALETTE.hexBright, radius: 0.5 });
+            proj.mesh.geometry = BossSentinel.orbGeometry;
         }
     }
 
-    fireMissiles() {
-        this.pendingMissiles = MISSILE_COUNT;
-        this.missileTimer = 0;
-    }
-
-    _updateMissileRain(dt) {
-        if (this.pendingMissiles <= 0) return;
-        this.missileTimer -= dt;
-        while (this.missileTimer <= 0 && this.pendingMissiles > 0) {
-            this.missileTimer += MISSILE_INTERVAL;
-            this.pendingMissiles--;
-            this._launchMissile();
+    // Spinning spiral of shots; the spin turns back every 2 s, announced by a tick
+    _spiralBeats() {
+        const at = this.tell;
+        const duration = 4;
+        const interval = 0.16;
+        const beats = [
+            [0, () => {
+                this._announce('spiral');
+                soundManager.play('bossSpiral');
+            }],
+            [at, () => { this.isSpiraling = true; }],
+            [at + duration, () => { this.isSpiraling = false; }],
+            [at + duration + this.rest, null]
+        ];
+        this._countdown(beats, at);
+        for (let t = 0; t < duration; t += interval) beats.push([at + t, () => this._spiralRing()]);
+        for (let t = 2; t < duration; t += 2) {
+            beats.push([at + t - 0.3, () => soundManager.play('bossTick', null, 1.2)], [at + t, () => { this.spinDir *= -1; }]);
         }
+        return beats;
     }
 
-    // Meteor falling on a random point of the arena (~40 unit radius), telegraphed on the ground
-    _launchMissile() {
+    _spiralRing() {
+        const arms = Math.min(16, 6 + 2 * this.tier); // 8 arms on the first boss
+        for (let i = 0; i < arms; i++) {
+            const angle = this.spiralAngle + (i / arms) * Math.PI * 2;
+            _dir.set(Math.sin(angle), 0, Math.cos(angle));
+            _spawnPos.set(this.position.x, SHOT_Y, this.position.z);
+            this._fire(_spawnPos, _dir, 13 * this.speedMult, BossSentinel.getSpiralDamage(this.level), 'Boss : tourbillon', { radius: 0.6 }).mesh.scale.setScalar(0.8);
+        }
+        this.spiralAngle += 0.19 * this.spinDir; // ≈ 1.2 rad/s: the arms curve visibly
+    }
+
+    // Meteor rain: each meteor's landing circle fills up until it hits; one in three falls on the player
+    _meteorBeats() {
+        const at = this.tell;
+        const count = Math.min(50, 20 + 10 * this.tier);
+        const interval = 0.2;
+        const beats = [[0, () => {
+            this._announce('meteors');
+            soundManager.play('bossRoar');
+        }]];
+        for (let i = 0; i < count; i++) beats.push([at + i * interval, () => this._launchMeteor(i % 3 === 0)]);
+        beats.push([at + count * interval + 2.2 + this.rest, null]);
+        return beats;
+    }
+
+    _launchMeteor(aimed) {
         const gravity = 20;
-        const flightTime = 2.0 / this.speedMult;
+        const flightTime = 2.2 / this.speedMult;
+        const radius = 3.0;
         const range = 40;
-
-        const targetPos = new THREE.Vector3(
-            this.position.x + (Math.random() - 0.5) * 2 * range,
-            0,
-            this.position.z + (Math.random() - 0.5) * 2 * range
-        );
-        this.entityManager.createTelegraph(targetPos, flightTime);
+        const target = aimed
+            ? new THREE.Vector3(this.player.position.x, 0, this.player.position.z)
+            : new THREE.Vector3(this.position.x + (Math.random() - 0.5) * 2 * range, 0, this.position.z + (Math.random() - 0.5) * 2 * range);
+        // The circle shows the real reach: hit radius + the player's 0.5 m
+        this.entityManager.createTelegraph(target, flightTime, radius + 0.5);
 
         // Ballistic launch velocity to land on target after flightTime
         _spawnPos.copy(this.position);
         _spawnPos.y += 5;
-        const velocity = _dir.subVectors(targetPos, _spawnPos);
+        const velocity = _dir.subVectors(target, _spawnPos);
         velocity.y = 0;
         const hSpeed = velocity.length() / flightTime;
         velocity.normalize().multiplyScalar(hSpeed);
-        velocity.y = (0.5 * gravity * flightTime * flightTime + (targetPos.y - _spawnPos.y)) / flightTime;
+        velocity.y = (0.5 * gravity * flightTime * flightTime + (target.y - _spawnPos.y)) / flightTime;
 
-        const proj = this._fire(_spawnPos, velocity, velocity.length(), BossSentinel.getMissileDamage(this.level), "Boss: Missile Rain", {
+        const proj = this._fire(_spawnPos, velocity, velocity.length(), BossSentinel.getMeteorDamage(this.level), 'Boss : pluie de météores', {
             gravity,
-            radius: 4.0,
+            radius,
             color: PALETTE.ember
         });
-        proj.mesh.scale.setScalar(4.0);
+        proj.mesh.scale.setScalar(radius);
     }
 
-    summonMinions() {
-        soundManager.play('bossRoar', this.position);
-        // Count doubles every 10 levels, capped at 30 for performance
-        const tier = Math.max(1, Math.floor(this.level / 10));
-        const count = Math.min(30, 10 * Math.pow(2, tier - 1));
-        // Wider ring for bigger groups to reduce clumping
-        const radius = Math.min(25, 10 + count * 0.5);
+    // Reinforcements: violet portals open where the minions will appear
+    _summonBeats() {
+        const at = this.tell + 0.5;
+        let spots = [];
+        return [
+            [0, () => {
+                this._announce('summon');
+                soundManager.play('bossSummon');
+                spots = this._summonSpots();
+                spots.forEach(p => this.entityManager.createTelegraph(p, at, 1.5, PALETTE.hex));
+            }],
+            [at, () => spots.forEach(p => this.entityManager.add(new Enemy(p, this.levelManager, this.entityManager, this.level)))],
+            [at + this.rest + 1, null]
+        ];
+    }
 
+    _summonSpots() {
+        // Count doubles every 10 levels, capped at 30 for performance
+        const count = Math.min(30, 10 * Math.pow(2, this.tier - 1));
+        const radius = Math.min(25, 10 + count * 0.5); // Wider ring for bigger groups
+        const spots = [];
         for (let i = 0; i < count; i++) {
             const angle = (i / count) * Math.PI * 2;
-            _spawnPos.set(this.position.x + Math.sin(angle) * radius, 0, this.position.z + Math.cos(angle) * radius);
-            _spawnPos.y = this.levelManager.getFloorHeight(_spawnPos.x, _spawnPos.z, 3.0);
-
-            if (!this.levelManager.isWall(_spawnPos.x, _spawnPos.z, _spawnPos.y)) {
-                this.entityManager.add(new Enemy(_spawnPos, this.levelManager, this.entityManager, this.level));
-            }
+            const p = new THREE.Vector3(this.position.x + Math.sin(angle) * radius, 0, this.position.z + Math.cos(angle) * radius);
+            p.y = this.levelManager.getFloorHeight(p.x, p.z, 3.0);
+            if (!this.levelManager.isWall(p.x, p.z, p.y)) spots.push(p);
         }
+        return spots;
+    }
+
+    // Exhausted: crashes to the ground, open to the staff (double damage), then roars and rises
+    _stunBeats() {
+        const fall = 0.8;
+        const stay = Math.max(3.5, 6 - 0.5 * (this.tier - 1));
+        const rise = 1.2;
+        return [
+            [0, () => {
+                this.stunned = true;
+                this.targetY = STUNNED_Y;
+                soundManager.play('shieldBreak');
+                this.player.hudManager?.showMessage('Le boss est à terre : frappez-le au bâton ! Dégâts ×2');
+            }],
+            [fall * 0.6, () => soundManager.play('bossSlam')],
+            [fall + stay - 0.8, () => soundManager.play('bossRoar')], // About to get up
+            [fall + stay, () => { this.targetY = HOVER_Y; }],
+            [fall + stay + rise, () => {
+                this.stunned = false;
+                this.mesh.rotation.x = 0;
+            }],
+            [fall + stay + rise + 0.5, null]
+        ];
     }
 }

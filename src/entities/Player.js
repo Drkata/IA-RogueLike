@@ -5,9 +5,10 @@ import { Projectile } from './Projectile.js';
 import { soundManager } from '../systems/SoundManager.js';
 import { PALETTE } from '../core/Palette.js';
 
-const EYE_HEIGHT = 1.6; // Player position is the camera, 1.6 above the feet
+export const EYE_HEIGHT = 1.6; // Player position is the camera, 1.6 above the feet
 const MAX_LEVEL = 10;
 const IMMOLATION_RANGE = 9; // Metres
+const STATS_REFRESH = 0.25; // s: the HUD stats ledger is costly to rebuild, so play refreshes it 4 times a second
 
 // Zero-allocation scratch vectors for the per-frame code
 const _forward = new THREE.Vector3();
@@ -67,7 +68,7 @@ export class Player {
         this.slowMultiplier = 1.0;
         this.slowTimer = 0;
         this.gold = 0;
-        this.magnetRange = 0; // No magnet until upgraded
+        this.magnetRange = this.getStatValue('magnet', 0); // Pickup range, raised by the Magnet upgrade
 
         this.isBerserk = false;
         this.berserkTimer = 0;
@@ -77,6 +78,7 @@ export class Player {
         this.sessionStats = newSessionStats();
         this.damageLog = []; // Death Recap Log
         this.isDeadCallbackTriggered = false;
+        this.statsRefresh = 0;
         this.MAX_LEVEL = MAX_LEVEL;
         this.resetPacts();
 
@@ -209,23 +211,11 @@ export class Player {
         this.updateHUD();
     }
 
-    // Damage and push back every enemy within 15m
-    triggerShockwave() {
-        this.entityManager.createShockwave(this.position);
-
-        for (const entity of this.entityManager.entities) {
-            if (entity.entityType !== 'enemy' || entity.isDead) continue;
-            if (this.position.distanceTo(entity.position) >= 15) continue;
-            entity.takeDamage(50);
-            if (entity.ai) entity.ai.knockback(entity.position.x - this.position.x, entity.position.z - this.position.z, 5);
-        }
-    }
-
-    updateHUD() {
+    updateHUD(withStats = true) {
         if (!this.hudManager) return;
         this.hudManager.updateHealth(this.health, this.maxHealth, this.shield);
         this.hudManager.updateAmmo(this.weapon.currentAmmo, this.weapon.reserveAmmo);
-        this.hudManager.updateStats(this);
+        if (withStats) this.hudManager.updateStats(this);
         this.hudManager.updateGold(this.gold);
         this.hudManager.updateBerserk(this.isBerserk, this.berserkTimer, this.berserkMaxDuration);
     }
@@ -266,7 +256,10 @@ export class Player {
             if (this.health <= 0) this._die();
         }
 
-        this.updateHUD();
+        this.statsRefresh -= dt;
+        const refreshStats = this.statsRefresh <= 0;
+        if (refreshStats) this.statsRefresh = STATS_REFRESH;
+        this.updateHUD(refreshStats);
     }
 
     // Burning ring: 2.5 damage per level every 0.5s to enemies within IMMOLATION_RANGE
@@ -491,7 +484,7 @@ export class Player {
         this.vampirism = this.getStatValue('vampirism', this.stats.vampirism) / 100 + this.pactVampirism;
         this.regen = this.getStatValue('regen', this.stats.regen);
         this.speed = CONSTANTS.PLAYER_SPEED * (this.getStatValue('speed', this.stats.speed) / 100) * this.pactSpeedMultiplier;
-        this.magnetRange = this.getStatValue('magnet', this.stats.magnet); // Pickups fly to the player within this range
+        this.magnetRange = this.getStatValue('magnet', this.stats.magnet); // Pickups beyond 1 m fly to the player within this range
 
         this.updateHUD();
     }
@@ -506,7 +499,7 @@ export class Player {
             case 'speed': return (1 + level * 0.08) * 100; // +8% per level
             case 'meleeDamage': return 10 + level * 15;
             case 'immolation': return level * 5; // Damage per second
-            case 'magnet': return level > 0 ? 1.5 + level * 0.85 : 0; // Metres: 2.35 m at level 1, 10 m at level 10
+            case 'magnet': return 1 + level * 0.9; // Pickup range in metres: 1 m without the upgrade, 10 m at level 10
             default: return 0;
         }
     }

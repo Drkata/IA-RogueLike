@@ -30,7 +30,7 @@ Source unique côté 3D : `src/core/Palette.js`. Côté interface : les variable
 
 | Rôle | JS `PALETTE.` | CSS | Hex | Sens et usages |
 |---|---|---|---|---|
-| Encre | `ink` | `--ink` | `#17121f` | Fonds de panneaux, socle du boss, fond des barres de vie |
+| Encre | `ink` | `--ink` | `#17121f` | Fonds de panneaux, fond des barres de vie |
 | Vélin | `vellum` | `--vellum` | `#ece3cc` | Texte, chiffres de dégâts normaux, flash du boss touché |
 | Dorure | `gilt` / `giltBright` | `--gilt` / `--gilt-bright` | `#c8a24e` / `#e6c983` | Or, rangs, trésor, marchand, flash d'impact |
 | Braise | `ember` / `emberBright` | `--ember` / `--ember-bright` | `#c93d27` / `#ff7a52` | Vie, danger, tirs ennemis, yeux des ennemis, feu, boss |
@@ -42,7 +42,7 @@ Couleurs hors palette autorisées, et seulement là :
 - les teintes des matériaux de biome (dans `TextureGenerator.js`) ;
 - le corps des ennemis (`BODY_COLORS` dans `EnemyMesh.js`) ;
 - les lumières des thèmes (section 7) ;
-- les métaux et bois neutres (piège, coffre, bâton).
+- les métaux, bois, pierres et toiles neutres (piège, coffre, bâton, mobilier des salles spéciales).
 
 ## 4. Interface (HUD et menus)
 
@@ -87,9 +87,21 @@ Fichiers : `src/systems/themes/*Theme.js`, enregistrés dans `ThemeManager.js`.
 | Grotte profonde (`cave`) | Roche stratifiée, fissures, veines de cristal lumineuses | Roche, gravier, éclats de cristal lumineux | Voûte noire, lueurs de cristaux | Lumière froide des cristaux | `#0d0e18` | `#8fb0ff` |
 | Base démoniaque (`hell`) | Basalte fendu de lave | Dalles de basalte, veines de lave | Lune de sang, braises, crête volcanique | Lune de sang | `#2a0a08` | `#ff5a1a` |
 
-**Salles spéciales**, identiques dans tous les biomes :
-- **Salle d'événement** : obsidienne violette gravée d'un cercle runique lumineux (4 variantes) et pentacle lumineux au sol (décalque).
-- **Salle au trésor** : lambris de noyer dans des cadres dorés, avec un médaillon gravé d'une étoile.
+**Salles spéciales** (sanctuaires) : bâties dans la pierre du biome, elles se reconnaissent à **une seule couleur magique, celle de leur contenu** (`SHRINE_COLORS` dans `Palette.js`) :
+
+| Contenu | Couleur | Objet central |
+|---|---|---|
+| Trésor | `giltBright` | Coffre |
+| Marchand | `giltBright` | Échoppe |
+| Autel du Chaos | `hexBright` | Autel à cornes |
+| Fontaine de jouvence | `aetherBright` | Fontaine à deux vasques |
+
+- **Murs** : chaque mur de l'anneau de la salle, à son étage seulement, porte une **frise de runes** gravée entre 2,1 et 2,5 m. Elle est lumineuse dans la couleur du contenu et visible aussi depuis les couloirs.
+- **Sol** : un **sceau** (cercle magique) dans la même couleur, différent pour chaque contenu, sous l'objet central.
+- **Colonne de lumière** : elle monte de l'objet central à 22 m, au-dessus des murs, pour qu'on trouve la salle de loin. Elle s'enfonce dans le sol quand l'objet est utilisé.
+- **Gardien** : un seul gros œil flottant au-dessus de l'objet central, au regard braise d'ennemi, relié à lui par un fil de lumière. Tant qu'il vit, la récompense est scellée (« Détruisez le gardien pour libérer la récompense ») ; sa destruction la libère (« Gardien détruit : la récompense est libérée »).
+- **Une fois utilisé**, l'objet central passe au gris en 1,2 s et sa lumière s'éteint.
+- **Quantité** : au plus 2 salles spéciales par niveau jusqu'au niveau 10, puis une de plus tous les 10 niveaux. Elles sont rares, donc elles doivent se voir.
 
 **Îles flottantes et ponts** : pierre = texture de mur du biome, dessus = texture de sol, runes = `accent`, lianes = `foliage`. Ils sont **solides** : les tirs rebondissent dessus, le joueur peut y monter. Une pièce plus fine que 20 cm (liane, chaîne) n'a pas de collision, et les cristaux non plus.
 
@@ -111,8 +123,8 @@ Tout est dans `src/systems/TextureGenerator.js`, peint pixel par pixel à partir
 - **Seedé obligatoire** : `seededRandom(seed)`, jamais `Math.random` dans un générateur de texture.
 - **Albédo moyen entre 0,20 et 0,50**, mesuré par `npm run preview:visuals`. Un biome sombre s'obtient par la couleur de ses matériaux, **pas en baissant la lumière** : l'exposition reste la même partout, pour que les ennemis et les objets gardent le même rendu.
 - **Conversion** : toujours `TextureGenerator.toTexture()` ou `toTextures()`, qui posent l'espace colorimétrique, la répétition et l'anisotropie. Une `CanvasTexture` couleur sans `colorSpace = SRGBColorSpace` paraît délavée.
-- **Matériaux** : `LevelManager` construit un `ThemeKit` par thème, avec 3 variantes de mur, 4 murs runiques, le mur du trésor, le sol, le ciel, le pentacle et les détails des îles. Il est réutilisé par tous les niveaux du thème : la génération (de l'ordre de la seconde mesurée en Node) n'a lieu qu'au changement de thème. Réglages : `roughness` 0,9 (murs) et 0,95 (sol), `metalness` 0, `bumpScale` 1, `emissiveIntensity` 1,5 (murs), 1,3 (runes) et 0,6 (trésor).
-- **Sol** : sa tuile est répétée par les UV, et une **carte d'ombres de contact** (`floorShadowCanvas`, utilisée comme `aoMap`) assombrit le pied des murs. Les pentacles sont des décalques posés par-dessus.
+- **Matériaux** : `LevelManager` construit un `ThemeKit` par thème, avec 3 variantes de mur, le mur à frise des salles spéciales (une texture, un matériau par couleur de contenu), le sol, le ciel, les 4 sceaux et les détails des îles. Il est réutilisé par tous les niveaux du thème : la génération (de l'ordre de la seconde mesurée en Node) n'a lieu qu'au changement de thème. Réglages : `roughness` 0,9 (murs) et 0,95 (sol), `metalness` 0, `bumpScale` 1, `emissiveIntensity` 1,5 (murs) et 1,4 (frise).
+- **Sol** : sa tuile est répétée par les UV, et une **carte d'ombres de contact** (`floorShadowCanvas`, utilisée comme `aoMap`) assombrit le pied des murs. Les sceaux des salles spéciales sont des décalques posés par-dessus.
 
 ## 7. Lumière
 
@@ -146,7 +158,7 @@ Si vous changez l'albédo d'une texture ou une valeur de lumière, **relancez la
 | Source | Intensité | Portée |
 |---|---|---|
 | Lumière de salle | 18 à 24 cd | 14 m |
-| Autel, boutique, fontaine | 8 cd | 6 m |
+| Autel, échoppe, fontaine | 8 cd, couleur du contenu | 6 m |
 | Orbe du bâton | 2 cd au repos, jusqu'à 27 cd au tir | 3 à 6 m |
 
 Sous 5 cd, une `PointLight` est quasi invisible.
@@ -154,6 +166,7 @@ Sous 5 cd, une `PointLight` est quasi invisible.
 **À respecter :**
 - **Pas d'`AmbientLight`.**
 - **Ne pas ajouter ni retirer de `PointLight` en cours de niveau** : cela recompile tous les shaders et provoque un gel. Pour une lueur, utiliser un sprite additif avec `TextureGenerator.getGlowTexture()`. Pour éteindre une lumière, mettre `intensity = 0`.
+- **Le nombre de `PointLight` ne change pas non plus d'un niveau à l'autre** : salles et objets centraux des salles spéciales empruntent leurs lumières à un lot fixe de 8 (`LevelManager.takeLight`, éteintes à chaque niveau). Chaque salle spéciale a la sienne ; les salles ordinaires se partagent le reste. Ne pas créer de `new THREE.PointLight` ailleurs.
 
 ## 8. Entités et effets
 
@@ -162,23 +175,25 @@ Sous 5 cd, une `PointLight` est quasi invisible.
 | Bâton du joueur | Bâton de bois, tête dorée, orbe | Orbe par paliers d'amélioration : éther, sauge, givre `#7fb0ff`, maléfice, maléfice clair, dorure | `Weapon.js`, `ORB_TIERS` |
 | Tirs du joueur | Cristal et halo additif | `aetherBright` ; critique `hexBright` ; explosif `emberBright` | `Projectile.js`, choix automatique |
 | Tirs ennemis | Idem | `emberBright` | Laser du boss `hexBright` (sphères), météores `ember` |
-| Tirs des tourelles | Orbe à tête chercheuse | `hexBright` | Distinct des tirs de sbires |
+| Tirs des gardiens | Orbe lent | `hexBright` | Distinct des tirs de sbires |
 | Ennemis | Humanoïdes de primitives, fusionnés en un mesh | Corps : 8 teintes sourdes (`BODY_COLORS`), ombrées par partie | Yeux `emberBright`, ou `hexBright` à partir du niveau 7 (élites) ; armure (niveau 4+) = plastron sombre |
-| Tourelles (sentinelles) | Piédestal de pierre, anneau, œil | Œil et halo `hex` | |
-| Boss | Noyau, deux anneaux, socle | Noyau `ember`, émissif ; anneaux métal sombre ; socle `ink` | Flash `vellum` quand il est touché |
+| Gardien de salle spéciale (`MagicalSentinel`) | Gros œil de pierre sombre (1,7 m d'envergure avec ses anneaux) flottant à 2,8 m au-dessus de la récompense : iris braise et pupille fendue qui suivent le joueur, deux anneaux en gyroscope dont un hérissé de pointes, fil de lumière vers la récompense, barre de vie toujours visible | Iris, halo et fil `ember`/`emberBright` (regard d'ennemi, couleur qu'aucune récompense n'utilise), pierre `#3a3538` | Un seul par salle ; l'œil reste sous le haut des murs (2,9 m) pour que les murs bloquent sa vue, ses anneaux au-dessus de la plus haute récompense (auvent du marchand, 2,1 m). Grossit un instant quand il est touché |
+| Boss (Sentinelle colossale) | Œil de pierre de 8 m (iris et pupille fendue qui suivent le joueur), trois anneaux en gyroscope cloutés de runes et hérissés de pointes, rochers en orbite, halo | Pierre `#2e2a2e` ; iris, runes et halo dans la **couleur de l'attaque qui se prépare** : braise au repos, `hexBright` vague d'énergie, `emberBright` tourbillon, `ember` météores, `hex` renforts | La couleur monte pendant l'annonce et la pupille se plisse ; à terre, iris éteint qui vacille et pupille dilatée ; flash `vellum` quand il est touché. Pas de `PointLight` (un sprite de halo) |
 | Potion de vie | Fiole | `ember` | Halo `emberBright` |
 | Mana | Cristal allongé | `aether` | Halo `aetherBright` |
 | Or | Pièce debout | `gilt`, métallique | Halo `giltBright` |
 | Amélioration | Rune (icosaèdre) | `hex` | Halo `hexBright` |
 | Objets attirés (amélioration Aimant) | Volent vers la poitrine du joueur en tournant vite | Celle de l'objet | Toujours visibles en vol, jamais téléportés |
-| Coffre | Bois, sangles et serrure dorées | Bois `#5a3a22`, ferrures `gilt` | Halo `giltBright`, pas de `PointLight` |
-| Autel du Chaos | Socle et cristal | `hex` | Grisé une fois utilisé |
-| Boutique | Comptoir et cristal | `gilt` | Passe au gris une fois utilisée |
-| Fontaine | Vasque, eau | `aether` | Eau terne une fois utilisée |
+| Coffre | Bois, sangles et serrure dorées | Bois `#5a3a22`, ferrures `gilt` | Halo `giltBright` et colonne de lumière, pas de `PointLight` |
+| Autel du Chaos | Deux marches octogonales, autel à cornes, cristal flottant entouré d'éclats et d'un anneau de runes | Pierre `#3a3640`, magie `hex` | `MagicAltar.js` |
+| Échoppe du marchand | Comptoir en bois sous un auvent de toile (sous 2,1 m, pour laisser la place au gardien), fioles et piles de pièces, lanterne qui se balance | Bois, toile `#3b2a45`, ferrures et lanterne `gilt` | `MagicalShop.js` |
+| Fontaine de jouvence | Bassin octogonal, colonne, vasque haute qui verse un rideau d'eau, orbe flottant | Pierre `#3a3640`, eau `aether` | `HealingFountain.js` |
+| Objets centraux des salles spéciales | Pièces communes dans `src/entities/Shrine.js` | Couleur du contenu | Solides, tournés d'un quart de tour au hasard ; grisés et colonne éteinte une fois utilisés |
 | Piège à pointes | Plaque et cônes | Métal neutre | |
 | Impact | Sphère qui s'étend | `giltBright` ; critique `hexBright` | Pool dans `EntityManager` |
-| Explosion, télégraphe | Sphère, anneau au sol | `emberBright`, `ember` | |
-| Onde de choc | Anneau | `aetherBright` | |
+| Explosion | Sphère | `emberBright` | |
+| Télégraphe (zone d'impact) | Cercle au sol dont le disque se remplit jusqu'à l'impact, fin rayon vertical | `ember` (danger), `hex` (portail de renforts) | Le rayon du cercle est la **portée réelle** du coup, jamais moins |
+| Onde de choc | Anneau au sol qui s'étend jusqu'à sa portée (19,5 m) | `aetherBright` | Libérée par une tourelle détruite (`EntityManager.shockwave`) |
 | Chiffres de dégâts | Texte | `vellum` ; critique `hexBright` (avec « ! ») ; constructions `emberBright` | `FloatingText.spawnDamage` |
 | Barres de vie ennemies | Plans | `sage` > 60 %, `giltBright` > 30 %, `emberBright` en dessous, `aetherBright` si bouclier | |
 | Aura d'immolation | Anneau au sol | `emberBright` | |
@@ -189,7 +204,7 @@ Sous 5 cd, une `PointLight` est quasi invisible.
 
 - **Fichiers** : `public/sounds/sfx/*.mp3`, générés par `npm run build:sfx` (`scripts/build-sfx.mjs`). Le script télécharge les banques, prend pour chaque son un fichier précis, coupe le silence de début, limite la durée, passe en mono et normalise (RMS −20 dB, crêtes ≤ −2 dB). Crédits : `public/sounds/CREDITS.md`. Ne jamais déposer un son à la main : l'ajouter au script.
 - **Mixage** : uniquement dans le tableau `SFX` de `src/systems/SoundManager.js`. Pour chaque événement : variantes, volume, variation de hauteur aléatoire (±), nombre maximal de voix simultanées, vitesse de base. Les fichiers étant normalisés, le volume du tableau est le seul réglage de mixage.
-- **Jouer un son** : `soundManager.play('nom')` pour le joueur et l'interface, `soundManager.play('nom', position)` pour un son du monde. Avec une position, le son est spatialisé (HRTF) : plein volume à 4 m, moitié à 8 m. Les oreilles suivent la caméra (`updateListener`, à chaque frame).
+- **Jouer un son** : `soundManager.play('nom')` pour le joueur et l'interface, `soundManager.play('nom', position)` pour un son du monde. Avec une position, le son est spatialisé : plein volume à 4 m, moitié à 8 m. Les sons de menace (`PRECISE_PANNING` : tirs ennemis, tourelles, météores) utilisent le HRTF, qui situe aussi devant/derrière et la hauteur ; les autres, bien plus fréquents, un panoramique gauche/droite (`equalpower`), beaucoup moins coûteux. Les oreilles suivent la caméra (`updateListener`, à chaque frame).
 - **Anti-cacophonie** : un même son relancé à moins de 30 ms est ignoré, et chaque événement a un plafond de voix (4 impacts au plus, par exemple). Les variantes et la variation de hauteur évitent l'effet « mitraillette ».
 
 | Famille | Caractère | Événements |
@@ -199,7 +214,7 @@ Sous 5 cd, une `PointLight` est quasi invisible.
 | Bâton | Souffle, puis bois qui frappe | `melee`, `meleeHit` |
 | Ennemis | Feu sombre, grognements de bête | `enemyShoot`, `enemyDeath`, `shieldBreak` |
 | Tourelles | Cristal grave, pierre qui éclate | `towerShoot`, `towerDeath` |
-| Boss | Rugissements, magie lourde, roche | `bossRoar` (arrivée, invocation, mort), `bossLaser`, `bossSpiral`, `meteor` |
+| Boss | Rugissements, magie lourde, roche ; joués à pleine force, jamais atténués par la distance | `bossRoar` (arrivée, pluie, relevé, mort), `bossCharge` (le son de la vague à l'envers : il enfle jusqu'au tir), `bossTick` (compte à rebours : 3 tics de plus en plus aigus, le coup tombe sur le 4e temps), `bossLaser`, `bossSpiral`, `bossSummon`, `bossSlam` (chute à terre), `meteor` |
 | Trésor et commerce | Pièces, bois, cloches | `gold`, `chestOpen`, `shopOpen`, `purchase`, `upgrade` |
 | Sacré | Cloche, gong, eau | `altar`, `pact`, `fountain`, `health`, `mana` |
 | Pièges | Lames qui sortent | `spikes` |

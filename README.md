@@ -36,10 +36,12 @@ Armé de votre bâton magique entièrement améliorable, progressez de salle en 
 
 ### 👾 Ennemis & Boss
 * **🤖 Sentinelles Magiques** : Ennemis volants qui utilisent le pathfinding A* pour vous traquer et tirent des projectiles magiques.
-* **👑 Boss Sentinelle** : Tous les paliers majeurs, un **boss colossal flottant** apparaît dans une arène dédiée. Il dispose de **3 patterns d'attaque combinables** :
-  * 🔴 **Rayon Laser** — Faisceau continu de haute précision
-  * 🌀 **Tirs en Spirale** — Salves radiales en rotation
-  * 🚀 **Missiles guidés** — Projectiles à tête chercheuse
+* **👑 Sentinelle colossale** : tous les 10 niveaux, un **œil de pierre géant** vous attend dans une arène dédiée. Chaque attaque est annoncée par sa couleur, un son et un compte à rebours :
+  * 🌊 **Vague d'énergie** — un anneau d'orbes à hauteur de taille, à sauter au bon moment
+  * 🌀 **Tourbillon** — salves en spirale dont le sens s'inverse
+  * ☄️ **Pluie de météores** — des cercles au sol qui se remplissent jusqu'à l'impact
+  * 👹 **Renforts** — des sbires sortent de portails violets
+  * 💥 **À terre** — après ses grosses attaques, le boss s'écrase au sol : frappez-le au bâton, dégâts ×2
 
 ### 💰 Économie & Progression
 * **💰 Économie d'Or** : Récupérez l'or laissé par les monstres défaits ou caché dans les **Coffres au Trésor** disséminés dans le donjon.
@@ -133,7 +135,7 @@ IA-RogueLike/
     │   ├── EnemyAI.js                  # Intelligence artificielle — pathfinding A*, états, attaque
     │   ├── EnemyHealth.js              # Système de santé ennemi (barres de vie 3D)
     │   ├── EnemyMesh.js                # Rendu 3D des ennemis (mesh procédural)
-    │   ├── MagicalSentinel.js          # Sentinelle magique — ennemi volant avec IA et pathfinding
+    │   ├── MagicalSentinel.js          # Gardien des salles spéciales — œil flottant qui scelle la récompense
     │   ├── BossSentinel.js             # Boss colossal — 3 patterns d'attaque combinables
     │   ├── FloatingText.js             # Textes flottants animés (dégâts, critiques)
     │   ├── Pickup.js                   # Objets ramassables (or, soin, munitions)

@@ -42,7 +42,8 @@ export class FloatingText {
     static spawnDamage(entityManager, position, yOffset, amount, isCritical, size, color = css(PALETTE.vellum)) {
         _spawnPos.copy(position);
         _spawnPos.y += yOffset;
-        const text = amount.toFixed(1) + (isCritical ? '!' : '');
+        // Whole numbers: few distinct texts, so the cache hits instead of painting and uploading a canvas per hit
+        const text = Math.round(amount) + (isCritical ? '!' : '');
         entityManager.add(new FloatingText(_spawnPos, text, isCritical ? css(PALETTE.hexBright) : color, size));
     }
 

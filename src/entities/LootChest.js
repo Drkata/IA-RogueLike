@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { soundManager } from '../systems/SoundManager.js';
 import { TextureGenerator } from '../systems/TextureGenerator.js';
-import { PALETTE } from '../core/Palette.js';
+import { PALETTE, SHRINE_COLORS } from '../core/Palette.js';
+import { createBeacon, isSealed } from './Shrine.js';
 
 let shared = null; // Geometries/materials shared by every chest, created on first use
 
@@ -60,6 +61,7 @@ export class LootChest {
         glow.scale.set(3, 3, 3);
         glow.position.y = 0.5;
         this.mesh.add(glow);
+        this.mesh.add(createBeacon(SHRINE_COLORS.treasure)); // Seen from afar; goes with the chest
 
         this.floatOffset = Math.random() * Math.PI * 2;
     }
@@ -73,6 +75,7 @@ export class LootChest {
         const dx = this.player.position.x - this.mesh.position.x;
         const dz = this.player.position.z - this.mesh.position.z;
         const radiusSum = this.radius + this.player.radius;
+        if (isSealed(this, this.player, radiusSum + 0.5)) return;
         if (dx * dx + dz * dz < radiusSum * radiusSum && Math.abs(this.player.position.y - this.mesh.position.y) < 3.0) {
             this.pickup();
         }

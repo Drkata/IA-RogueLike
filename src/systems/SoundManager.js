@@ -26,9 +26,14 @@ const SFX = {
     towerShoot: [['tower-shoot-1', 'tower-shoot-2'], 0.55, 0.05, 3, 0.75],
     towerDeath: [['tower-death'], 1.0, 0.05, 2],
     // Boss
+    // Boss: every move is announced (BossSentinel), so these play at the listener, never faded by distance
     bossRoar: [['boss-roar-1', 'boss-roar-2', 'boss-roar-3'], 1.0, 0.04, 1],
     bossLaser: [['boss-laser'], 0.8, 0.04, 1],
     bossSpiral: [['boss-spiral'], 0.75, 0, 1],
+    bossCharge: [['boss-charge'], 0.9, 0, 1], // Swells up to the release of the energy wave
+    bossTick: [['tick'], 1.0, 0, 2], // Countdown, pitched up beat after beat
+    bossSummon: [['boss-summon'], 1.0, 0.03, 1, 0.85],
+    bossSlam: [['boss-slam'], 1.0, 0.03, 1, 0.7], // Crashing to the ground, stunned
     meteor: [['meteor-1', 'meteor-2', 'meteor-3'], 0.8, 0.1, 4],
     // World and items
     gold: [['gold-1', 'gold-2', 'gold-3'], 0.5, 0.05, 2],
@@ -52,6 +57,10 @@ const SFX = {
     levelClear: [['level-clear'], 0.7, 0, 1],
     gameOver: [['game-over'], 0.9, 0, 1]
 };
+
+// Threat warnings keep the precise HRTF panning (front/back, height). The others, far more frequent,
+// use equal-power panning: still left/right and distance, at a fraction of the CPU cost.
+const PRECISE_PANNING = new Set(['enemyShoot', 'towerShoot', 'meteor']);
 
 const SFX_VOLUME = 0.8;
 const MIN_GAP = 0.03; // Seconds: the same sound restarted faster than this just stacks into noise
@@ -96,11 +105,11 @@ export class SoundManager {
 
     /**
      * Plays a sound effect. With a `position` (THREE.Vector3) it comes from that point in the world;
-     * without, it plays at the listener (player, interface). Returns nothing; silently skipped
-     * while the file is loading or when too many copies already play.
+     * without, it plays at the listener (player, interface). `rate` > 1 plays it higher. Returns
+     * nothing; silently skipped while the file is loading or when too many copies already play.
      */
-    play(name, position = null) {
-        const [variants, volume, pitch, maxVoices, rate = 1] = SFX[name];
+    play(name, position = null, rate = 1) {
+        const [variants, volume, pitch, maxVoices, baseRate = 1] = SFX[name];
         const now = this.ctx.currentTime;
         if ((this.voices.get(name) || 0) >= maxVoices || now - (this.lastStart.get(name) ?? -1) < MIN_GAP) return;
         const buffer = this.buffers.get(variants[Math.floor(Math.random() * variants.length)]);
@@ -108,14 +117,14 @@ export class SoundManager {
 
         const source = this.ctx.createBufferSource();
         source.buffer = buffer;
-        source.playbackRate.value = rate * (1 + (Math.random() * 2 - 1) * pitch);
+        source.playbackRate.value = baseRate * rate * (1 + (Math.random() * 2 - 1) * pitch);
         const gain = this.ctx.createGain();
         gain.gain.value = volume;
         source.connect(gain);
 
         if (position) {
             const panner = this.ctx.createPanner();
-            panner.panningModel = 'HRTF';
+            panner.panningModel = PRECISE_PANNING.has(name) ? 'HRTF' : 'equalpower';
             panner.distanceModel = 'inverse';
             panner.refDistance = 4; // Full volume within 4 m, half at 8 m
             panner.maxDistance = 80;

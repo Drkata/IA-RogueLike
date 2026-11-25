@@ -1,16 +1,36 @@
 import { CONSTANTS } from '../core/Constants.js';
 import { cellTopHeight } from './MapGenerator.js';
 
-const SOLID_HEIGHT = 999; // Out-of-map cells
+const C = CONSTANTS.CELL_SIZE;
+const H = CONSTANTS.WALL_HEIGHT;
 
-// Neighbour order matters (tie-breaking): N, E, S, W, then diagonals.
-const NEIGHBOR_DIRS = [
-    [0, -1], [1, 0], [0, 1], [-1, 0],
-    [1, -1], [1, 1], [-1, 1], [-1, -1]
-];
+/*
+ * Enemy navigation over the level's height map (one walkable top per cell, see cellTopHeight).
+ * Between two orthogonal neighbours a move is:
+ *   - a walk  when the heights differ by less than STEP_HEIGHT (floors, ramps, wall tops);
+ *   - a jump  up to JUMP_UP higher or down to MAX_DROP lower (orthogonal only, never diagonal);
+ *   - impossible otherwise.
+ * A diagonal move is a walk between four cells all within STEP_HEIGHT of each other, so it never
+ * cuts the corner of a wall or of a drop. Jumps cost extra, so ramps are preferred when not much
+ * longer. The heuristic (octile) is admissible and consistent with these costs: paths are optimal
+ * and stable from one replanning to the next.
+ *
+ * findPath() returns waypoints { x, z, jump }: walk legs pulled tight (string pulling, checked
+ * for a body of BODY_RADIUS), and `jump: true` on a waypoint reached by jumping from the previous one.
+ */
 
-// ─── Min-Heap of (cell index, f) pairs ───────────────────────────────────────
-// Parallel number arrays: no per-node object allocation.
+export const STEP_HEIGHT = 2.0;
+export const JUMP_UP = H + 0.1;
+export const MAX_DROP = 2 * H + 0.1;
+const JUMP_COST = 3; // Extra cost of a jump up, in cells
+const DROP_COST = 1;
+const BODY_RADIUS = 0.9; // Enemy radius (0.8) plus a margin, for the walk legs
+const AVOID_COST = 4; // Extra cost of a cell held by a standing enemy
+
+const NEIGHBORS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+const DIAGONALS = [[1, -1], [1, 1], [-1, 1], [-1, -1]];
+
+// ─── Min-heap of (cell index, f) pairs, parallel arrays: no allocation per node ──
 class MinHeap {
     constructor() {
         this._idx = [];
@@ -30,13 +50,12 @@ class MinHeap {
         let i = this._idx.length - 1;
         while (i > 0) {
             const parent = (i - 1) >> 1;
-            if (this._f[i] - this._f[parent] >= 0) break;
+            if (this._f[i] >= this._f[parent]) break;
             this._swap(i, parent);
             i = parent;
         }
     }
 
-    // Returns the index of the node with the smallest f
     pop() {
         const top = this._idx[0];
         const lastIdx = this._idx.pop();
@@ -46,12 +65,12 @@ class MinHeap {
             this._f[0] = lastF;
             const n = this._idx.length;
             let i = 0;
-            while (true) {
+            for (;;) {
                 let smallest = i;
                 const l = (i << 1) + 1;
                 const r = l + 1;
-                if (l < n && this._f[l] - this._f[smallest] < 0) smallest = l;
-                if (r < n && this._f[r] - this._f[smallest] < 0) smallest = r;
+                if (l < n && this._f[l] < this._f[smallest]) smallest = l;
+                if (r < n && this._f[r] < this._f[smallest]) smallest = r;
                 if (smallest === i) break;
                 this._swap(i, smallest);
                 i = smallest;
@@ -70,12 +89,12 @@ export class Pathfinder {
     constructor(levelManager) {
         this.levelManager = levelManager;
         this._heap = new MinHeap();
-        // Per-cell buffers reused between calls; a stamp per search avoids clearing them.
+        // Per-cell buffers reused between searches; a stamp per search avoids clearing them
         this._size = 0;
         this._stamp = 0;
     }
 
-    // Rebuild buffers and the cell height cache when a new level is loaded
+    // Rebuild the buffers and the height cache when a new level is loaded
     _sync() {
         const lm = this.levelManager;
         if (this._data === lm.data && this._dataFloor1 === lm.dataFloor1 && this._dataFloor2 === lm.dataFloor2) return;
@@ -100,24 +119,46 @@ export class Pathfinder {
         }
     }
 
-    findPath(startPos, endPos) {
+    // ─── Cells and moves ─────────────────────────────────────────────────────
+
+    isWalkable(gridX, gridZ) {
+        return gridX >= 0 && gridX < this.levelManager.width && gridZ >= 0 && gridZ < this.levelManager.height;
+    }
+
+    // Height an enemy stands at on this cell (Infinity out of the map)
+    getCellHeight(gridX, gridZ) {
+        if (!this.isWalkable(gridX, gridZ)) return Infinity;
         this._sync();
-        const sx = Math.floor(startPos.x / CONSTANTS.CELL_SIZE);
-        const sz = Math.floor(startPos.z / CONSTANTS.CELL_SIZE);
-        const ex = Math.floor(endPos.x / CONSTANTS.CELL_SIZE);
-        const ez = Math.floor(endPos.z / CONSTANTS.CELL_SIZE);
+        return this._heights[gridZ * this._width + gridX];
+    }
 
-        // Fast path: direct line of sight → only if start and end are at the same height level
-        if (this.getCellHeight(sx, sz) === this.getCellHeight(ex, ez) && this.hasLineOfSight(startPos, endPos)) {
-            return [
-                { x: startPos.x, z: startPos.z },
-                { x: endPos.x, z: endPos.z }
-            ];
-        }
+    // Can an enemy get from a cell to an orthogonal neighbour (walking or jumping)?
+    canTransition(fromX, fromZ, toX, toZ) {
+        const dh = this.getCellHeight(toX, toZ) - this.getCellHeight(fromX, fromZ);
+        return Number.isFinite(dh) && dh <= JUMP_UP && dh >= -MAX_DROP;
+    }
 
+    // Walked, not jumped (same level, ramp, step)
+    _walkable(ha, hb) {
+        return Math.abs(ha - hb) < STEP_HEIGHT;
+    }
+
+    // ─── Search ──────────────────────────────────────────────────────────────
+
+    /**
+     * Path from `startPos` to `endPos` (world positions), or null if there is none.
+     * `avoid`: cell indices that cost more to cross (cells held by standing enemies).
+     */
+    findPath(startPos, endPos, avoid = null) {
+        this._sync();
+        const w = this._width;
+        const sx = Math.floor(startPos.x / C);
+        const sz = Math.floor(startPos.z / C);
+        const ex = Math.floor(endPos.x / C);
+        const ez = Math.floor(endPos.z / C);
         if (!this.isWalkable(sx, sz) || !this.isWalkable(ex, ez)) return null;
 
-        const w = this._width;
+        const heights = this._heights;
         const stamp = ++this._stamp;
         const closed = this._closed, open = this._open;
         const gScore = this._gScore, cameFrom = this._cameFrom;
@@ -131,38 +172,142 @@ export class Pathfinder {
         open[startIdx] = stamp;
         cameFrom[startIdx] = -1;
 
+        const relax = (current, n, nx, nz, cost) => {
+            if (closed[n] === stamp) return;
+            if (avoid && n !== endIdx && avoid.has(n)) cost += AVOID_COST;
+            const g = gScore[current] + cost;
+            if (open[n] === stamp && g >= gScore[n]) return;
+            cameFrom[n] = current;
+            gScore[n] = g;
+            open[n] = stamp;
+            heap.push(n, g + this._heuristic(nx, nz, ex, ez));
+        };
+
         while (heap.size > 0) {
             const current = heap.pop();
-            open[current] = 0;
-
-            if (current === endIdx) return this._smoothPath(this._reconstructPath(current));
-
-            // Skip stale duplicate entries (lazy deletion)
-            if (closed[current] === stamp) continue;
+            if (current === endIdx) return this._buildWaypoints(this._cellsTo(current), startPos, endPos);
+            if (closed[current] === stamp) continue; // Stale duplicate (lazy deletion)
             closed[current] = stamp;
 
             const cx = current % w;
             const cz = (current - cx) / w;
-            const tentativeG = gScore[current] + 1;
+            const h = heights[current];
 
-            for (const [dx, dz] of NEIGHBOR_DIRS) {
+            for (const [dx, dz] of NEIGHBORS) {
                 const nx = cx + dx;
                 const nz = cz + dz;
-                if (!this._canStep(cx, cz, dx, dz)) continue;
-
+                if (!this.isWalkable(nx, nz)) continue;
                 const n = nz * w + nx;
-                if (closed[n] === stamp) continue;
-                if (open[n] === stamp && tentativeG >= gScore[n]) continue;
-
-                cameFrom[n] = current;
-                gScore[n] = tentativeG;
-                heap.push(n, tentativeG + this._heuristic(nx, nz, ex, ez));
-                open[n] = stamp;
+                const dh = heights[n] - h;
+                if (dh >= STEP_HEIGHT) {
+                    if (dh <= JUMP_UP) relax(current, n, nx, nz, 1 + JUMP_COST);
+                } else if (dh <= -STEP_HEIGHT) {
+                    if (dh >= -MAX_DROP) relax(current, n, nx, nz, 1 + DROP_COST);
+                } else {
+                    relax(current, n, nx, nz, 1);
+                }
+            }
+            for (const [dx, dz] of DIAGONALS) {
+                const nx = cx + dx;
+                const nz = cz + dz;
+                if (!this.isWalkable(nx, nz)) continue;
+                const n = nz * w + nx;
+                const hx = heights[cz * w + nx];
+                const hz = heights[nz * w + cx];
+                const hn = heights[n];
+                if (this._walkable(h, hx) && this._walkable(h, hz) && this._walkable(hx, hn) && this._walkable(hz, hn) && this._walkable(h, hn)) {
+                    relax(current, n, nx, nz, Math.SQRT2);
+                }
             }
         }
-
         return null;
     }
+
+    // Octile distance: exact cost on open ground, never more than the real cost
+    _heuristic(ax, az, bx, bz) {
+        const dx = Math.abs(ax - bx);
+        const dz = Math.abs(az - bz);
+        return Math.max(dx, dz) + (Math.SQRT2 - 1) * Math.min(dx, dz);
+    }
+
+    _cellsTo(endIdx) {
+        const cells = [];
+        for (let i = endIdx; i !== -1; i = this._cameFrom[i]) cells.push(i);
+        return cells.reverse();
+    }
+
+    // ─── Waypoints ───────────────────────────────────────────────────────────
+
+    // Splits the cells into walk legs joined by jumps, and pulls each leg tight
+    _buildWaypoints(cells, startPos, endPos) {
+        const w = this._width;
+        const heights = this._heights;
+        const centre = (i) => ({ x: (i % w) * C + C / 2, z: Math.floor(i / w) * C + C / 2 });
+        const waypoints = [{ x: startPos.x, z: startPos.z, jump: false }];
+
+        let legStart = 0; // Index in `cells` of the first cell of the current walk leg
+        let anchor = waypoints[0];
+        for (let i = 1; i <= cells.length; i++) {
+            const isEnd = i === cells.length;
+            if (!isEnd && this._walkable(heights[cells[i - 1]], heights[cells[i]])) continue;
+
+            // Leg from cells[legStart] to cells[i - 1]: ends at the player, or at the cell a jump leaves from
+            const legEnd = isEnd ? { x: endPos.x, z: endPos.z } : centre(cells[i - 1]);
+            this._pullTight(anchor, cells, legStart, i - 1, legEnd, waypoints);
+            if (isEnd) break;
+
+            anchor = { ...centre(cells[i]), jump: true };
+            waypoints.push(anchor);
+            legStart = i;
+        }
+        return waypoints;
+    }
+
+    // String pulling over cells[from..to]: keeps only the corners the body can't walk straight past
+    _pullTight(anchor, cells, from, to, legEnd, out) {
+        const w = this._width;
+        const centre = (i) => ({ x: (i % w) * C + C / 2, z: Math.floor(i / w) * C + C / 2, jump: false });
+        const target = (k) => (k === to ? { ...legEnd, jump: false } : centre(cells[k]));
+        let k = from;
+        while (k < to) {
+            let farthest = k + 1;
+            for (let j = k + 2; j <= to && this.canWalkStraight(anchor, target(j)); j++) farthest = j;
+            anchor = target(farthest);
+            out.push(anchor);
+            k = farthest;
+        }
+        if (from === to && (anchor.x !== legEnd.x || anchor.z !== legEnd.z)) out.push({ ...legEnd, jump: false });
+    }
+
+    /**
+     * Can a body of BODY_RADIUS walk the straight line from `a` to `b` without climbing a wall,
+     * falling off a ledge or brushing either? Every sample's square must cover cells within
+     * STEP_HEIGHT of the cell under it, and consecutive cells must be walkable steps.
+     */
+    canWalkStraight(a, b) {
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const steps = Math.max(1, Math.ceil(Math.hypot(dx, dz) / 0.4));
+        const r = BODY_RADIUS;
+        let prevH = this._heightAt(a.x, a.z);
+        for (let s = 0; s <= steps; s++) {
+            const x = a.x + (dx * s) / steps;
+            const z = a.z + (dz * s) / steps;
+            const h = this._heightAt(x, z);
+            if (!this._walkable(prevH, h)) return false;
+            // The start may hug a wall (where the enemy stands now): only the way ahead must be clear
+            if (s > 0 && !this._walkable(h, this._heightAt(x - r, z - r)) || !this._walkable(h, this._heightAt(x + r, z - r)) ||
+                !this._walkable(h, this._heightAt(x - r, z + r)) || !this._walkable(h, this._heightAt(x + r, z + r))) return false;
+            prevH = h;
+        }
+        return true;
+    }
+
+    _heightAt(x, z) {
+        return this.getCellHeight(Math.floor(x / C), Math.floor(z / C));
+    }
+
+    // ─── Line of sight (shooting) ────────────────────────────────────────────
 
     hasLineOfSight(start, end, radius = 0.8, checkCliffs = false) {
         const lm = this.levelManager;
@@ -191,88 +336,7 @@ export class Pathfinder {
         return true;
     }
 
-    _smoothPath(path) {
-        if (path.length <= 2) return path;
-
-        const smoothed = [path[0]];
-        let currentIndex = 0;
-
-        while (currentIndex < path.length - 1) {
-            let farthestVisible = currentIndex + 1;
-            const cur = path[currentIndex];
-            const curHeight = this._heightAtWorld(cur.x, cur.z);
-
-            for (let i = currentIndex + 2; i < path.length; i++) {
-                const tgt = path[i];
-                // Do not smooth path segments that transition between different heights
-                if (curHeight !== this._heightAtWorld(tgt.x, tgt.z)) break;
-                if (!this.hasLineOfSight(cur, tgt, 0.8, true)) break;
-                farthestVisible = i;
-            }
-
-            currentIndex = farthestVisible;
-            smoothed.push(path[currentIndex]);
-        }
-
-        return smoothed;
-    }
-
-    _reconstructPath(endIdx) {
-        const path = [];
-        for (let i = endIdx; i !== -1; i = this._cameFrom[i]) {
-            const x = i % this._width;
-            path.push(this.gridToWorld(x, (i - x) / this._width));
-        }
-        return path.reverse();
-    }
-
-    // Octile distance (8-directional movement)
-    _heuristic(ax, az, bx, bz) {
-        const dx = Math.abs(ax - bx);
-        const dz = Math.abs(az - bz);
-        return (dx + dz) + (Math.SQRT2 - 2) * Math.min(dx, dz);
-    }
-
-    _heightAtWorld(x, z) {
-        return this.getCellHeight(Math.floor(x / CONSTANTS.CELL_SIZE), Math.floor(z / CONSTANTS.CELL_SIZE));
-    }
-
-    // Height an enemy stands at when on this cell (top of the highest solid structure)
-    getCellHeight(gridX, gridZ) {
-        if (!this.isWalkable(gridX, gridZ)) return SOLID_HEIGHT;
-        this._sync();
-        return this._heights[gridZ * this._width + gridX];
-    }
-
-    // Walk on ramps, jump up 1 floor, or drop down up to 2 floors
-    canTransition(fromX, fromZ, toX, toZ) {
-        const hFrom = this.getCellHeight(fromX, fromZ);
-        const hTo = this.getCellHeight(toX, toZ);
-        if (hFrom > 100 || hTo > 100) return false;
-        if (hTo > hFrom) return (hTo - hFrom) <= CONSTANTS.WALL_HEIGHT + 0.1;
-        return (hFrom - hTo) <= CONSTANTS.WALL_HEIGHT * 2 + 0.1;
-    }
-
-    _canStep(x, z, dx, dz) {
-        const nx = x + dx;
-        const nz = z + dz;
-        if (!this.isWalkable(nx, nz) || !this.canTransition(x, z, nx, nz)) return false;
-        if (dx === 0 || dz === 0) return true;
-        // Prevent diagonal corner-cutting
-        return this.canTransition(x, z, nx, z) &&
-            this.canTransition(x, z, x, nz) &&
-            this.canTransition(nx, z, nx, nz) &&
-            this.canTransition(x, nz, nx, nz);
-    }
-
-    isWalkable(gridX, gridZ) {
-        return gridX >= 0 && gridX < this.levelManager.width && gridZ >= 0 && gridZ < this.levelManager.height;
-    }
-
     gridToWorld(gridX, gridZ) {
-        return {
-            x: gridX * CONSTANTS.CELL_SIZE + CONSTANTS.CELL_SIZE / 2,
-            z: gridZ * CONSTANTS.CELL_SIZE + CONSTANTS.CELL_SIZE / 2
-        };
+        return { x: gridX * C + C / 2, z: gridZ * C + C / 2 };
     }
 }

@@ -7,6 +7,8 @@ export class Input {
         this.mouseDelta = { x: 0, y: 0 };
         this.moveAxis = { x: 0, y: 0 }; // Analog movement from the touch stick: x right, y forward, length ≤ 1
         this.isTouch = device.touch;
+        // Touch devices look with the finger; iPhone Safari has no pointer lock at all
+        this.canLockPointer = !this.isTouch && !!document.body.requestPointerLock;
         if (this.isTouch) this.touchControls = new TouchControls(this);
 
         document.addEventListener('keydown', (e) => this.onKeyDown(e));
@@ -14,7 +16,9 @@ export class Input {
         document.addEventListener('mousemove', (e) => this.onMouseMove(e));
         document.addEventListener('mousedown', (e) => this.onMouseDown(e));
         document.addEventListener('mouseup', (e) => this.onMouseUp(e));
-        document.addEventListener('click', () => this.requestPointerLock());
+        // Clicking the game locks the pointer (first click of a run). Menus ask for it themselves when they
+        // close (Game._resume): their click must not request it a second time on its way up.
+        document.addEventListener('click', () => window.game?.isPaused || this.requestPointerLock());
 
         // Audio may only start after a user gesture (pointerup is the one touch screens grant)
         const gestures = ['click', 'keydown', 'pointerup'];
@@ -51,12 +55,10 @@ export class Input {
     }
 
     requestPointerLock() {
-        // Touch devices look with the finger; iPhone Safari has no pointer lock at all
-        if (this.isTouch || !document.body.requestPointerLock) return;
-        // Don't request pointer lock if game is paused (upgrade menu open)
-        if (window.game && window.game.isPaused) return;
-        const promise = document.body.requestPointerLock();
-        if (promise) promise.catch(() => {}); // Rapid clicking rejects the request: harmless
+        if (!this.canLockPointer || document.pointerLockElement) return;
+        // Success and refusal arrive as pointerlockchange / pointerlockerror events (Game): the promise,
+        // where there is one, is only silenced so a refusal is not reported as a crash
+        document.body.requestPointerLock()?.catch(() => {});
     }
 
     exitPointerLock() {

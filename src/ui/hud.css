@@ -291,10 +291,10 @@ canvas {
     gap: 16px;
     padding: 8px 14px;
     font-size: 12px;
-    background: color-mix(in srgb, var(--ink) 55%, transparent);
+    /* Darker instead of a backdrop blur, which would be recomputed over the 3D view every frame */
+    background: color-mix(in srgb, var(--ink) 75%, transparent);
     border: 1px solid var(--rule-faint);
     border-radius: 3px;
-    backdrop-filter: blur(4px);
 }
 
 .buffs {
@@ -508,6 +508,13 @@ body:has(.overlay:not([hidden])) #crosshair {
     background: radial-gradient(ellipse at 50% 35%, rgb(20 64 60 / 0.55), rgb(4 7 9 / 0.96) 72%);
 }
 
+.pause {
+    display: grid;
+    justify-items: center;
+    gap: 24px;
+    text-align: center;
+}
+
 .overlay--death {
     background: radial-gradient(ellipse at 50% 30%, rgb(90 20 12 / 0.6), rgb(6 2 2 / 0.97) 72%);
 }
@@ -540,7 +547,12 @@ body:has(.overlay:not([hidden])) #crosshair {
     border-radius: 3px;
     font: 700 16px/1.2 var(--font-text);
     cursor: pointer;
-    transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+    transition: background-color 0.15s, color 0.15s, border-color 0.15s, opacity 0.3s;
+}
+
+.btn:disabled {
+    cursor: default;
+    opacity: 0.45;
 }
 
 .btn:focus-visible,
@@ -840,7 +852,7 @@ body:has(.overlay:not([hidden])) #crosshair {
 .reel-strip {
     display: block;
     will-change: transform;
-    transition: transform 2.5s cubic-bezier(0.1, 0.9, 0.2, 1);
+    transition: transform 0.8s cubic-bezier(0.1, 0.9, 0.2, 1); /* REEL_SPIN in Game.js */
 }
 
 .reel-item {

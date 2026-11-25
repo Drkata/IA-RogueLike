@@ -14,5 +14,13 @@ export const PALETTE = {
     sage: 0x8fcf9a // Healing, full health
 };
 
+// Magic colour of each special room, by content: its wall frieze, floor sigil, light column and centrepiece
+export const SHRINE_COLORS = {
+    treasure: PALETTE.giltBright,
+    shop: PALETTE.giltBright,
+    altar: PALETTE.hexBright,
+    fountain: PALETTE.aetherBright
+};
+
 // CSS colour string of a palette entry, for canvas text
 export const css = (color) => '#' + color.toString(16).padStart(6, '0');

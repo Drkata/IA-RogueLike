@@ -32,8 +32,9 @@ graph TD
 
 ### Boucle de Rendu Principale
 La boucle est initialisée dans `Game.js` via `renderer.setAnimationLoop(() => this.update())`.
-* **Delta Time** : Calculé par `const dt = this.clock.getDelta();`.
-* **Pause** : Si `this.isPaused` est vrai (menu actif), le moteur appelle `renderer.render(this.scene, this.camera)` mais court-circuite toutes les mises à jour logiques.
+* **Delta Time** : `this.clock.getDelta()` plafonné à `MAX_DT` (0,05 s) : après un gel ou un changement d'onglet, rien ne se téléporte.
+* **Pause** : Si `this.isPaused` est vrai (menu actif), toutes les mises à jour logiques sont court-circuitées et la scène n'est plus redessinée (le canvas garde la dernière image), sauf après un redimensionnement (`needsRender`). Perdre le pointeur (Échap) ou cacher l'onglet ouvre l'écran de pause (`Game.pause()`, bouton « Reprendre » actif après 1 s : Chrome refuse de recapturer la souris juste après Échap). Avec une souris, fermer un menu ne relance la partie qu'une fois le pointeur recapturé (`_resume`, puis l'événement `pointerlockchange`) ; si le navigateur refuse (`pointerlockerror`, par exemple un menu fermé avec Échap, qui ne compte pas comme un geste), l'écran de pause s'affiche. Seul le menu qui se ferme demande le pointeur : le clic global d'`Input` est ignoré pendant une pause.
+* **Entre deux niveaux** : 2 s de compte à rebours (le butin restant vole vers le joueur, `Pickup.pullToPlayer`), puis le menu d'amélioration. Dès que le menu s'affiche, `currentLevel` passe au niveau suivant, qui est construit derrière le menu et ses shaders compilés (`_buildNextLevel`, `renderer.compileAsync`) : le gel de génération est caché par le menu, jamais en jeu. Les cartes tournent 0,8 s ; un clic ou les touches 1 à 9 les révèlent tout de suite, puis choisissent.
 
 ---
 
@@ -71,7 +72,7 @@ Les formules vivent dans `Player.getStatValue()` / `Weapon.getStatValue()` : `re
 * **Régénération** : `stats.regen * 0.3` PV/s, plus `healthRegen` (pactes, peut être négatif = drain).
 * **Vol de vie** : `stats.vampirism * 0.02 + pactVampirism`. PV rendus = dégâts infligés × vampirism.
 * **Vitesse de déplacement** : `PLAYER_SPEED * (1 + stats.speed * 0.08) * pactSpeedMultiplier`, multipliée par `slowMultiplier` au mouvement.
-* **Aimant à butin** : `magnetRange = 1.5 + stats.magnet * 0.85` m (2,35 m au niveau 1, 10 m au niveau 10, 0 sans amélioration). Un objet au sol à portée, en vue (pas à travers un mur) et utile (pas de potion quand la vie est pleine) vole vers la poitrine du joueur en accélérant de 3 à 22 m/s (`Pickup.update`), puis est ramassé à 1,5 m.
+* **Aimant à butin** : les objets sont ramassés à 1 m des pieds du joueur ; `magnetRange = 1 + stats.magnet * 0.9` m (1 m sans amélioration, 1,9 m au niveau 1, 10 m au niveau 10). Au-delà de 1 m, un objet au sol à portée, en vue (pas à travers un mur) et utile (pas de potion quand la vie est pleine) vole vers la poitrine du joueur en accélérant de 3 à 22 m/s (`Pickup.update`), puis est ramassé.
 * **Immolation** : Génère un anneau visuel de 9 m de rayon (`IMMOLATION_RANGE` dans `Player.js`). Inflige `this.stats.immolation * 2.5` dégâts toutes les 0,5 secondes à tous les monstres à moins de 9 mètres.
 
 ---
@@ -94,23 +95,29 @@ Le projectile se déplace de façon linéaire (par défaut) ou parabolique (si g
 
 ## 🤖 4. COMPORTEMENT DE L'IA & PATHFINDING (`Pathfinder.js` & `EnemyAI.js`)
 
-### Algorithme A* et optimisation de mémoire
-Un seul `Pathfinder` est partagé par tous les ennemis (`levelManager.pathfinder`, l'A* étant synchrone). Les cellules sont indexées par entier (`z * width + x`) et l'état de recherche tient dans des tableaux typés réutilisés, invalidés par un « stamp » par recherche (aucun `clear()`, aucune clé string). Les hauteurs de cellule sont précalculées à chaque nouveau niveau.
+### Le terrain vu par les ennemis
+La carte est une **carte de hauteurs** : un seul sommet praticable par case (`cellTopHeight`). Entre deux cases voisines **orthogonales**, un déplacement est :
+* une **marche** si l'écart de hauteur est inférieur à `STEP_HEIGHT` (2 m) : sols, rampes, dessus des murs ;
+* un **saut** jusqu'à `JUMP_UP` (3,1 m) plus haut, ou une **chute** jusqu'à `MAX_DROP` (6,1 m) plus bas ;
+* impossible au-delà.
 
-```javascript
-// Pathfinder.js : Utilisation d'un Min-Heap binaire pour trier l'Open Set en O(log N)
-class MinHeap {
-    // bubbleUp et sinkDown garantissent que le nœud de f(n) minimal est toujours à l'index 0
-}
-```
+Une **diagonale** n'est permise qu'entre quatre cases toutes à moins de 2 m les unes des autres : jamais à travers le coin d'un mur ou d'un vide. Les sauts ne se font qu'en ligne droite.
 
-* **Heuristique** : Distance Octile pour autoriser les mouvements sur 8 directions :
-  $$H(a, b) = (dx + dz) + (\sqrt{2} - 2) \times \min(dx, dz)$$
-* **Lissage de Chemin (Path Smoothing)** : 
-  Pour éviter les déplacements brusques en grille, le pathfinder trace un segment de visibilité directe (Line of Sight) depuis le monstre vers chaque étape du chemin. Si aucune paroi n'obstrue la vue (test d'échantillonnage de rayons), les nœuds intermédiaires sont sautés (`_smoothPath`), permettant aux sentinelles de couper les virages naturellement.
-* **Séparation (Flocking)** : Les monstres appliquent une force répulsive réciproque :
-  $$\vec{F}_{\text{separation}} = \sum_{i=1}^{n} \frac{\vec{P}_{\text{moi}} - \vec{P}_{i}}{\text{distance}(\vec{P}_{\text{moi}}, \vec{P}_{i})}$$
-  Cette force est injectée dans le vecteur de mouvement final pour empêcher les ennemis de se superposer en un point unique.
+### A* (`Pathfinder.findPath`)
+Un seul `Pathfinder` est partagé par tous les ennemis (`levelManager.pathfinder`), avec des tableaux typés réutilisés (un « stamp » par recherche) et un tas binaire.
+* **Coûts** : 1 par pas droit, √2 en diagonale, +3 pour un saut vers le haut et +1 pour une chute. Les ennemis préfèrent les rampes quand le détour est court.
+* **Heuristique** : distance octile `max(dx, dz) + (√2 − 1) × min(dx, dz)`. Elle est admissible et cohérente avec ces coûts, donc les chemins sont optimaux et ne changent pas d'un recalcul à l'autre (c'est ce qui causait les allers-retours).
+* `avoid` (optionnel) : des cases qui coûtent +4 à traverser. Un ennemi coincé l'utilise pour contourner la foule.
+* **Résultat** : des points de passage `{ x, z, jump }`. Le chemin est découpé en tronçons de marche reliés par des sauts. Chaque tronçon est tendu (« string pulling ») avec `canWalkStraight`, qui vérifie qu'un corps de 0,9 m de rayon passe sans frôler un mur ni un bord de vide. Il n'y a **plus de raccourci en ligne de vue** : l'ancien ignorait les vides et faisait tomber les ennemis en boucle.
+* `hasLineOfSight` ne sert qu'au tir et à la vue (gardiens, aimant).
+
+### Comportement (`EnemyAI`)
+* **Suivi** : point de passage par point de passage (atteint à 0,4 m). Le saut se déclenche à 2,3 m du centre de la case d'arrivée, puis l'ennemi reste 0,3 s à l'atterrissage. Il recalcule son chemin toutes les 0,8 s (±25 %, pour étaler les calculs), et tout de suite si le joueur s'est éloigné de 4 m du but visé.
+* **Arrêt** : seulement s'il **voit** le joueur (ligne de vue testée toutes les 0,2 s), à sa propre distance tirée entre 7 et 11 m, ce qui disperse les groupes en arc. S'il gêne d'autres ennemis derrière lui, il se rapproche pour leur faire de la place, jusqu'à 3,5 m. Il ne vient jamais à moins de 2,2 m du joueur.
+* **Foule** : l'écartement entre ennemis ne s'applique que sur le côté, jamais en freinage : ceux de derrière contournent. Ordre des corrections : murs, puis ennemis, puis murs encore (les murs gagnent toujours).
+* **Bords** : un ennemi ne descend ni ne monte jamais plus de 2 m en marchant. Il glisse le long du bord, et les chutes sont des sauts voulus. Le recul (tirs, bâton) peut encore le pousser dans le vide.
+* **Déblocage** : s'il a bougé de moins de 0,3 m en 1 s alors qu'il poursuit le joueur, il saute un point de passage proche occupé par un autre ennemi, ou recalcule son chemin en évitant la foule.
+* **Vérification** : `npm run check:ai` vérifie les règles sur 1 000 chemins, puis simule 60 s sur 30 niveaux, avec le joueur au départ puis n'importe où. Avant cette refonte : 64 % des ennemis atteignaient le joueur, 18 % restaient coincés, 7 % tournaient en boucle et 1 % finissaient dans un mur. Après : 99 %, et 0 % pour les trois autres. À relancer après toute modification de l'IA ou de la génération.
 
 ---
 
@@ -126,13 +133,18 @@ Tout le visuel suit **[ART_DIRECTION.md](ART_DIRECTION.md)** : palette sémantiq
 
 ---
 
-## 🎮 7. LOGIQUE D'ATTAQUE DU BOSS SENTINEL (`BossSentinel.js`)
+## 🎮 7. LE BOSS : SENTINELLE COLOSSALE (`BossSentinel.js`)
 
-Le Boss Sentinel possède 4 mécaniques d'attaque distinctes fonctionnant sur des timers et des cooldowns indépendants :
-1. **Laser Sweep (Balayage) - Cooldown 1.5s** : Déclenche une nova complète projetant 120 sphères de plasma de $0.2$m à $35$ m/s sur un angle radial de $360^\circ$ centré sur l'altitude du joueur.
-2. **Homing Missiles (Missiles Guidés) - Cooldown 6.0s** : Tire des projectiles qui traquent continuellement le joueur en réalignant leur vecteur directionnel par interpolation linéaire (`lerp`) à chaque frame.
-3. **Spiral Attack (Attaque en Hélice) - Cooldown 15.0s** : Force le boss dans un état de blocage rotatif pendant 4 secondes où il tire des projectiles continus en spirale double.
-4. **Summon (Vassaux) - Cooldown 20.0s** : Fait apparaître des `MagicalSentinel` volantes pour détourner le feu du joueur.
+Le boss enchaîne **une attaque à la fois**, dans un cycle fixe qu'on peut apprendre : vague, tourbillon, **à terre**, vague, météores, **à terre**, renforts, vague, puis on recommence. Chaque attaque est une **partition** : une liste de temps `[secondes depuis le début de l'attaque, action]`, jouée par `update()`. Le dernier temps clôt l'attaque, repos compris. Pour ajouter une attaque, écrire `_xxxBeats()` et l'ajouter à `CYCLE`.
+
+* **Annonce** (`_announce`, `_countdown`) : l'œil et les runes prennent la couleur de l'attaque pendant `tell` secondes (1,5 s au niveau 10, −0,15 s par palier de 10 niveaux, au moins 0,9 s). Trois tics de plus en plus aigus suivent, le dernier 0,3 s avant le coup, qui tombe donc sur le 4e temps. La première fois, un conseil s'affiche. Ensuite le boss se repose `rest` secondes (2 s, au moins 1 s).
+* **Vague d'énergie** : un anneau de 96 orbes, à hauteur de taille (1 m), à 22 m/s. Les trous sont plus étroits que le joueur : il faut sauter. 1 vague au niveau 10, puis une de plus par palier (3 au plus). Dégâts `10 + niveau`.
+* **Tourbillon** : 4 s de salves en spirale (8 bras au niveau 10, +2 par palier), à 1 m de haut. Le sens s'inverse toutes les 2 s, annoncé par un tic. Dégâts `7 + niveau`.
+* **Pluie de météores** : 30 météores au niveau 10 (+10 par palier, 50 au plus), un toutes les 0,2 s. Un sur trois vise la position du joueur. Le cercle au sol montre la portée réelle (3,5 m) et se remplit jusqu'à l'impact. Dégâts `20 + 1,5 × niveau`.
+* **Renforts** : des portails violets s'ouvrent, et les sbires en sortent 2 s plus tard (10 au niveau 10, doublé par palier, 30 au plus).
+* **À terre** : le boss s'écrase au sol (son `bossSlam`, message) et reste étourdi 6 s au niveau 10 (−0,5 s par palier, au moins 3,5 s). Il prend alors **dégâts ×2**, et son œil est à portée du **coup de bâton** (le corps à corps de `Player.handleMelee` n'a pas besoin de code spécial : le boss est simplement assez bas). Il est solide (`addSolidProp`, hauteur remise à 0 quand il remonte). Il rugit avant de se relever.
+* **Sons** : joués sans position, donc à pleine force même de loin. Ce sont des signaux de jeu.
+* **Vérification sans navigateur** : un test Node fait tourner le vrai boss avec les vrais projectiles dans l'arène. Il vérifie le rythme du compte à rebours, qu'un saut sur le 4e temps évite la vague, que sortir des cercles évite les météores, et le coup de bâton ×2 à terre.
 
 ---
 
@@ -146,5 +158,14 @@ Le Boss Sentinel possède 4 mécaniques d'attaque distinctes fonctionnant sur de
 * **Ressources GPU** : géométries et matériaux partagés au niveau du module pour les entités nombreuses ; `LevelManager._disposeLevel()` libère tout le niveau précédent ; une entité avec des ressources propres expose `dispose()` (appelé par `EntityManager`).
 * **UI** : jetons de couleur et typographie dans `src/ui/hud.css` (`--ember` vie/danger, `--aether` mana/bonus, `--gilt` or/rangs, `--hex` chaos/critiques). Les menus sont des `.overlay` affichés avec l'attribut `hidden`.
 * **Génération de niveau** : trois phases dans `MapGenerator.generate()` : structure (les supports des étages supérieurs évitent les cases `reserved`), réparations (tunnels, `_settleUpperFloors`, rampes), puis peuplement (`_populate`) sur les grilles finales. Une entité n'est posée que sur une case où elle tient debout sur son étage **et** que le joueur peut atteindre. Ne jamais placer d'entité avant la fin des phases de structure.
+* **Taille des cartes** : `mapSizeForLevel(level)` (`MapGenerator.js`, seule source, utilisée par le jeu et les scripts de vérification) donne `34 + 1,3 × niveau` cases de 2 m, plafonné à 95 : 35 cases (70 m) au niveau 1. Les arènes de boss gardent `55 + 1,3 × niveau`, la taille pour laquelle ses attaques sont réglées. Sur les petites cartes, plusieurs choses suivent la taille :
+  * les pièces font 4 à 7 cases (6 à 13 dès 46 cases, `_roomSizes`) ;
+  * les salles spéciales font 7 et 6 cases (11 et 8 dès 33 cases, `_specialRect`) ;
+  * aucune salle spéciale n'est prévue à l'étage 2 sous 44 cases, car elle n'y trouve presque jamais de murs assez épais ;
+  * les ennemis apparaissent à au moins 40 % de la largeur de la carte du joueur (30 m au plus) ;
+  * les îles flottantes gardent la même densité au mètre carré.
+* **Salles spéciales** : au plus `maxSpecialRooms(level) = 2 + floor((level - 1) / 10)` par niveau (2 aux niveaux 1 à 10, 3 de 11 à 20, +1 tous les 10 niveaux, aucune sur un niveau de boss). `_planSpecialRooms` en tire d'abord un trésor et un événement, puis l'un ou l'autre, et choisit l'étage : trésor au rez-de-chaussée ou à l'étage 1, événement aussi dans l'unique salle de l'étage 2. Leurs chambres (anneau de murs compris) ne se touchent jamais et ne touchent pas la salle de départ. Le niveau les expose dans **une seule liste** `levelData.specials` : `{ kind: 'treasure' | 'altar' | 'shop' | 'fountain', floor, room, spawn }`. Un même événement n'apparaît pas deux fois dans un niveau tant qu'un autre reste disponible. `LevelManager` en tire la frise des murs et le sceau au sol, `Game._spawnLevelEntities` le contenu.
+* **Gardiens** : chaque salle spéciale a **un seul** gardien (`MagicalSentinel`), qui flotte 2,8 m au-dessus de la récompense (`reward.guardian`) ; rien dans une récompense ne doit dépasser 2,1 m. Tant qu'il vit, `isSealed(reward, player, radius)` (`Shrine.js`) bloque le coffre, l'autel, l'échoppe et la fontaine et affiche pourquoi. Il a `40 + 8 × niveau` PV et tire un orbe de `(10 + 2 × niveau) / 2` dégâts toutes les `max(0,5 ; 1 − 0,025 × niveau)` s, à 16 m, seulement s'il voit le joueur. Il n'y a plus d'autre tourelle dans le niveau.
+* **Mobilier solide** : l'autel, l'échoppe et la fontaine s'enregistrent via `levelManager.addSolidProp(position, radius, height)` ; `resolveCircleCollision` en repousse le joueur et les ennemis. La liste est vidée à chaque niveau.
 * **Carte de hauteurs** : chaque case a un seul sommet praticable, donné par `cellTopHeight()` (exportée par `MapGenerator.js`, utilisée aussi par `Pathfinder`).
-* **Vérification sans navigateur** : `npm run check:levels` génère 300 niveaux seedés et vérifie les invariants (rien dans un mur, tout atteignable, rien ne flotte, rez-de-chaussée connexe). À lancer après toute modification de la génération. Ne pas lancer de navigateur headless sur la machine de dev (RAM limitée).
+* **Vérification sans navigateur** : `npm run check:ai` pour l'IA (section 4) ; `npm run check:levels` génère 300 niveaux seedés (niveaux 1 à 59) et vérifie les invariants (rien dans un mur, tout atteignable, rien ne flotte, rez-de-chaussée connexe, nombre et espacement des salles spéciales), puis affiche le nombre moyen de salles spéciales par dizaine de niveaux. À lancer après toute modification de la génération. Ne pas lancer de navigateur headless sur la machine de dev (RAM limitée).

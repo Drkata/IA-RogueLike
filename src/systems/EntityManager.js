@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { soundManager } from './SoundManager.js';
 import { PALETTE } from '../core/Palette.js';
 
+const SHOCKWAVE_RANGE = 19.5; // m
+const SHOCKWAVE_DAMAGE = 50;
+
 export class EntityManager {
     constructor(scene) {
         this.scene = scene;
@@ -20,16 +23,12 @@ export class EntityManager {
             depthTest: false
         });
 
-        // Telegraph Visuals
-        this.telegraphGeo = new THREE.RingGeometry(0.1, 2.5, 32); // Ring
-        this.telegraphMat = new THREE.MeshBasicMaterial({
-            color: PALETTE.ember,
-            transparent: true,
-            opacity: 0.5,
-            side: THREE.DoubleSide
-        });
+        // Telegraphs: a ground circle (unit radius, scaled) that fills up until the hit lands
+        this.telegraphRingGeo = new THREE.RingGeometry(0.92, 1.0, 48).rotateX(-Math.PI / 2);
+        this.telegraphFillGeo = new THREE.CircleGeometry(1.0, 48).rotateX(-Math.PI / 2);
+        this.telegraphBeaconGeo = new THREE.CylinderGeometry(0.1, 0.1, 20, 8).translate(0, 10, 0);
         this.telegraphs = []; // Active telegraphs
-        this._telegraphPool = []; // Reusable telegraph meshes
+        this._telegraphPool = []; // Reusable telegraph groups
 
         // Explosion Pool (avoids material.clone() on every explosion)
         this._explosionPool = [];
@@ -104,10 +103,9 @@ export class EntityManager {
                     effect.scale.setScalar(scale);
                     effect.material.opacity = effect.userData.life / 0.3;
                 } else if (effect.userData.isShockwave) {
-                    // Shockwave: Expand to radius 15
+                    // Shockwave: the ring's outer edge reaches SHOCKWAVE_RANGE as it fades
                     const progress = 1 - (effect.userData.life / 0.5);
-                    const scale = 1.0 + (progress * 30.0); // 1.0 -> 31.0 (Radius ~15)
-                    effect.scale.setScalar(scale);
+                    effect.scale.setScalar(1.0 + progress * (SHOCKWAVE_RANGE - 1));
                     effect.material.opacity = (effect.userData.life / 0.5) * 0.8;
                 } else {
                     // Hit Flash: Rapid expansion
@@ -122,16 +120,17 @@ export class EntityManager {
             }
         }
 
-        // Update Telegraphs
+        // Update Telegraphs: the disc grows to the full circle when the hit lands
         for (let j = this.telegraphs.length - 1; j >= 0; j--) {
             const tele = this.telegraphs[j];
-            tele.userData.life -= dt;
+            const data = tele.userData;
+            data.life -= dt;
 
-            if (tele.userData.life > 0) {
-                // Pulse effect
-                const scale = 1.0 + Math.sin(tele.userData.life * 10) * 0.1;
-                tele.scale.set(scale, scale, scale);
-                tele.material.opacity = (tele.userData.life / tele.userData.maxLife) * 0.5;
+            if (data.life > 0) {
+                const progress = 1 - data.life / data.maxLife;
+                data.fill.scale.setScalar(Math.max(0.01, data.radius * progress));
+                data.fill.material.opacity = 0.15 + 0.35 * progress;
+                data.ring.material.opacity = 0.6 + 0.3 * Math.sin(data.life * 12);
             } else {
                 this.scene.remove(tele);
                 this._telegraphPool.push(tele); // Return to pool
@@ -240,12 +239,21 @@ export class EntityManager {
         }
     }
 
-    createShockwave(position) {
+    // Shockwave from `position` (on the ground): every enemy within SHOCKWAVE_RANGE takes
+    // SHOCKWAVE_DAMAGE and is pushed away. Set off by a destroyed turret.
+    shockwave(position) {
         soundManager.play('shockwave');
-        // Shared material: only one shockwave is shown at a time in practice
+        for (const entity of this.entities) {
+            if (entity.entityType !== 'enemy' || entity.isDead) continue;
+            if (position.distanceTo(entity.position) >= SHOCKWAVE_RANGE) continue;
+            entity.takeDamage(SHOCKWAVE_DAMAGE);
+            if (entity.ai) entity.ai.knockback(entity.position.x - position.x, entity.position.z - position.z, 5);
+        }
+
+        // Shared material: two shockwaves at once are rare
         const effect = new THREE.Mesh(this.shockwaveGeo, this.shockwaveMat);
         effect.position.copy(position);
-        effect.position.y = 0.5;
+        effect.position.y += 0.5;
         effect.rotation.x = -Math.PI / 2;
         effect.userData = { life: 0.5, isShockwave: true };
         effect.scale.setScalar(1.0);
@@ -253,37 +261,29 @@ export class EntityManager {
         this.hitEffects.push(effect);
     }
 
-    createTelegraph(position, duration) {
-        // Use telegraph pool to avoid new geometry/material per boss attack
-        let mesh = this._telegraphPool.pop();
-        if (!mesh) {
-            // First time: create the reusable mesh with beacon child
-            const mat = this.telegraphMat.clone();
-            mesh = new THREE.Mesh(this.telegraphGeo, mat);
-            mesh.rotation.x = -Math.PI / 2;
-
-            if (!this._beaconGeo) {
-                this._beaconGeo = new THREE.CylinderGeometry(0.1, 0.1, 20, 8);
-                this._beaconMat = new THREE.MeshBasicMaterial({
-                    color: PALETTE.ember, transparent: true, opacity: 0.3,
-                    blending: THREE.AdditiveBlending, depthWrite: false
-                });
-            }
-            const beacon = new THREE.Mesh(this._beaconGeo, this._beaconMat);
-            beacon.rotation.x = Math.PI / 2;
-            beacon.position.set(0, 0, 10);
-            mesh.add(beacon);
+    // Danger zone on the ground: a circle of `radius` m (the real reach of the hit) whose disc fills
+    // up over `duration` seconds, with a thin beam to spot it from afar
+    createTelegraph(position, duration, radius = 2.5, color = PALETTE.ember) {
+        let tele = this._telegraphPool.pop(); // Pooled: no new material per meteor
+        if (!tele) {
+            const material = (opacity) => new THREE.MeshBasicMaterial({ transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide });
+            const ring = new THREE.Mesh(this.telegraphRingGeo, material(0.8));
+            const fill = new THREE.Mesh(this.telegraphFillGeo, material(0.2));
+            const beacon = new THREE.Mesh(this.telegraphBeaconGeo, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false }));
+            tele = new THREE.Group();
+            tele.add(ring, fill, beacon);
+            Object.assign(tele.userData, { ring, fill, beacon });
         }
+        const data = tele.userData;
+        for (const part of [data.ring, data.fill, data.beacon]) part.material.color.setHex(color);
+        data.ring.scale.setScalar(radius);
+        data.fill.scale.setScalar(0.01);
+        data.radius = radius;
+        data.life = data.maxLife = duration;
+        tele.position.set(position.x, position.y + 0.06, position.z);
 
-        mesh.position.copy(position);
-        mesh.position.y = 0.1;
-        mesh.userData.life    = duration;
-        mesh.userData.maxLife = duration;
-        mesh.material.opacity = 0.5;
-        mesh.scale.setScalar(1);
-
-        this.scene.add(mesh);
-        this.telegraphs.push(mesh);
+        this.scene.add(tele);
+        this.telegraphs.push(tele);
     }
 
     _getExplosionFromPool() {

@@ -113,10 +113,25 @@ for (const theme of new ThemeManager().themes) {
     };
     rows.push(`${biome.padEnd(7)} albédo mur ${wallAlbedo.toFixed(2)} sol ${floorAlbedo.toFixed(2)} | mur face soleil ${flag('sunSide')} | mur à l'ombre ${flag('shadowSide')} | sol ${flag('floor')}`);
 }
-const rune = T.runeWallSurface(0);
-const vault = T.vaultWallSurface();
-sheet('special.png', 'runes | runes éclairé | glow | coffre-fort | coffre-fort éclairé | pentacle',
-    [rune.albedo, lit(rune), rune.glow, vault.albedo, lit(vault), T.pentacleCanvas()]);
+// Special rooms: frieze walls (glow shown in the altar's colour) and the floor sigils
+const tint = (canvas, hex) => {
+    const out = createCanvas(canvas.width, canvas.height);
+    const ctx = out.getContext('2d');
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.drawImage(canvas, 0, 0);
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = hex;
+    ctx.fillRect(0, 0, out.width, out.height);
+    return out;
+};
+const sanctum = (biome) => {
+    const s = T.sanctumWallSurface(biome);
+    s.glow = tint(s.glow, '#c9a6ff');
+    return lit(s);
+};
+sheet('special.png', 'mur de salle spéciale éclairé : forêt | cité | grotte | enfer — sceaux au sol : trésor | autel',
+    [sanctum('forest'), sanctum('city'), sanctum('cave'), sanctum('hell'), tint(T.sigilCanvas(6000), '#e6c983'), tint(T.sigilCanvas(6000 + 2 * 7919), '#c9a6ff')]);
 
 console.log(`Aperçus écrits dans ${OUT}/`);
 console.log(`Luminosité attendue à l'écran (0-1). Cibles : face soleil ${TARGETS.sunSide.join('-')}, ombre ${TARGETS.shadowSide.join('-')}, sol ${TARGETS.floor.join('-')}`);

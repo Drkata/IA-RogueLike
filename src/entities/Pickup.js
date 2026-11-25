@@ -3,14 +3,16 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { soundManager } from '../systems/SoundManager.js';
 import { TextureGenerator } from '../systems/TextureGenerator.js';
 import { PALETTE } from '../core/Palette.js';
+import { EYE_HEIGHT } from './Player.js';
 
 const HOVER_HEIGHT = 0.5;
-const COLLECT_DISTANCE = 1.5;
+const COLLECT_DISTANCE = 1; // Metres from the player's feet; the Magnet upgrade pulls from farther
 // Magnet upgrade: pickups fly to the player, faster and faster (m/s, m/s²)
 const MAGNET_START_SPEED = 3;
 const MAGNET_ACCEL = 30;
 const MAGNET_MAX_SPEED = 22;
 const _target = new THREE.Vector3();
+const _feet = new THREE.Vector3(); // Where an item lying at the player's feet floats: distances are measured from there
 const PICKUP_SOUNDS = { health: 'health', ammo: 'mana', gold: 'gold', upgrade: 'upgrade' };
 
 const merge = (geometries) => {
@@ -101,17 +103,25 @@ export class Pickup {
         return this.type !== 'health' || player.health < player.maxHealth;
     }
 
+    // Level cleared: flies to the player from anywhere (update() still drops an unwanted potion)
+    pullToPlayer() {
+        if (this.attracted) return;
+        this.attracted = true;
+        this.magnetSpeed = MAGNET_START_SPEED;
+    }
+
     // Within the magnet range, wanted, and in sight (no pulling through walls)
     _shouldAttract(player) {
         const range = player.magnetRange;
-        if (!range || !this._wanted(player)) return false;
+        if (range <= COLLECT_DISTANCE || !this._wanted(player)) return false;
         const pos = this.mesh.position;
-        if (pos.distanceToSquared(player.position) > range * range) return false;
+        if (pos.distanceToSquared(_feet) > range * range) return false;
         return this.levelManager.pathfinder.hasLineOfSight(pos, player.position, 0);
     }
 
     update(dt, player) {
         const pos = this.mesh.position;
+        _feet.set(player.position.x, player.position.y - EYE_HEIGHT + HOVER_HEIGHT, player.position.z);
         if (!this.attracted && this._shouldAttract(player)) {
             this.attracted = true;
             this.magnetSpeed = MAGNET_START_SPEED;
@@ -173,7 +183,7 @@ export class Pickup {
             this.mesh.rotation.y += dt;
         }
 
-        if (pos.distanceToSquared(player.position) < COLLECT_DISTANCE * COLLECT_DISTANCE) this.collect(player);
+        if (pos.distanceToSquared(_feet) < COLLECT_DISTANCE * COLLECT_DISTANCE) this.collect(player);
     }
 
     collect(player) {
