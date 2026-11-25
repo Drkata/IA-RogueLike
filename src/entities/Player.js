@@ -9,6 +9,9 @@ export const EYE_HEIGHT = 1.6; // Player position is the camera, 1.6 above the f
 export const PICKUP_RANGE = 2; // m from the feet: items closer are picked up, the Magnet upgrade pulls from farther
 const MAX_LEVEL = 10;
 const IMMOLATION_RANGE = 9; // Metres
+// Highest rise walked up without jumping, on top of the ramp slope (< 1 m per metre). Anything
+// sharper (a ramp's side, a wall top beside a ramp) is a wall face: it takes a jump.
+const STEP_UP = 0.3; // m
 const STATS_REFRESH = 0.25; // s: the HUD stats ledger is costly to rebuild, so play refreshes it 4 times a second
 
 // Zero-allocation scratch vectors for the per-frame code
@@ -422,6 +425,14 @@ export class Player {
         const feetY = this.position.y - EYE_HEIGHT;
         const checkY = lm.getCollisionCheckY(lm.getFloorHeight(this.position.x, this.position.z, feetY), feetY);
         lm.resolveCircleCollision(_nextPos, this.radius, checkY);
+        // A floor too high above the feet stops the move (it used to lift the player up at once);
+        // the player slides along it on one axis when that one is free
+        const feetNext = _nextPos.y - EYE_HEIGHT;
+        if (this._tooHigh(_nextPos.x, _nextPos.z, checkY, feetNext)) {
+            if (!this._tooHigh(_nextPos.x, this.position.z, checkY, feetNext)) _nextPos.z = this.position.z;
+            else if (!this._tooHigh(this.position.x, _nextPos.z, checkY, feetNext)) _nextPos.x = this.position.x;
+            else _nextPos.set(this.position.x, _nextPos.y, this.position.z);
+        }
         this.position.x = _nextPos.x;
         this.position.z = _nextPos.z;
 
@@ -444,6 +455,13 @@ export class Player {
         this.onGround = grounded;
 
         this.camera.position.copy(this.position);
+    }
+
+    // True if the floor at (x, z) rises above the feet by more than a step plus the ramp slope over the
+    // distance moved. Feet already above it (jumping onto it) pass.
+    _tooHigh(x, z, checkY, feetY) {
+        const moved = Math.hypot(x - this.position.x, z - this.position.z);
+        return this.levelManager.getFloorHeight(x, z, checkY) - feetY > STEP_UP + moved;
     }
 
     // Floating islands and bridges are solid: push the body out of them.
