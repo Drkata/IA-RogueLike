@@ -72,7 +72,7 @@ Les formules vivent dans `Player.getStatValue()` / `Weapon.getStatValue()` : `re
 * **Régénération** : `stats.regen * 0.3` PV/s, plus `healthRegen` (pactes, peut être négatif = drain).
 * **Vol de vie** : `stats.vampirism * 0.02 + pactVampirism`. PV rendus = dégâts infligés × vampirism.
 * **Vitesse de déplacement** : `PLAYER_SPEED * (1 + stats.speed * 0.08) * pactSpeedMultiplier`, multipliée par `slowMultiplier` au mouvement.
-* **Aimant à butin** : les objets sont ramassés à 1 m des pieds du joueur ; `magnetRange = 1 + stats.magnet * 0.9` m (1 m sans amélioration, 1,9 m au niveau 1, 10 m au niveau 10). Au-delà de 1 m, un objet au sol à portée, en vue (pas à travers un mur) et utile (pas de potion quand la vie est pleine) vole vers la poitrine du joueur en accélérant de 3 à 22 m/s (`Pickup.update`), puis est ramassé.
+* **Aimant à butin** : les objets sont ramassés à 2 m des pieds du joueur (`PICKUP_RANGE` dans `Player.js`) ; `magnetRange = PICKUP_RANGE + stats.magnet * 1.3` m (2 m sans amélioration, 3,3 m au niveau 1, 15 m au niveau 10). Au-delà de 2 m, un objet au sol à portée, en vue (pas à travers un mur) et utile (pas de potion quand la vie est pleine) vole vers la poitrine du joueur en accélérant de 3 à 22 m/s (`Pickup.update`), puis est ramassé.
 * **Immolation** : Génère un anneau visuel de 9 m de rayon (`IMMOLATION_RANGE` dans `Player.js`). Inflige `this.stats.immolation * 2.5` dégâts toutes les 0,5 secondes à tous les monstres à moins de 9 mètres.
 
 ---

@@ -6,6 +6,7 @@ import { soundManager } from '../systems/SoundManager.js';
 import { PALETTE } from '../core/Palette.js';
 
 export const EYE_HEIGHT = 1.6; // Player position is the camera, 1.6 above the feet
+export const PICKUP_RANGE = 2; // m from the feet: items closer are picked up, the Magnet upgrade pulls from farther
 const MAX_LEVEL = 10;
 const IMMOLATION_RANGE = 9; // Metres
 const STATS_REFRESH = 0.25; // s: the HUD stats ledger is costly to rebuild, so play refreshes it 4 times a second
@@ -484,7 +485,7 @@ export class Player {
         this.vampirism = this.getStatValue('vampirism', this.stats.vampirism) / 100 + this.pactVampirism;
         this.regen = this.getStatValue('regen', this.stats.regen);
         this.speed = CONSTANTS.PLAYER_SPEED * (this.getStatValue('speed', this.stats.speed) / 100) * this.pactSpeedMultiplier;
-        this.magnetRange = this.getStatValue('magnet', this.stats.magnet); // Pickups beyond 1 m fly to the player within this range
+        this.magnetRange = this.getStatValue('magnet', this.stats.magnet); // Pickups beyond PICKUP_RANGE fly to the player within this range
 
         this.updateHUD();
     }
@@ -499,7 +500,7 @@ export class Player {
             case 'speed': return (1 + level * 0.08) * 100; // +8% per level
             case 'meleeDamage': return 10 + level * 15;
             case 'immolation': return level * 5; // Damage per second
-            case 'magnet': return 1 + level * 0.9; // Pickup range in metres: 1 m without the upgrade, 10 m at level 10
+            case 'magnet': return PICKUP_RANGE + level * 1.3; // Pickup range in metres: 2 m without the upgrade, 15 m at level 10
             default: return 0;
         }
     }

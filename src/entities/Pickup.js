@@ -3,10 +3,9 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { soundManager } from '../systems/SoundManager.js';
 import { TextureGenerator } from '../systems/TextureGenerator.js';
 import { PALETTE } from '../core/Palette.js';
-import { EYE_HEIGHT } from './Player.js';
+import { EYE_HEIGHT, PICKUP_RANGE as COLLECT_DISTANCE } from './Player.js';
 
 const HOVER_HEIGHT = 0.5;
-const COLLECT_DISTANCE = 1; // Metres from the player's feet; the Magnet upgrade pulls from farther
 // Magnet upgrade: pickups fly to the player, faster and faster (m/s, m/s²)
 const MAGNET_START_SPEED = 3;
 const MAGNET_ACCEL = 30;
@@ -128,10 +127,11 @@ export class Pickup {
         }
 
         if (this.attracted && !this._wanted(player)) {
-            // Health filled up on the way: hover where it is
+            // Health filled up on the way: drop onto the floor below
             this.attracted = false;
-            this.isSettled = true;
-            this.groundY = pos.y - HOVER_HEIGHT;
+            this.isSettled = false;
+            this.vx = this.vy = this.vz = 0;
+            this.groundY = this.levelManager.getFloorHeight(pos.x, pos.z, pos.y - HOVER_HEIGHT);
         }
 
         if (this.attracted) {
@@ -158,6 +158,8 @@ export class Pickup {
             }
             pos.x = nextX;
             pos.z = nextZ;
+            // The floor follows it: off a ledge it falls, along a ramp it rises, it never floats
+            this.groundY = this.levelManager.getFloorHeight(pos.x, pos.z, this.groundY);
             pos.y += this.vy * dt;
 
             // Chaotic rotation while in air
