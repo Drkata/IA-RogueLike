@@ -8,13 +8,18 @@ import { Pickup } from './Pickup.js';
 import { PALETTE, css } from '../core/Palette.js';
 import { EnemyHealthSystem } from './EnemyHealth.js';
 
-// Eye height above the room's floor: the eye stays under the wall tops (2.9 m) so walls keep
-// blocking its line of sight, and its rings (0.65 m) clear the tallest reward (the stall's awning, 2.1 m)
-const HOVER_HEIGHT = 2.8;
+// Drawn twice the size of its parts below (3.5 m across with its rings), so it reads as an enemy from afar
+const SIZE = 2;
+// Centre of the eye above the room's floor: its lowest ring (1.08 m below, 1.21 m in the hit punch)
+// clears the tallest reward (the stall's awning, 2.1 m)
+const HOVER_HEIGHT = 3.4;
+// It sees from here, under the wall tops (2.9 m), so walls keep blocking its line of sight
+const SIGHT_HEIGHT = 2.8;
 const TETHER_BOTTOM = 0.6; // The thread of light ends on the reward
-const BAR_HEIGHT = 0.95; // Health bar above the eye
+const BAR_HEIGHT = 1.35; // Health bar above the rings
 const _dir = new THREE.Vector3();
 const _from = new THREE.Vector3();
+const _sight = new THREE.Vector3();
 
 let shared = null; // Geometries/materials shared by every guardian, created on first use
 
@@ -72,7 +77,7 @@ export class MagicalSentinel {
         this.position.y += HOVER_HEIGHT;
 
         this.maxHealth = this.health = 40 + level * 8;
-        this.radius = 0.8; // Hitbox radius
+        this.radius = 0.8 * SIZE; // Hitbox radius: what the player sees
         this.hitTimer = 0; // Scale punch when hit
 
         // One orb at a time, faster with the levels
@@ -96,10 +101,11 @@ export class MagicalSentinel {
         this.innerRing = new THREE.Mesh(g.innerRingGeo, g.stoneMat);
         this.outerRing = new THREE.Mesh(g.outerRingGeo, g.stoneMat);
         this.outerRing.rotation.x = Math.PI / 2;
-        this.mesh.add(this.innerRing, this.outerRing, new THREE.Mesh(g.tetherGeo, g.tetherMat));
+        for (const part of [this.eye, this.innerRing, this.outerRing]) part.scale.setScalar(SIZE);
+        this.mesh.add(this.innerRing, this.outerRing, new THREE.Mesh(g.tetherGeo, g.tetherMat)); // Tether and bar keep their size
 
         const glow = new THREE.Sprite(g.glowMat);
-        glow.scale.set(5, 5, 5);
+        glow.scale.setScalar(5 * SIZE);
         this.mesh.add(glow);
 
         // Health bar, always shown: this is an enemy, not part of the reward
@@ -117,7 +123,7 @@ export class MagicalSentinel {
         this.health -= amount;
         this.hitTimer = 0.08;
         // Reddish numbers for mechanical constructs
-        FloatingText.spawnDamage(this.entityManager, this.position, 1.0, amount, isCritical, isCritical ? 2.5 : 1.8, css(PALETTE.emberBright));
+        FloatingText.spawnDamage(this.entityManager, this.position, 0.7 * SIZE, amount, isCritical, isCritical ? 2.5 : 1.8, css(PALETTE.emberBright));
 
         if (this.health <= 0) {
             this.die();
@@ -170,7 +176,8 @@ export class MagicalSentinel {
         // Attack while the player is in range and visible from the eye
         const dist = this.position.distanceTo(player.position);
         if (dist >= this.attackRange) return;
-        if (dist >= 4.0 && !this.pathfinder.hasLineOfSight(this.position, player.position, 0)) return;
+        _sight.copy(this.position).setY(this.position.y - HOVER_HEIGHT + SIGHT_HEIGHT);
+        if (dist >= 4.0 && !this.pathfinder.hasLineOfSight(_sight, player.position, 0)) return;
 
         this.lastAttackTime += dt;
         if (this.lastAttackTime >= this.attackCooldown) {
@@ -182,7 +189,7 @@ export class MagicalSentinel {
     // Slow magic orb fired from the eye
     shoot(player) {
         _dir.subVectors(player.position, this.position).normalize();
-        _from.copy(this.position).addScaledVector(_dir, 0.5);
+        _from.copy(this.position).addScaledVector(_dir, 0.5 * SIZE); // Out of the front of the eye
 
         this.entityManager.add(new Projectile(_from, _dir, this.projectileSpeed, this.damage, this.levelManager, {
             radius: 0.8,
