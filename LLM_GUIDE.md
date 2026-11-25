@@ -146,7 +146,7 @@ Le boss enchaîne **une attaque à la fois**, dans un cycle fixe qu'on peut appr
 * **Renforts** : des portails violets s'ouvrent, et les sbires en sortent 2 s plus tard (10 au niveau 10, doublé par palier, 30 au plus).
 * **À terre** : le boss s'écrase au sol (son `bossSlam`, message) et reste étourdi 6 s au niveau 10 (−0,5 s par palier, au moins 3,5 s). Il prend alors **dégâts ×2**, et son œil est à portée du **coup de bâton** (le corps à corps de `Player.handleMelee` n'a pas besoin de code spécial : le boss est simplement assez bas). Il est solide (`addSolidProp`, hauteur remise à 0 quand il remonte). Il rugit avant de se relever.
 * **Sons** : joués sans position, donc à pleine force même de loin. Ce sont des signaux de jeu.
-* **Vérification sans navigateur** : un test Node fait tourner le vrai boss avec les vrais projectiles dans l'arène. Il vérifie le rythme du compte à rebours, qu'un saut sur le 4e temps évite la vague, que sortir des cercles évite les météores, et le coup de bâton ×2 à terre.
+* **Vérification sans navigateur** : `npm run check:boss` fait combattre le vrai boss (niveaux 10, 20, 30) avec les vrais projectiles, le joueur et le gestionnaire d'entités (lots instanciés compris) pendant 90 s simulées ; il échoue sur toute exception ou si une des 5 attaques n'est jamais lancée. À lancer après toute modification du boss, des projectiles ou du rendu en lots. (Le rythme du compte à rebours, l'esquive par le saut et le coup de bâton à terre ne sont pas vérifiés par ce script.)
 
 ---
 

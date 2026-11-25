@@ -362,7 +362,7 @@ export class BossSentinel {
             const angle = this.spiralAngle + (i / arms) * Math.PI * 2;
             _dir.set(Math.sin(angle), 0, Math.cos(angle));
             _spawnPos.set(this.position.x, SHOT_Y, this.position.z);
-            this._fire(_spawnPos, _dir, 13 * this.speedMult, BossSentinel.getSpiralDamage(this.level), 'Boss : tourbillon', { radius: 0.6 }).mesh.scale.setScalar(0.8);
+            this._fire(_spawnPos, _dir, 13 * this.speedMult, BossSentinel.getSpiralDamage(this.level), 'Boss : tourbillon', { radius: 0.6, scale: 0.8 });
         }
         this.spiralAngle += 0.19 * this.spinDir; // ≈ 1.2 rad/s: the arms curve visibly
     }
