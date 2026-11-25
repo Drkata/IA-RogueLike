@@ -1,14 +1,64 @@
 import * as THREE from 'three';
 import { soundManager } from './SoundManager.js';
 import { PALETTE } from '../core/Palette.js';
+import { Projectile } from '../entities/Projectile.js';
+import { EnemyMeshBuilder } from '../entities/EnemyMesh.js';
+import { EnemyHealthSystem } from '../entities/EnemyHealth.js';
 
 const SHOCKWAVE_RANGE = 19.5; // m
 const SHOCKWAVE_DAMAGE = 50;
+// shortcut: copies beyond this many in one batch are not drawn; raise it if a batch ever fills up
+const BATCH_CAPACITY = 1024;
+const _batchColor = new THREE.Color();
+
+// Every copy of one part (geometry + material) shown by many entities, drawn in a single call
+class InstancedBatch {
+    constructor(geometry, material, colored) {
+        this.mesh = new THREE.InstancedMesh(geometry, material, BATCH_CAPACITY);
+        this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        // Created up front: adding it later would recompile the shader mid-game
+        if (colored) this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(BATCH_CAPACITY * 3), 3).setUsage(THREE.DynamicDrawUsage);
+        this.mesh.frustumCulled = false; // The copies move every frame: a fixed bounding sphere would cull them wrongly
+        this.mesh.count = 0;
+    }
+
+    add(matrix, color) {
+        const i = this.mesh.count;
+        if (i >= BATCH_CAPACITY) return;
+        this.mesh.setMatrixAt(i, matrix);
+        if (color !== undefined) this.mesh.setColorAt(i, _batchColor.setHex(color));
+        this.mesh.count++;
+    }
+
+    // Uploads only the copies in use
+    flush() {
+        for (const [attribute, size] of [[this.mesh.instanceMatrix, 16], [this.mesh.instanceColor, 3]]) {
+            if (!attribute) continue;
+            attribute.clearUpdateRanges();
+            attribute.addUpdateRange(0, this.mesh.count * size);
+            attribute.needsUpdate = true;
+        }
+    }
+}
 
 export class EntityManager {
     constructor(scene) {
         this.scene = scene;
         this.entities = [];
+
+        // Batched parts. The known ones exist from the start, so their shaders compile with the level.
+        this.batches = new Map();
+        this.batch(EnemyMeshBuilder.eyeGeometry, EnemyMeshBuilder.eyeMaterials.normal);
+        this.batch(EnemyMeshBuilder.eyeGeometry, EnemyMeshBuilder.eyeMaterials.elite);
+        this.batch(EnemyHealthSystem.shieldGeo, EnemyHealthSystem.shieldMat);
+        this.batch(EnemyHealthSystem.bgGeo, EnemyHealthSystem.bgMat);
+        this.batch(EnemyHealthSystem.fillGeo, EnemyHealthSystem.barFillMat, true);
+        for (const color of [PALETTE.aetherBright, PALETTE.hexBright, PALETTE.emberBright, PALETTE.ember]) {
+            const { meshMat, glowMat } = Projectile.getMaterials(color);
+            this.batch(Projectile.geometry, meshMat);
+            this.batch(Projectile.glowGeometry, glowMat);
+        }
+        this.batch(Projectile.orbGeometry, Projectile.getMaterials(PALETTE.hexBright).meshMat);
 
         // Hit Effect Pooling
         this.hitEffects = [];
@@ -140,6 +190,28 @@ export class EntityManager {
         }
 
         this._resolvePlayerShots(player);
+        this._drawBatches(player.camera);
+    }
+
+    // The batch of `geometry` + `material` (created on first use; `colored`: each copy has its own colour)
+    batch(geometry, material, colored = false) {
+        const key = geometry.uuid + material.uuid;
+        let batch = this.batches.get(key);
+        if (!batch) {
+            batch = new InstancedBatch(geometry, material, colored);
+            this.batches.set(key, batch);
+            this.scene.add(batch.mesh);
+        }
+        return batch;
+    }
+
+    // Living entities with batched parts add this frame's copies (after the shots, so the dead are left out)
+    _drawBatches(camera) {
+        for (const batch of this.batches.values()) batch.mesh.count = 0;
+        for (const entity of this.entities) {
+            if (!entity.isDead && entity.draw) entity.draw(this, camera);
+        }
+        for (const batch of this.batches.values()) batch.flush();
     }
 
     // Player projectiles vs enemies (enemy projectiles test the player themselves)
@@ -309,6 +381,7 @@ export class EntityManager {
     clear() {
         for (const entity of this.entities) this._remove(entity);
         this.entities = [];
+        for (const batch of this.batches.values()) batch.mesh.count = 0; // A render before the next update shows none
 
         for (const effect of this.hitEffects) this._recycleEffect(effect);
         this.hitEffects = [];

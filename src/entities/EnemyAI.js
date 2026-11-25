@@ -125,6 +125,7 @@ export class EnemyAI {
         this.planTarget.copy(player.position);
         this.path = this.pathfinder.findPath(position, player.position, this.stuckCount > 0 ? this._crowdCells() : null);
         this.pathIndex = 1;
+        if (!this.path) this.planTimer = 0.1 + Math.random() * 0.1; // No way for now (often a crowd): try again soon, not every frame
     }
 
     // Cells held by the other enemies: costlier to cross, so a stuck enemy looks for another way
@@ -139,8 +140,10 @@ export class EnemyAI {
     }
 
     _chase(dt, player, position) {
+        // Without a path (the first one, or none found) the staggered timer still applies: otherwise every
+        // enemy searched on a level's first frame, and one that can't reach the player searched every frame
         this.planTimer -= dt;
-        if (!this.path || this.planTimer <= 0 || this.planTarget.distanceToSquared(player.position) > REPLAN_PLAYER_MOVED ** 2) {
+        if (this.planTimer <= 0 || (this.path && this.planTarget.distanceToSquared(player.position) > REPLAN_PLAYER_MOVED ** 2)) {
             this._plan(player, position);
         }
         if (!this.path) return null;
@@ -258,7 +261,7 @@ export class EnemyAI {
             this.stuckCount++;
             const wp = this.path && this.path[this.pathIndex];
             if (wp && !wp.jump && this.pathIndex < this.path.length - 1 && Math.hypot(wp.x - position.x, wp.z - position.z) < 2) this.pathIndex++;
-            else this.path = null;
+            else this.planTimer = 0; // Plan again now, around the crowd
         }
         return next;
     }
@@ -320,7 +323,7 @@ export class EnemyAI {
         const targetFloorY = this.levelManager.getFloorHeight(nx, nz, feetY);
         if (this.levelManager.getFloorHeight(pos.x, pos.z, feetY) - targetFloorY > MAX_DROP) return;
         pos.set(nx, targetFloorY + CENTER_HEIGHT, nz);
-        this.path = null; // Somewhere else now
+        this.planTimer = 0; // Somewhere else now: plan again
     }
 
     // ─── Shooting ────────────────────────────────────────────────────────────

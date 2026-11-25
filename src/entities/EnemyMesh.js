@@ -46,8 +46,11 @@ export class EnemyMeshBuilder {
         const group = new THREE.Group();
         const material = this.materials[Math.floor(Math.random() * this.materials.length)];
         group.add(new THREE.Mesh(this.shapes.get(key), material));
-        group.add(new THREE.Mesh(this.eyeGeometry, level >= 7 ? this.eyeMaterials.elite : this.eyeMaterials.normal));
-        return group;
+        return group; // The eyes are drawn by the entity manager, in one batch for every enemy (Enemy.draw)
+    }
+
+    static eyeMaterial(level) {
+        return level >= 7 ? this.eyeMaterials.elite : this.eyeMaterials.normal;
     }
 
     // All body parts merged into one geometry with a grey vertex colour per part

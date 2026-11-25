@@ -48,7 +48,6 @@ const _target = new THREE.Color();
 
 export class BossSentinel {
     static idCounter = 1000; // Start high to avoid conflict with minions
-    static orbGeometry = new THREE.SphereGeometry(0.2, 8, 8);
 
     static getHP(level) {
         return level * 100; // Level 10 = 1000 HP
@@ -331,8 +330,7 @@ export class BossSentinel {
             const angle = (i / count) * Math.PI * 2;
             _dir.set(Math.sin(angle), 0, Math.cos(angle));
             _spawnPos.set(this.position.x, SHOT_Y, this.position.z);
-            const proj = this._fire(_spawnPos, _dir, 22 * this.speedMult, BossSentinel.getNovaDamage(this.level), "Boss : vague d'énergie", { color: PALETTE.hexBright, radius: 0.5 });
-            proj.mesh.geometry = BossSentinel.orbGeometry;
+            this._fire(_spawnPos, _dir, 22 * this.speedMult, BossSentinel.getNovaDamage(this.level), "Boss : vague d'énergie", { color: PALETTE.hexBright, radius: 0.5, geometry: Projectile.orbGeometry });
         }
     }
 
@@ -403,12 +401,12 @@ export class BossSentinel {
         velocity.normalize().multiplyScalar(hSpeed);
         velocity.y = (0.5 * gravity * flightTime * flightTime + (target.y - _spawnPos.y)) / flightTime;
 
-        const proj = this._fire(_spawnPos, velocity, velocity.length(), BossSentinel.getMeteorDamage(this.level), 'Boss : pluie de météores', {
+        this._fire(_spawnPos, velocity, velocity.length(), BossSentinel.getMeteorDamage(this.level), 'Boss : pluie de météores', {
             gravity,
             radius,
-            color: PALETTE.ember
+            color: PALETTE.ember,
+            scale: radius
         });
-        proj.mesh.scale.setScalar(radius);
     }
 
     // Reinforcements: violet portals open where the minions will appear

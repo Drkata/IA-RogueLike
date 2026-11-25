@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CONSTANTS } from '../core/Constants.js';
 import { soundManager } from '../systems/SoundManager.js';
 
@@ -9,12 +10,20 @@ function getShared() {
     if (!shared) {
         const spikeGeo = new THREE.ConeGeometry(0.12, SPIKE_HEIGHT, 4);
         spikeGeo.translate(0, SPIKE_HEIGHT / 2, 0); // Origin at base
+        // 3x3 grid of spikes on the plate, merged: they always move together (one draw call)
+        const spacing = CONSTANTS.CELL_SIZE * 0.25;
+        const spikes = [];
+        for (let xOffset = -1; xOffset <= 1; xOffset++) {
+            for (let zOffset = -1; zOffset <= 1; zOffset++) spikes.push(spikeGeo.clone().translate(xOffset * spacing, 0, zOffset * spacing));
+        }
+        spikeGeo.dispose();
         shared = {
             plateGeo: new THREE.BoxGeometry(CONSTANTS.CELL_SIZE * 0.9, 0.05, CONSTANTS.CELL_SIZE * 0.9),
             plateMat: new THREE.MeshStandardMaterial({ color: 0x3a3a3a, roughness: 0.6, metalness: 0.7 }),
-            spikeGeo,
+            spikesGeo: mergeGeometries(spikes),
             spikeMat: new THREE.MeshStandardMaterial({ color: 0x999999, roughness: 0.3, metalness: 0.9 })
         };
+        spikes.forEach(g => g.dispose());
     }
     return shared;
 }
@@ -45,27 +54,17 @@ export class SpikeTrap {
         this.mesh = new THREE.Group();
         this.mesh.position.copy(this.position);
 
-        const { plateGeo, plateMat, spikeGeo, spikeMat } = getShared();
+        const { plateGeo, plateMat, spikesGeo, spikeMat } = getShared();
 
         // 1. Base Plate (flat metal plate on floor)
         const plate = new THREE.Mesh(plateGeo, plateMat);
         plate.position.y = 0.025;
         this.mesh.add(plate);
 
-        // 2. Spikes Group (translates up/down)
-        this.spikesMesh = new THREE.Group();
+        // 2. Spikes (translate up/down)
+        this.spikesMesh = new THREE.Mesh(spikesGeo, spikeMat);
         this.spikesMesh.position.y = -this.spikeHeight; // Start retracted
         this.mesh.add(this.spikesMesh);
-
-        // 3x3 grid of spikes on the plate
-        const spacing = CONSTANTS.CELL_SIZE * 0.25;
-        for (let xOffset = -1; xOffset <= 1; xOffset++) {
-            for (let zOffset = -1; zOffset <= 1; zOffset++) {
-                const spike = new THREE.Mesh(spikeGeo, spikeMat);
-                spike.position.set(xOffset * spacing, 0, zOffset * spacing);
-                this.spikesMesh.add(spike);
-            }
-        }
     }
 
     update(dt, player) {

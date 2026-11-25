@@ -13,6 +13,9 @@ const _seg = new THREE.Vector3();
 const _wallNormal = new THREE.Vector3();
 const _hit = new THREE.Vector3();
 const _toEnemy = new THREE.Vector3();
+const _matrix = new THREE.Matrix4();
+const _scale = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
 
 const BOUNCE_DAMAGE_MULT = 1.25;
 const MAX_WALL_BOUNCES_PER_STEP = 3; // Into a corner, a fast shot can hit several faces in one frame
@@ -56,27 +59,27 @@ function firstWallHit(lm, start, end, normal) {
 
 export class Projectile {
     static geometry = new THREE.IcosahedronGeometry(0.15, 1); // Crystal shape
+    static orbGeometry = new THREE.SphereGeometry(0.2, 8, 8); // The boss's energy-wave orbs
+    static glowGeometry = new THREE.PlaneGeometry(1, 1); // Turned to the camera: what a sprite draws
 
     // Shared materials, one per color
-    static sharedMeshMaterials = {};
-    static sharedSpriteMaterials = {};
+    static sharedMaterials = {};
 
     static getMaterials(color) {
-        if (!Projectile.sharedMeshMaterials[color]) {
-            Projectile.sharedMeshMaterials[color] = new THREE.MeshBasicMaterial({ color });
-            Projectile.sharedSpriteMaterials[color] = new THREE.SpriteMaterial({
-                map: TextureGenerator.getGlowTexture(),
-                color,
-                transparent: true,
-                blending: THREE.AdditiveBlending,
-                depthWrite: false,
-                opacity: 0.6
-            });
+        if (!Projectile.sharedMaterials[color]) {
+            Projectile.sharedMaterials[color] = {
+                meshMat: new THREE.MeshBasicMaterial({ color }),
+                glowMat: new THREE.MeshBasicMaterial({
+                    map: TextureGenerator.getGlowTexture(),
+                    color,
+                    transparent: true,
+                    blending: THREE.AdditiveBlending,
+                    depthWrite: false,
+                    opacity: 0.6
+                })
+            };
         }
-        return {
-            meshMat: Projectile.sharedMeshMaterials[color],
-            spriteMat: Projectile.sharedSpriteMaterials[color]
-        };
+        return Projectile.sharedMaterials[color];
     }
 
     /**
@@ -93,10 +96,13 @@ export class Projectile {
      * @param {number} [options.ricochet=0]      Bounces allowed
      * @param {number} [options.homingLevel=0]
      * @param {number} [options.color]           Defaults to the palette: aether (player), hex (crit), ember (enemy)
+     * @param {THREE.BufferGeometry} [options.geometry=Projectile.geometry] Shape of the core
+     * @param {number} [options.scale=1]         Size of the core and its glow
      */
     constructor(position, direction, speed, damage, levelManager, {
         piercing = 0, isCritical = false, knockback = 0, explosion = 0, gravity = 0, radius = 1.0,
-        sourceName = 'Unknown', sourceId = -1, maxDistance = 1000, ricochet = 0, homingLevel = 0, color = null
+        sourceName = 'Unknown', sourceId = -1, maxDistance = 1000, ricochet = 0, homingLevel = 0, color = null,
+        geometry = Projectile.geometry, scale = 1
     } = {}) {
         this.position = position.clone();
         this.direction = direction.clone().normalize();
@@ -133,18 +139,21 @@ export class Projectile {
             else if (isCritical) color = PALETTE.hexBright;
             else color = explosion > 0 ? PALETTE.emberBright : PALETTE.aetherBright;
         }
-        const materials = Projectile.getMaterials(color);
+        // Drawn in the entity manager's batches (see draw): no mesh of its own
+        this.color = color;
+        this.geometry = geometry;
+        this.scale = scale * (isCritical ? 1.5 : 1) * (this.isPlayerProjectile ? 0.65 : 1);
+        this.glowScale = this.scale * (isCritical ? 1.5 : 0.8);
+    }
 
-        this.mesh = new THREE.Mesh(Projectile.geometry, materials.meshMat);
-        this.mesh.position.copy(this.position);
-        this.mesh.userData.entity = this;
-
-        const sprite = new THREE.Sprite(materials.spriteMat);
-        sprite.scale.setScalar(isCritical ? 1.5 : 0.8);
-        this.mesh.add(sprite);
-
-        if (isCritical) this.mesh.scale.multiplyScalar(1.5);
-        if (this.isPlayerProjectile) this.mesh.scale.multiplyScalar(0.65);
+    // The core faces its travel; the glow faces the camera, as the sprite it replaces did
+    draw(entityManager, camera) {
+        const { meshMat, glowMat } = Projectile.getMaterials(this.color);
+        _tempLookAt.copy(this.position).add(this.gravity !== 0 ? this.velocity : this.direction);
+        _matrix.lookAt(_tempLookAt, this.position, _up).setPosition(this.position).scale(_scale.setScalar(this.scale));
+        entityManager.batch(this.geometry, meshMat).add(_matrix);
+        _matrix.compose(this.position, camera.quaternion, _scale.setScalar(this.glowScale));
+        entityManager.batch(Projectile.glowGeometry, glowMat).add(_matrix);
     }
 
     // Reverse the given velocity axes after a bounce; bounces make the shot hit harder
@@ -326,11 +335,6 @@ export class Projectile {
         }
 
         this.position.copy(_tempPos);
-        this.mesh.position.copy(this.position);
-
-        // Face the direction of travel
-        _tempLookAt.copy(this.position).add(this.gravity !== 0 ? this.velocity : this.direction);
-        this.mesh.lookAt(_tempLookAt);
 
         // Enemy shots hit the player here; player shots are resolved by EntityManager
         if (!this.isPlayerProjectile && this.position.distanceToSquared(player.position) < (this.radius + 0.5) ** 2) {

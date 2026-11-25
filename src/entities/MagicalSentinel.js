@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Projectile } from './Projectile.js';
 import { soundManager } from '../systems/SoundManager.js';
 import { TextureGenerator } from '../systems/TextureGenerator.js';
@@ -27,10 +28,12 @@ function getShared() {
             pupilGeo: new THREE.BoxGeometry(0.06, 0.28, 0.03).translate(0, 0, 0.335),
             irisMat: new THREE.MeshStandardMaterial({ color: PALETTE.ember, emissive: PALETTE.emberBright, emissiveIntensity: 2, roughness: 0.2 }),
             pupilMat: new THREE.MeshStandardMaterial({ color: 0x0a0608, roughness: 0.4 }),
-            // Two stone rings turning like a gyroscope; the outer one bristles with spikes
+            // Two stone rings turning like a gyroscope; the outer one bristles with 6 spikes, merged into it (one draw call)
             innerRingGeo: new THREE.TorusGeometry(0.48, 0.06, 8, 32),
-            outerRingGeo: new THREE.TorusGeometry(0.6, 0.05, 8, 32),
-            spikeGeo: new THREE.ConeGeometry(0.07, 0.3, 6),
+            outerRingGeo: mergeGeometries([new THREE.TorusGeometry(0.6, 0.05, 8, 32), ...Array.from({ length: 6 }, (_, i) => {
+                const a = (i / 6) * Math.PI * 2;
+                return new THREE.ConeGeometry(0.07, 0.3, 6).rotateZ(a - Math.PI / 2).translate(Math.cos(a) * 0.72, Math.sin(a) * 0.72, 0); // Points outwards
+            })]),
             stoneMat: new THREE.MeshStandardMaterial({ color: 0x3a3538, roughness: 0.7, metalness: 0.2 }),
             tetherGeo: new THREE.CylinderGeometry(0.03, 0.06, tetherLength, 6, 1, true).translate(0, -tetherLength / 2, 0),
             tetherMat: new THREE.MeshBasicMaterial({ color: PALETTE.emberBright, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false }),
@@ -93,13 +96,6 @@ export class MagicalSentinel {
         this.innerRing = new THREE.Mesh(g.innerRingGeo, g.stoneMat);
         this.outerRing = new THREE.Mesh(g.outerRingGeo, g.stoneMat);
         this.outerRing.rotation.x = Math.PI / 2;
-        for (let i = 0; i < 6; i++) {
-            const a = (i / 6) * Math.PI * 2;
-            const spike = new THREE.Mesh(g.spikeGeo, g.stoneMat);
-            spike.position.set(Math.cos(a) * 0.72, Math.sin(a) * 0.72, 0);
-            spike.rotation.z = a - Math.PI / 2; // Points outwards
-            this.outerRing.add(spike);
-        }
         this.mesh.add(this.innerRing, this.outerRing, new THREE.Mesh(g.tetherGeo, g.tetherMat));
 
         const glow = new THREE.Sprite(g.glowMat);

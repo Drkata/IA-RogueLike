@@ -73,6 +73,12 @@ export class Enemy {
         this.mesh.position.set(this.position.x, this.position.y - 0.8, this.position.z);
 
         this.healthSystem.update(dt);
-        this.healthSystem.updateHealthBar(player.camera);
+    }
+
+    // Batched parts, in the body's frame: eyes, then shield and health bar
+    draw(entityManager, camera) {
+        this.mesh.updateMatrix(); // The body is a direct child of the scene: this is its world matrix
+        entityManager.batch(EnemyMeshBuilder.eyeGeometry, EnemyMeshBuilder.eyeMaterial(this.level)).add(this.mesh.matrix);
+        this.healthSystem.draw(entityManager, camera);
     }
 }
