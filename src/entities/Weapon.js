@@ -82,8 +82,7 @@ export class Weapon {
         this.pactProjectileSpeedMultiplier = 1.0;
         this.pactCritChance = 0; // Added to the upgrades' value
         this.pactCritDamage = 0;
-        this.pactRicochet = 0;
-        this.pactRangeMultiplier = 1.0;
+        this.pactChain = 0; // Storm: enemies a shot jumps on to after a hit
         this.pactAmmoMultiplier = 1.0;
         this.pactExplosion = 0; // Added chance
         this.pactReloadMultiplier = 1.0; // Of the reload time
@@ -114,7 +113,7 @@ export class Weapon {
         this.arc = s.bulletCount * 2; // Multishot spread: 2 degrees per extra bullet
         this.maxAmmo = Math.floor(value('ammo') * this.pactAmmoMultiplier);
         this.reloadTime = value('reload') * this.pactReloadMultiplier;
-        this.range = value('range') * this.pactRangeMultiplier;
+        this.range = value('range');
         this.projectileSpeed = value('projectileSpeed') * this.pactProjectileSpeedMultiplier;
         this.bulletCount = value('bulletCount');
         this.piercing = value('piercing');
@@ -122,7 +121,8 @@ export class Weapon {
         this.critDamage = value('critDamage') / 100 + this.pactCritDamage;
         this.knockback = value('knockback');
         this.explosion = value('explosion') / 100 + this.pactExplosion;
-        this.ricochet = value('ricochet') + this.pactRicochet;
+        this.ricochet = value('ricochet');
+        this.chain = this.pactChain;
 
         // Kinetic impact: every 1% of extra projectile speed adds 0.5% damage
         const speedBonus = (this.projectileSpeed / this.baseProjectileSpeed) - 1;

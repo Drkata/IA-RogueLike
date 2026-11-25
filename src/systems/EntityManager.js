@@ -245,10 +245,10 @@ export class EntityManager {
                     this.createExplosion(projectile.position, projectile.damage, player);
                 }
 
-                // Piercing: keep flying through up to `piercing` enemies
+                // Piercing: keep flying through up to `piercing` enemies; then the Storm pact's jumps
                 projectile.hitEntities.add(enemy.id);
                 if (projectile.piercing > 0) projectile.piercing--;
-                else projectile.isDead = true;
+                else if (!projectile.chainToNext(this.entities)) projectile.isDead = true;
 
                 this.createHitEffect(projectile.position, projectile.isCritical);
                 soundManager.play(projectile.isCritical ? 'crit' : 'hit', projectile.position);

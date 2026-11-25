@@ -46,7 +46,7 @@ Armé de votre bâton magique entièrement améliorable, progressez de salle en 
 ### 💰 Économie & Progression
 * **💰 Économie d'Or** : Récupérez l'or laissé par les monstres défaits ou caché dans les **Coffres au Trésor** disséminés dans le donjon.
 * **🛒 Marchand Mystique** : Rencontrez le Marchand Magique et échangez votre butin contre des potions de vie, des munitions, des sceaux de bouclier ou des améliorations de statistiques directes.
-* **🩸 Autels de Pactes Anciens** : chaque autel propose 2 pactes permanents tirés au hasard parmi 16. Chacun a un prix : vie, dégâts, armure, vitesse, mana, or… Certains changent la façon de jouer : ricochets, onde de choc tous les 8 ennemis tués, aura de feu, tirs explosifs, bouclier qui se recharge, sauts jusqu'en haut des murs.
+* **🩸 Autels de Pactes Anciens** : chaque autel propose 2 pactes permanents tirés au hasard parmi 16. Chacun a un prix : vie, dégâts, armure, vitesse, mana, or… Certains changent la façon de jouer : éclairs qui sautent d'ennemi en ennemi, onde de choc tous les 8 ennemis tués, aura de feu, tirs explosifs, bouclier qui se recharge, sauts jusqu'en haut des murs.
 * **⛲ Fontaines de Soin** : Restaurez votre santé aux fontaines magiques disséminées dans les niveaux.
 
 ### 🌍 Systèmes Additionnels

@@ -398,6 +398,7 @@ export class Player {
                 sourceId: -1,
                 maxDistance: w.range,
                 ricochet: w.ricochet,
+                chain: w.chain,
                 homingLevel: w.stats.homing
             }));
         }
@@ -417,7 +418,7 @@ export class Player {
         const dz = target.z - this.position.z;
         const dy = target.y - this.position.y;
         this.yaw = Math.atan2(-dx, -dz); // Matches the camera's (0, 0, -1) forward
-        this.pitch = keepLevel ? 0 : -Math.atan2(dy, Math.sqrt(dx * dx + dz * dz));
+        this.pitch = keepLevel ? 0 : Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)); // Positive looks up (as handleRotation)
         this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
     }
 

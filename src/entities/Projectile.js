@@ -22,6 +22,7 @@ const MAX_WALL_BOUNCES_PER_STEP = 3; // Into a corner, a fast shot can hit sever
 // Player ricochets bend towards an enemy in sight within this cone and range (0° disables it)
 const RICOCHET_ASSIST_COS = Math.cos(THREE.MathUtils.degToRad(25));
 const RICOCHET_ASSIST_RANGE = 15;
+const CHAIN_RANGE = 10; // m: how far a Storm pact jump reaches for the next enemy
 
 // First wall face crossed by the segment start → end, walking the X/Z grid cell by cell
 // (exact impact point, no tunnelling through corners, and no wall test while inside one cell).
@@ -95,6 +96,7 @@ export class Projectile {
      * @param {number} [options.maxDistance=1000]
      * @param {number} [options.ricochet=0]      Bounces allowed
      * @param {number} [options.homingLevel=0]
+     * @param {number} [options.chain=0]         Player shots: enemies it jumps on to after a hit (Storm pact)
      * @param {number} [options.color]           Defaults to the palette: aether (player), hex (crit), ember (enemy)
      * @param {THREE.BufferGeometry} [options.geometry=Projectile.geometry] Shape of the core
      * @param {number} [options.scale=1]         Size of the core and its glow
@@ -102,8 +104,9 @@ export class Projectile {
     constructor(position, direction, speed, damage, levelManager, {
         piercing = 0, isCritical = false, knockback = 0, explosion = 0, gravity = 0, radius = 1.0,
         sourceName = 'Unknown', sourceId = -1, maxDistance = 1000, ricochet = 0, homingLevel = 0, color = null,
-        geometry = Projectile.geometry, scale = 1
+        geometry = Projectile.geometry, scale = 1, chain = 0
     } = {}) {
+        this.chain = chain;
         this.position = position.clone();
         this.direction = direction.clone().normalize();
         this.speed = speed;
@@ -203,6 +206,28 @@ export class Projectile {
         window.game.entityManager.createHitEffect(point, false);
     }
 
+    // Storm pact: after a hit, fly on to the nearest enemy in sight not hit yet, within CHAIN_RANGE.
+    // Returns false when there is no jump left or no such enemy (the shot then ends).
+    chainToNext(entities) {
+        if (this.chain <= 0) return false;
+        let best = null;
+        let bestDistSq = CHAIN_RANGE * CHAIN_RANGE;
+        for (const enemy of entities) {
+            if (enemy.entityType !== 'enemy' || enemy.isDead || this.hitEntities.has(enemy.id)) continue;
+            const distSq = enemy.position.distanceToSquared(this.position);
+            if (distSq < bestDistSq && this.levelManager.pathfinder.hasLineOfSight(this.position, enemy.position, 0)) {
+                bestDistSq = distSq;
+                best = enemy;
+            }
+        }
+        if (!best) return false;
+        this.chain--;
+        this.direction.subVectors(best.position, this.position).normalize();
+        this.distanceTraveled = 0;
+        soundManager.play('ricochet', this.position);
+        return true;
+    }
+
     // Steer towards `target` by `strength * dt`
     _steer(target, strength, dt) {
         this.direction.lerp(target, strength * dt).normalize();
@@ -243,7 +268,7 @@ export class Projectile {
             const entities = window.game.entityManager.entities;
             for (let i = 0; i < entities.length; i++) {
                 const entity = entities[i];
-                if (entity.entityType !== 'enemy' || entity.isDead) continue;
+                if (entity.entityType !== 'enemy' || entity.isDead || this.hitEntities.has(entity.id)) continue; // Not back to one it went through
                 const distSq = this.position.distanceToSquared(entity.position);
                 if (distSq < closestDistSq) {
                     closestDistSq = distSq;
