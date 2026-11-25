@@ -107,7 +107,7 @@ export const PACTS = [
     // Movement and fortune
     { id: 'speed', icon: 'speed_pact', title: 'Pacte de vitesse', gain: '+30 % de vitesse', cost: '−20 % de vie max',
         apply: (p) => { p.pactSpeedMultiplier *= 1.30; p.pactHpMultiplier *= 0.80; } },
-    { id: 'wings', icon: 'wings', title: 'Pacte des ailes', gain: 'Sauts 50 % plus hauts : vous atteignez le haut des murs', cost: '−25 % de mana max',
+    { id: 'wings', icon: 'wings', title: 'Pacte des ailes', gain: "Sauts 50 % plus hauts : assez pour monter sur un mur d'un étage", cost: '−25 % de mana max',
         apply: (p, w) => { p.pactJumpMultiplier *= Math.sqrt(1.5); w.pactAmmoMultiplier *= 0.75; } }, // Jump height grows with the square of the impulse
     { id: 'greed', icon: 'greed', title: 'Pacte de cupidité', gain: "Double l'or ramassé", cost: 'Les potions au sol soignent moitié moins',
         apply: (p) => { p.pactGoldMultiplier *= 2; p.pactPotionMultiplier *= 0.5; } }

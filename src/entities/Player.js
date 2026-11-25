@@ -12,6 +12,8 @@ const IMMOLATION_RANGE = 9; // Metres
 // Highest rise walked up without jumping, on top of the ramp slope (< 1 m per metre). Anything
 // sharper (a ramp's side, a wall top beside a ramp) is a wall face: it takes a jump.
 const STEP_UP = 0.3; // m
+const MANTLE = 0.6; // m: in the air, crossing onto a ledge with the feet at most this high above it lands there
+const COYOTE_TIME = 0.12; // s after walking off a ledge during which a jump still counts
 const AEGIS_DELAY = 4; // s unhurt before the Aegis pact's shield refills
 const AEGIS_RATE = 10; // Shield points per second
 const STATS_REFRESH = 0.25; // s: the HUD stats ledger is costly to rebuild, so play refreshes it 4 times a second
@@ -57,6 +59,8 @@ export class Player {
         this.camera.position.copy(this.position);
         this.radius = 0.3; // Player collision radius
         this.onGround = true;
+        this.airTime = 0; // s since last on the ground (coyote time)
+        this.jumping = false; // Between a jump and the landing
         this.invulnerabilityTimer = 0;
 
         // Euler angles for rotation (yaw, pitch)
@@ -436,9 +440,12 @@ export class Player {
         this.velocity.x = _moveDir.x;
         this.velocity.z = _moveDir.z;
 
-        if (this.onGround && this.input.isKeyDown('Space')) {
+        // A jump pressed a hair after walking off a ledge still counts (coyote time)
+        this.airTime = this.onGround ? 0 : this.airTime + dt;
+        if (this.input.isKeyDown('Space') && this.airTime < COYOTE_TIME && !this.jumping) {
             this.velocity.y = CONSTANTS.JUMP_FORCE * this.pactJumpMultiplier;
             this.onGround = false;
+            this.jumping = true;
             soundManager.play('jump');
         }
         this.velocity.y -= CONSTANTS.GRAVITY * dt;
@@ -448,7 +455,8 @@ export class Player {
         // Walls of the floor we stand on push the player out (depenetration)
         const lm = this.levelManager;
         const feetY = this.position.y - EYE_HEIGHT;
-        const checkY = lm.getCollisionCheckY(lm.getFloorHeight(this.position.x, this.position.z, feetY), feetY);
+        const floorFrom = lm.getFloorHeight(this.position.x, this.position.z, feetY);
+        const checkY = lm.getCollisionCheckY(floorFrom, feetY);
         lm.resolveCircleCollision(_nextPos, this.radius, checkY);
         // A floor too high above the feet stops the move (it used to lift the player up at once);
         // the player slides along it on one axis when that one is free
@@ -458,18 +466,23 @@ export class Player {
             else if (!this._tooHigh(this.position.x, _nextPos.z, checkY, feetNext)) _nextPos.x = this.position.x;
             else _nextPos.set(this.position.x, _nextPos.y, this.position.z);
         }
+        const moved = Math.hypot(_nextPos.x - this.position.x, _nextPos.z - this.position.z);
         this.position.x = _nextPos.x;
         this.position.z = _nextPos.z;
 
         // Ground check at the resolved horizontal position, then floating islands
         const floorY = lm.getFloorHeight(this.position.x, this.position.z, checkY);
         let grounded = _nextPos.y < floorY + EYE_HEIGHT;
+        // Ledge catch: in the air, crossing onto a ledge with the feet just above it lands there, instead of
+        // sailing over a 2 m wall top while still rising (a wall only stops blocking once the feet clear it)
+        if (!grounded && floorY - floorFrom > STEP_UP + moved && _nextPos.y - EYE_HEIGHT - floorY < MANTLE) grounded = true;
         this.position.y = grounded ? floorY + EYE_HEIGHT : _nextPos.y;
         if (this._pushOutOfSky()) grounded = true;
 
         if (grounded) {
             if (!this.onGround && this.velocity.y < -6) soundManager.play('land'); // Not on ramp bumps
             this.velocity.y = 0;
+            this.jumping = false;
             // A footstep every 2.2 m walked
             this.stepDistance = (this.stepDistance || 0) + Math.hypot(this.velocity.x, this.velocity.z) * dt;
             if (this.stepDistance > 2.2) {
