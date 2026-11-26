@@ -18,11 +18,13 @@ export class StatsDisplay {
         container.appendChild(this.element);
     }
 
-    // Player + weapon stats as definition lists, used by the HUD and the upgrade menu
+    // Player, staff and sword stats as definition lists, used by the HUD and the upgrade menu
     static render(player) {
         const w = player.weapon;
         const s = w.stats;
         const p = player.stats;
+        const sword = player.sword;
+        const ss = sword.stats;
 
         const body = [
             row('vitality', SVG_ICONS.maxHealth, 'Vie max', Math.round(player.maxHealth) + rankBadge(p.maxHealth) + multBadge(player.pactHpMultiplier)),
@@ -32,16 +34,23 @@ export class StatsDisplay {
             row('vitality', SVG_ICONS.speed, 'Vitesse', pct((player.speed / CONSTANTS.PLAYER_SPEED) * 100) + rankBadge(p.speed) + multBadge(player.pactSpeedMultiplier))
         ];
         const weapon = [
-            row('offense', SVG_ICONS.damage, 'Dégâts', num(w.damage * w.bulletCount) + rankBadge(s.damage) + multBadge(w.pactDamageMultiplier)),
+            row('offense', SVG_ICONS.damage, 'Dégâts bâton', num(w.damage * w.bulletCount) + rankBadge(s.damage) + multBadge(w.pactDamageMultiplier)),
             row('offense', SVG_ICONS.fireRate, 'Cadence', unit(1 / w.fireRate, 'tirs/s') + rankBadge(s.fireRate) + multBadge(w.pactFireRateMultiplier)),
             row('offense', SVG_ICONS.ammo, 'Mana max', w.maxAmmo + rankBadge(s.ammo)),
             row('offense', SVG_ICONS.reload, 'Rechargement', unit(w.reloadTime, 's') + rankBadge(s.reload))
         ];
         const precision = [
-            row('offense', SVG_ICONS.critChance, 'Critique', pct(w.critChance * 100) + rankBadge(s.critChance)),
-            row('offense', SVG_ICONS.critDamage, 'Dégâts crit.', pct(w.critDamage * 100) + rankBadge(s.critDamage)),
+            row('offense', SVG_ICONS.critChance, 'Critique bâton', pct(w.critChance * 100) + rankBadge(s.critChance)),
+            row('offense', SVG_ICONS.critDamage, 'Dégâts crit. bâton', pct(w.critDamage * 100) + rankBadge(s.critDamage)),
             row('offense', SVG_ICONS.range, 'Portée', num(w.range) + rankBadge(s.range)),
             row('offense', SVG_ICONS.projectileSpeed, 'Vit. projectiles', num(w.projectileSpeed) + rankBadge(s.projectileSpeed) + multBadge(w.pactProjectileSpeedMultiplier))
+        ];
+        const blade = [
+            row('offense', SVG_ICONS.meleeDamage, 'Dégâts épée', num(sword.damage) + rankBadge(ss.meleeDamage) + multBadge(sword.pactDamageMultiplier)),
+            row('offense', SVG_ICONS.attackSpeed, 'Coups', unit(sword.strikeRate, '/s') + rankBadge(ss.attackSpeed) + multBadge(sword.pactSpeedMultiplier)),
+            row('offense', SVG_ICONS.reach, 'Allonge', unit(sword.reach, 'm') + rankBadge(ss.reach) + multBadge(sword.pactReachMultiplier)),
+            row('offense', SVG_ICONS.critChance, 'Critique épée', pct(sword.critChance(w) * 100) + rankBadge(s.critChance)),
+            row('offense', SVG_ICONS.critDamage, 'Dégâts crit. épée', pct(sword.critDamage(w) * 100) + rankBadge(s.critDamage))
         ];
         const arcana = [
             row('arcana', SVG_ICONS.bulletCount, 'Projectiles', w.bulletCount + rankBadge(s.bulletCount)),
@@ -52,7 +61,7 @@ export class StatsDisplay {
             row('arcana', SVG_ICONS.magnet, 'Aimant', unit(player.magnetRange, 'm') + rankBadge(p.magnet))
         ];
 
-        return [body, weapon, precision, arcana].map(rows => `<dl class="ledger__col">${rows.join('')}</dl>`).join('');
+        return [body, weapon, precision, blade, arcana].map(rows => `<dl class="ledger__col">${rows.join('')}</dl>`).join('');
     }
 
     update(player) {

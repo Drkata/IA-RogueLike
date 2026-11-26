@@ -61,7 +61,7 @@ export class HealingFountain {
         this.isDead = false;
         this.isUsed = false;
         this.radius = 1.5; // Drinking radius: touching the basin is enough
-        this.healAmount = 50;
+        this.maxHealthBonus = 30; // Permanent: it raises the max health, it does not heal
 
         const s = this.shrine = new Shrine(this, levelManager, { color: SHRINE_COLORS.fountain, lightY: 0.9, solidRadius: 1.1, solidHeight: 1.7 });
         const g = geometry();
@@ -88,18 +88,15 @@ export class HealingFountain {
 
         if (isSealed(this, player, this.radius + player.radius)) return;
         if (!player.isNear(this.position, this.radius + player.radius)) return;
-        if (player.health < player.maxHealth) {
-            this.use(player);
-        } else {
-            player.hudManager.showMessage("Votre vie est déjà au maximum");
-        }
+        this.use(player);
     }
 
     use(player) {
         this.isUsed = true;
-        player.heal(this.healAmount);
+        player.fountainHp += this.maxHealthBonus;
+        player.recalculateStats(); // Like a max health upgrade, the new capacity comes filled
         soundManager.play('fountain');
-        player.hudManager.showMessage("Fontaine de jouvence : +50 PV");
+        player.hudManager.showMessage(`Fontaine de jouvence : +${this.maxHealthBonus} PV max`);
         this.curtain.visible = false; // The water stops, the pools go murky
         this.shrine.goOut();
     }

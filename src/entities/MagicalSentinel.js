@@ -195,6 +195,7 @@ export class MagicalSentinel {
             radius: 0.8,
             sourceName: "Sentinel",
             sourceId: this.id,
+            source: this,
             maxDistance: 80,
             color: PALETTE.hexBright // Arcane orb, distinct from minion shots
         }));

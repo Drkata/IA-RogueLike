@@ -100,13 +100,17 @@ export class Projectile {
      * @param {number} [options.color]           Defaults to the palette: aether (player), hex (crit), ember (enemy)
      * @param {THREE.BufferGeometry} [options.geometry=Projectile.geometry] Shape of the core
      * @param {number} [options.scale=1]         Size of the core and its glow
+     * @param {number} [options.size=0]          Player shots: hit radius added to the enemy's (big bolts, blade waves)
+     * @param {object} [options.source=null]     Enemy shots: the shooter, where a parried shot goes back to
      */
     constructor(position, direction, speed, damage, levelManager, {
         piercing = 0, isCritical = false, knockback = 0, explosion = 0, gravity = 0, radius = 1.0,
         sourceName = 'Unknown', sourceId = -1, maxDistance = 1000, ricochet = 0, homingLevel = 0, color = null,
-        geometry = Projectile.geometry, scale = 1, chain = 0
+        geometry = Projectile.geometry, scale = 1, chain = 0, size = 0, source = null
     } = {}) {
         this.chain = chain;
+        this.size = size;
+        this.source = source;
         this.position = position.clone();
         this.direction = direction.clone().normalize();
         this.speed = speed;
@@ -172,6 +176,22 @@ export class Projectile {
         }
         this.distanceTraveled = 0;
         this.damage *= BOUNCE_DAMAGE_MULT;
+    }
+
+    // Parried by the sword: it flies back at whoever shot it (straight back if it is gone), now the player's
+    reflect(damageMultiplier = 1) {
+        const shooter = this.source && !this.source.isDead ? this.source : null;
+        if (shooter) this.direction.subVectors(shooter.position, this.position).normalize();
+        else this.direction.negate();
+        this.isPlayerProjectile = true;
+        this.hitEntities = new Set();
+        this.sourceName = 'Player';
+        this.sourceId = -1;
+        this.source = null;
+        this.damage *= damageMultiplier;
+        this.distanceTraveled = 0;
+        this.lifeTime = 10;
+        this.color = PALETTE.aetherBright;
     }
 
     // Mirror the direction (and velocity) on a surface of normal `n`
@@ -363,8 +383,7 @@ export class Projectile {
 
         // Enemy shots hit the player here; player shots are resolved by EntityManager
         if (!this.isPlayerProjectile && this.position.distanceToSquared(player.position) < (this.radius + 0.5) ** 2) {
-            player.takeDamage(this.damage, this.sourceName, this.sourceId);
-            this.isDead = true;
+            player.takeShot(this); // The sword's guard may block it or send it back
         }
     }
 }

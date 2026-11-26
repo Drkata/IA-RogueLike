@@ -41,13 +41,14 @@ Armé de votre bâton magique entièrement améliorable, progressez de salle en 
   * 🌀 **Tourbillon** — salves en spirale dont le sens s'inverse
   * ☄️ **Pluie de météores** — des cercles au sol qui se remplissent jusqu'à l'impact
   * 👹 **Renforts** — des sbires sortent de portails violets
-  * 💥 **À terre** — après ses grosses attaques, le boss s'écrase au sol : frappez-le au bâton, dégâts ×2
+  * 💥 **À terre** — après ses grosses attaques, le boss s'écrase au sol : frappez-le à l'épée, dégâts ×2
 
 ### 💰 Économie & Progression
 * **💰 Économie d'Or** : Récupérez l'or laissé par les monstres défaits ou caché dans les **Coffres au Trésor** disséminés dans le donjon.
 * **🛒 Marchand Mystique** : Rencontrez le Marchand Magique et échangez votre butin contre des potions de vie, des munitions, des sceaux de bouclier ou des améliorations de statistiques directes.
-* **🩸 Autels de Pactes Anciens** : chaque autel propose 2 pactes permanents tirés au hasard parmi 16. Chacun a un prix : vie, dégâts, armure, vitesse, mana, or… Certains changent la façon de jouer : éclairs qui sautent d'ennemi en ennemi, onde de choc tous les 8 ennemis tués, aura de feu, tirs explosifs, bouclier qui se recharge, sauts jusqu'en haut des murs.
-* **⛲ Fontaines de Soin** : Restaurez votre santé aux fontaines magiques disséminées dans les niveaux.
+* **🩸 Autels de Pactes Anciens** : chaque autel propose 2 pactes permanents tirés au hasard parmi 26 : 10 pour le bâton, 10 pour l'épée et 6 généraux, chacun étiqueté sur sa carte. Chacun a un prix : vie, dégâts, armure, vitesse, mana, or… Certains changent la façon de jouer : éclairs qui sautent d'ennemi en ennemi, onde de choc tous les 8 ennemis tués, aura de feu, tirs explosifs, épée qui frappe tout autour, projectiles parés renvoyés deux fois plus forts, ondes tranchantes, sauts jusqu'en haut des murs.
+* **⚔️ Deux armes** : le **bâton** tire des projectiles de mana (clic droit : tir chargé de 1,5 s, immobile, qui vide tout le chargeur en un seul gros projectile) ; l'**épée** frappe tous les ennemis dans un arc devant vous (clic droit : garde, qui réduit de 70 % les tirs reçus de face ; dans ses 0,3 premières secondes, elle les renvoie à leur tireur). Une seule arme en main ; changer d'arme annule la recharge du bâton. Chaque amélioration dit sur sa carte si elle vaut pour le bâton, l'épée, les deux, ou le personnage.
+* **⛲ Fontaines de jouvence** : Boire à une fontaine augmente définitivement vos PV max de 30.
 
 ### 🌍 Systèmes Additionnels
 * **📦 Objets Ramassables (Pickups)** : Les ennemis et coffres lâchent de l'or, des potions de vie et des munitions.
@@ -65,8 +66,10 @@ Armé de votre bâton magique entièrement améliorable, progressez de salle en 
 |---|---|---|
 | Se déplacer | `Z` `Q` `S` `D` (ou `W` `A` `S` `D`) | Joystick gauche |
 | Sauter | `Espace` | Bouton dédié |
-| Viser & Tirer | `Souris` / `Clic gauche` | Toucher zone droite |
-| Recharger | `R` | Bouton dédié |
+| Viser & Attaquer avec l'arme en main | `Souris` / `Clic gauche` | Toucher zone droite / bouton d'attaque |
+| Tir chargé (bâton) / Garde (épée) | `Clic droit` (maintenu) | Bouton dédié |
+| Changer d'arme | `A` (`Q` en QWERTY), `Molette`, `1` bâton, `2` épée | Bouton dédié |
+| Recharger le bâton | `R` | Bouton dédié |
 | Interagir (Marchand, Autel, Fontaine, Coffre) | `E` | Bouton `E` |
 | Pause / Menu d'amélioration | Automatique (montée de niveau, transition d'étage) | — |
 
@@ -142,7 +145,7 @@ IA-RogueLike/
     │   ├── LootChest.js                # Coffres au trésor interactifs
     │   ├── MagicalShop.js              # Marchand Mystique interactif
     │   ├── MagicAltar.js               # Autels de Pactes — bonus/malus permanents
-    │   ├── HealingFountain.js          # Fontaines de soin
+    │   ├── HealingFountain.js          # Fontaines de jouvence (+30 PV max)
     │   └── SpikeTrap.js                # Pièges à pointes rétractables
     ├── systems/
     │   ├── LevelManager.js             # Assemblage 3D, skybox, îles flottantes, éclairage

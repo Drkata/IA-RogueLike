@@ -1,14 +1,14 @@
 import * as THREE from 'three';
 import { soundManager } from '../systems/SoundManager.js';
 import { HEAD_Z, STAFF_TIERS, buildStaff, staffTier } from './StaffMesh.js';
+import { HandMotion, MOTION } from './HandMotion.js';
 
 const ORB_LIGHT = 2; // cd at rest; each shot flares it (ART_DIRECTION.md, section 7)
 const REST = { x: 0.3, y: -0.3, z: -0.5, tilt: 0.2 }; // The staff's pose in camera space
 const FLOURISH_AFTER = 8; // s of calm before the staff twirls in the hand
 const FLOURISH_TIME = 1.1; // s
-// Players who ask for reduced motion keep a steadier staff: no walk bob, sway or twirl
-const MOTION = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : 1;
-const { damp, clamp, lerp } = THREE.MathUtils;
+export const CHARGE_TIME = 1.5; // s held still before the charged shot leaves on its own
+const { damp } = THREE.MathUtils;
 
 const newUpgradeStats = () => ({
     damage: 0,
@@ -59,10 +59,9 @@ export class Weapon {
         this.infiniteAmmo = false; // For Berserk Buff
         this.fireRateMultiplier = 1.0; // For Berserk Buff
 
-        // Melee State
-        this.isMeleeing = false;
-        this.meleeTimer = 0;
-        this.meleeCooldown = 0.8;
+        // Charged shot (right click): the whole clip in one bolt
+        this.charging = false;
+        this.chargeTime = 0;
 
         // Visuals
         // Cleanup existing weapon meshes (Fix for HMR/Duplication)
@@ -74,16 +73,18 @@ export class Weapon {
         this.mesh = new THREE.Group();
         this.mesh.name = 'WeaponMesh';
         this.camera.add(this.mesh);
-        this.gunMesh = new THREE.Group(); // Pose: bob, sway, cast, reload, melee; holds the staff of the tier
+        this.gunMesh = new THREE.Group(); // Pose: bob, sway, cast, reload, charge, put away; holds the staff of the tier
         this.mesh.add(this.gunMesh);
         // The crystal's light, made once: adding a light mid-level recompiles every shader
         this.flash = new THREE.PointLight(STAFF_TIERS[0].orb, ORB_LIGHT, 3);
         this.flash.position.z = HEAD_Z;
         this.gunMesh.add(this.flash);
-        // Animation state: clock, walk bob phase and amount, look sway, calm time, twirl progress (-1: none),
-        // crystal spin speed factor, flare left after a reload, staff raised to channel (0–1), crystal lifted out of its claws (0–1),
-        // shots fired, cast thrust (0–1) and twist (±1), sparks left from the last shot
-        this.anim = { time: 0, bob: 0, bobAmount: 0, swayX: 0, swayY: 0, yaw: camera.rotation.y, pitch: camera.rotation.x, calm: 0, flourish: -1, spin: 1, pop: 0, channel: 0, lift: 0, shots: 0, cast: 0, twist: 0, spark: 0 };
+        // Animation state: clock, calm time, twirl progress (-1: none), crystal spin speed factor, flare left after
+        // a reload, staff raised to channel (0–1), crystal lifted out of its claws (0–1), shots fired, cast thrust
+        // (0–1) and twist (±1), sparks left from the last shot
+        this.anim = { time: 0, calm: 0, flourish: -1, spin: 1, pop: 0, channel: 0, lift: 0, shots: 0, cast: 0, twist: 0, spark: 0 };
+        this.hand = new HandMotion(camera);
+        this.holster = 0; // 0: in hand, 1: put away below the view (set by Player while switching weapons)
         this.tier = -1;
         this.rebuildMesh(0);
     }
@@ -169,18 +170,57 @@ export class Weapon {
     }
 
     reload() {
-        if (this.currentAmmo < this.maxAmmo && this.reserveAmmo > 0 && !this.isReloading) {
+        if (this.currentAmmo < this.maxAmmo && this.reserveAmmo > 0 && !this.isReloading && !this.charging) {
             this.isReloading = true;
             this.reloadTimer = this.reloadTime;
             soundManager.play('reload', null, 1, this.reloadTime); // Swells up to the very end of the reload
         }
     }
 
-    // Instantly fill the clip (cancels a reload in progress)
-    refill() {
-        this.currentAmmo = this.maxAmmo;
+    // Putting the staff away stops a reload: the mana drawn so far is lost
+    cancelReload() {
+        if (!this.isReloading) return;
         this.isReloading = false;
         this.reloadTimer = 0;
+        soundManager.stop('reload');
+    }
+
+    // Right click held: starts gathering the clip, if there is any mana in it and no reload going on
+    startCharge() {
+        if (this.charging || this.isReloading || this.currentAmmo <= 0) return false;
+        this.charging = true;
+        this.chargeTime = 0;
+        soundManager.play('staffCharge', null, 1, CHARGE_TIME);
+        return true;
+    }
+
+    cancelCharge() {
+        if (!this.charging) return;
+        this.charging = false;
+        soundManager.stop('staffCharge');
+    }
+
+    chargeProgress() {
+        return this.charging ? Math.min(1, this.chargeTime / CHARGE_TIME) : 0;
+    }
+
+    // The charge is full: empties the clip and returns how much mana went into the shot
+    releaseCharge() {
+        const ammo = this.currentAmmo;
+        this.currentAmmo = 0;
+        this.charging = false;
+        this.lastShootTime = performance.now() / 1000;
+        this.flashTime = 0.1;
+        this.recoil = 1.0;
+        this.anim.shots++;
+        this.anim.spark = 1;
+        return ammo;
+    }
+
+    // Instantly fill the clip (cancels a reload in progress)
+    refill() {
+        this.cancelReload();
+        this.currentAmmo = this.maxAmmo;
     }
 
     addAmmo(amount) {
@@ -192,12 +232,7 @@ export class Weapon {
         this.currentAmmo = this.baseMaxAmmo;
         this.reserveAmmo = 400;
         this.resetPacts();
-
-        // Melee State
-        this.isMeleeing = false;
-        this.meleeTimer = 0;
-        this.meleeCooldown = 0.8;
-        
+        this.cancelCharge();
         this.lastShootTime = 0;
 
         this.recalculateStats();
@@ -223,18 +258,12 @@ export class Weapon {
             }
         }
 
-        if (this.isMeleeing) {
-            this.meleeTimer += dt;
-            if (this.meleeTimer >= this.meleeCooldown) {
-                this.isMeleeing = false;
-                this.meleeTimer = 0;
-            }
-        }
+        if (this.charging) this.chargeTime += dt;
 
         this.animate(dt, speed);
 
-        // Crystal light: idle glow, swelling as it recharges, flare on a shot
-        const glow = ORB_LIGHT * (1 + 1.5 * this.reloadProgress());
+        // Crystal light: idle glow, swelling as it recharges or charges, flare on a shot
+        const glow = ORB_LIGHT * (1 + 1.5 * Math.max(this.reloadProgress(), this.chargeProgress()));
         if (this.flashTime > 0) {
             this.flashTime -= dt;
             this.flash.intensity = glow + (Math.max(0, this.flashTime) / 0.1) * 25;
@@ -252,41 +281,32 @@ export class Weapon {
     animate(dt, speed) {
         const a = this.anim;
         const g = this.gunMesh;
+        const h = this.hand;
         const { orb, glow, spinners } = this.staff;
         a.time += dt;
         const t = a.time;
+        h.update(dt, speed);
         this.recoil = damp(this.recoil, 0, 10, dt);
         // A shot is cast, not fired: the staff thrusts the crystal toward the middle of the view, where the
         // bolt appears, with a twist to alternate sides; under sustained fire it stays raised. Peaks at ~0.6
-        // of the recoil, 50 ms after the shot.
-        a.cast = damp(a.cast, this.recoil, 35, dt);
+        // of the recoil, 50 ms after the shot. A charge holds it there.
+        a.cast = damp(a.cast, this.charging ? 0.6 : this.recoil, 35, dt);
         a.twist = damp(a.twist, (a.shots % 2 ? 1 : -1) * this.recoil, 30, dt);
         a.spark = Math.max(0, a.spark - dt * 6);
 
         // Reload, a channelling: the staff is raised before the eyes, its crystal rises out of the claws and
         // draws mana in, the staff shaking more and more; when full, the crystal drops back home with a jolt
         const reload = this.reloadProgress();
+        const charge = this.chargeProgress();
         a.channel = damp(a.channel, this.isReloading ? 1 : 0, 9, dt);
         a.lift = damp(a.lift, this.isReloading ? 1 : 0, this.isReloading ? 3 : 25, dt);
         a.pop = Math.max(0, a.pop - dt * 3);
         const c = a.channel;
         const kick = a.pop * a.pop;
-        const shake = 0.003 * reload * c * MOTION;
-
-        // Walk bob, one dip per footstep (Player plays one every 2.2 m)
-        a.bob += speed * dt * Math.PI / 2.2;
-        a.bobAmount = damp(a.bobAmount, Math.min(1, speed / 10) * MOTION, 8, dt);
-        // Look sway: the staff lags a little behind the view
-        const cam = this.camera.rotation;
-        if (dt > 0) {
-            a.swayX = damp(a.swayX, clamp((cam.y - a.yaw) / dt * 0.012, -0.05, 0.05) * MOTION, 10, dt);
-            a.swayY = damp(a.swayY, clamp((cam.x - a.pitch) / dt * -0.012, -0.04, 0.04) * MOTION, 10, dt);
-        }
-        a.yaw = cam.y;
-        a.pitch = cam.x;
+        const shake = (0.003 * reload * c + 0.006 * charge * charge) * MOTION;
 
         // After a calm spell, the staff twirls once about its own axis, lifted a little
-        const busy = speed > 0.5 || this.isReloading || this.isMeleeing || this.recoil > 0.05;
+        const busy = speed > 0.5 || this.isReloading || this.charging || this.recoil > 0.05 || this.holster > 0;
         a.calm = busy ? 0 : a.calm + dt;
         if (a.flourish < 0 && a.calm > FLOURISH_AFTER && MOTION) a.flourish = 0;
         let twirl = 0;
@@ -303,64 +323,46 @@ export class Weapon {
             }
         }
 
-        if (this.isMeleeing) {
-            // 0 – 0.2 s wind up (pull back), 0.2 – 0.3 s strike (thrust and twist), then recover
-            const m = this.meleeTimer;
-            if (m < 0.2) {
-                const k = m / 0.2;
-                g.position.z = lerp(REST.z, -0.2, k);
-                g.rotation.x = lerp(REST.tilt, -0.5, k);
-                g.rotation.y = lerp(0, 0.5, k);
-            } else if (m < 0.3) {
-                const k = (m - 0.2) / 0.1;
-                g.position.z = lerp(-0.2, -1.2, k);
-                g.rotation.x = lerp(-0.5, 0.5, k);
-                g.rotation.y = lerp(0.5, -0.5, k);
-            } else {
-                const k = Math.min(1, (m - 0.3) / 0.5);
-                g.position.z = lerp(-1.2, REST.z, k);
-                g.rotation.x = lerp(0.5, REST.tilt, k);
-                g.rotation.y = lerp(-0.5, 0, k);
-            }
-        } else {
-            const bobX = Math.sin(a.bob) * 0.012 * a.bobAmount;
-            const bobY = -Math.abs(Math.cos(a.bob)) * 0.018 * a.bobAmount;
-            g.position.set(
-                REST.x + Math.sin(t * 1.1) * 0.006 + bobX + a.swayX - 0.02 * c - 0.15 * a.cast + shake * Math.sin(t * 53),
-                REST.y + Math.sin(t * 2) * 0.012 + bobY + a.swayY + 0.06 * c + 0.06 * a.cast + lift + shake * Math.sin(t * 41 + 1),
-                REST.z + 0.03 * c - 0.1 * a.cast
-            );
-            // Channelling, the staff stands up on the right: the crystal stays clear of the crosshair
-            g.rotation.set(
-                REST.tilt + 0.4 * c + 0.25 * kick + 0.08 * a.cast,
-                -a.swayX * 1.5 + 0.3 * a.cast,
-                Math.sin(t * 1.5) * 0.05 - a.swayX * 2 + 0.1 * c + 0.2 * a.twist + twirl
-            );
-        }
+        // Put away (switching to the sword): it drops below the view, head down
+        const away = this.holster;
+        g.position.set(
+            REST.x + h.x - 0.02 * c - 0.15 * a.cast + shake * Math.sin(t * 53),
+            REST.y + h.y + 0.06 * c + 0.06 * a.cast + lift + shake * Math.sin(t * 41 + 1) - 0.5 * away,
+            REST.z + 0.03 * c - 0.1 * a.cast
+        );
+        // Channelling, the staff stands up on the right: the crystal stays clear of the crosshair
+        g.rotation.set(
+            REST.tilt + 0.4 * c + 0.25 * kick + 0.08 * a.cast - 0.8 * away,
+            -h.swayX * 1.5 + 0.3 * a.cast,
+            Math.sin(t * 1.5) * 0.05 - h.swayX * 2 + 0.1 * c + 0.2 * a.twist + twirl
+        );
+        this.staff.group.visible = away < 0.99; // Its light stays: removing one mid-level recompiles every shader
 
         // Crystal: as bright as the clip is full, refilling during a reload, flaring on each shot
         const fill = this.isReloading ? reload : (this.infiniteAmmo || this.maxAmmo <= 0 ? 1 : this.currentAmmo / this.maxAmmo);
         const shot = Math.max(0, this.flashTime) / 0.1;
         const pulse = 0.5 + 0.5 * Math.sin(t * 2.4);
-        orb.material.emissiveIntensity = 0.25 + 1.1 * fill + 0.15 * pulse + 2.5 * shot + 1.5 * a.pop;
+        // Charging, the crystal swells with the whole clip
+        orb.material.emissiveIntensity = 0.25 + 1.1 * fill + 0.15 * pulse + 2.5 * shot + 1.5 * a.pop + 2 * charge;
         glow.material.opacity = 0.2 + 0.6 * fill + 0.2 * a.pop;
-        glow.scale.setScalar((0.16 + 0.04 * pulse) * (0.6 + 0.4 * fill) + 0.12 * shot + 0.15 * a.pop);
-        // It hovers and turns in its claws; recharging, it whirls faster and faster with everything orbiting it
-        a.spin = damp(a.spin, 1 + 10 * reload * reload, 4, dt);
+        glow.scale.setScalar((0.16 + 0.04 * pulse) * (0.6 + 0.4 * fill) + 0.12 * shot + 0.15 * a.pop + 0.2 * charge);
+        // It hovers and turns in its claws; recharging or charging, it whirls faster and faster with everything orbiting it
+        a.spin = damp(a.spin, 1 + 10 * reload * reload + 8 * charge * charge, 4, dt);
         orb.rotation.z += dt * 0.8 * a.spin;
         orb.position.z = HEAD_Z - 0.05 * a.lift + Math.sin(t * 1.7) * 0.004;
         glow.position.z = orb.position.z;
-        orb.scale.setScalar(1 + 0.25 * shot + 0.2 * a.pop + 0.1 * a.lift * reload);
+        orb.scale.setScalar(1 + 0.25 * shot + 0.2 * a.pop + 0.1 * a.lift * reload + 0.5 * charge);
         for (const s of spinners) s.rotation.z += s.userData.spin * a.spin * dt;
-        this.animateMotes(reload, orb.position.z);
+        this.animateMotes(Math.max(reload, charge), orb.position.z);
     }
 
-    // Mana motes: while the crystal recharges, each spirals in to it on its own ~0.6 s trip; when it is
-    // full they all burst out of it and fade. A shot sprays half of them forward as sparks.
-    animateMotes(reload, z) {
+    // Mana motes: while the crystal recharges (or charges, twice as fast), each spirals in to it on its own
+    // trip; when it is full they all burst out of it and fade. A shot sprays half of them forward as sparks.
+    animateMotes(progress, z) {
         const { motes } = this.staff;
         const a = this.anim;
-        motes.visible = this.isReloading || a.pop > 0 || a.spark > 0;
+        const drawing = this.isReloading || this.charging;
+        motes.visible = (drawing || a.pop > 0 || a.spark > 0) && this.holster < 0.99;
         if (!motes.visible) return;
         const position = motes.geometry.attributes.position;
         const color = motes.geometry.attributes.color;
@@ -372,11 +374,11 @@ export class Weapon {
             let dist, light;
             let spread = 1;
             let ahead = h * 0.5;
-            if (this.isReloading) {
-                const u = (a.time * 1.7 + i * 0.618) % 1;
+            if (drawing) {
+                const u = (a.time * (this.charging ? 3.4 : 1.7) + i * 0.618) % 1;
                 angle += u * 3;
                 dist = 0.15 * (1 - u) * (1 - u);
-                light = Math.min(1, reload * 6, u * 3) * (1 - u ** 4);
+                light = Math.min(1, progress * 6, u * 3) * (1 - u ** 4);
             } else if (a.pop > 0) {
                 dist = 0.03 + 0.25 * (1 - a.pop * a.pop);
                 light = a.pop;
@@ -394,16 +396,8 @@ export class Weapon {
         color.needsUpdate = true;
     }
 
-    melee() {
-        if (this.isMeleeing || this.isReloading) return false;
-
-        this.isMeleeing = true;
-        this.meleeTimer = 0;
-        return true;
-    }
-
     shoot() {
-        if (this.isReloading) return 0;
+        if (this.isReloading || this.charging) return 0;
         const now = performance.now() / 1000;
         const effectiveFireRate = this.fireRate / this.fireRateMultiplier;
         if (this.currentAmmo <= 0 && !this.infiniteAmmo) {

@@ -11,6 +11,7 @@
     "check:ai": "node scripts/check-ai.mjs",
     "check:boss": "node scripts/check-boss.mjs",
     "check:staff": "node scripts/check-staff.mjs",
+    "check:sword": "node scripts/check-sword.mjs",
     "preview:visuals": "node scripts/preview-visuals.mjs previews",
     "build:sfx": "node scripts/build-sfx.mjs",
     "deploy": "vite build && rsync -a --delete dist/ /srv/arcaniste/"

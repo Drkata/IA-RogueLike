@@ -3,17 +3,19 @@ import { SVG_ICONS } from './SVGIcons.js';
 // On-screen controls for touch devices (see ART_DIRECTION.md, section 4).
 //   Left 40% of the screen: floating analog stick (appears under the thumb)
 //   Elsewhere: drag to look. The fire button also aims while held.
-//   Thumb arc, bottom right: fire, jump, staff bash, reload, interact
+//   Thumb arc, bottom right: attack, jump, second move (staff charge / sword guard), reload, switch weapon,
+//   interact. Buttons with two icons show the staff's or the sword's (body.weapon-sword).
 const STICK_RADIUS = 56; // px: knob travel for a full push
 const DEAD_ZONE = 0.12;
 const LOOK_SPEED = 2.2; // Mouse pixels of rotation per finger pixel
 const STICK_ZONE = 0.4; // Share of the screen width, from the left, that starts the stick
 
 const BUTTONS = [
-    { key: 'Mouse0', icon: 'touchFire', label: 'Tirer', modifier: 'fire', aims: true },
+    { key: 'Mouse0', icon: ['touchFire', 'touchSlash'], label: 'Attaquer', modifier: 'fire', aims: true },
     { key: 'Space', icon: 'touchJump', label: 'Sauter', modifier: 'jump' },
-    { key: 'Mouse1', icon: 'meleeDamage', label: 'Coup de bâton', modifier: 'melee' },
+    { key: 'Mouse1', icon: ['touchCharge', 'touchGuard'], label: 'Tir chargé (bâton) ou garde (épée)', modifier: 'secondary' },
     { key: 'KeyR', icon: 'touchReload', label: 'Recharger', modifier: 'reload' },
+    { key: 'KeyQ', icon: 'touchSwitch', label: "Changer d'arme", modifier: 'switch' },
     { key: 'KeyE', icon: 'touchAction', label: 'Interagir', modifier: 'action' }
 ];
 
@@ -30,7 +32,9 @@ export class TouchControls {
             <div class="touch-buttons">
                 ${BUTTONS.map((b, i) => `
                     <button type="button" class="touch-btn touch-btn--${b.modifier}" data-index="${i}" aria-label="${b.label}">
-                        ${SVG_ICONS[b.icon]}
+                        ${Array.isArray(b.icon)
+                            ? `<span class="for-staff">${SVG_ICONS[b.icon[0]]}</span><span class="for-sword">${SVG_ICONS[b.icon[1]]}</span>`
+                            : SVG_ICONS[b.icon]}
                     </button>`).join('')}
             </div>`;
         document.body.appendChild(this.root);

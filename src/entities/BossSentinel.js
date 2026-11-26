@@ -298,6 +298,7 @@ export class BossSentinel {
         const proj = new Projectile(origin, direction, speed, damage, this.levelManager, {
             sourceName,
             sourceId: this.id,
+            source: this,
             maxDistance: 200,
             ...options
         });

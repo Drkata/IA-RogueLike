@@ -18,6 +18,10 @@ export class HUDManager {
         this.buffDisplay = new BuffDisplay(this.container);
 
         this.container.insertAdjacentHTML('beforeend', `
+            <div class="weapons" role="status" aria-label="Arme en main">
+                <span class="weapons__slot" data-weapon="staff" title="Bâton">${SVG_ICONS.weaponStaff}<kbd>1</kbd></span>
+                <span class="weapons__slot" data-weapon="sword" title="Épée">${SVG_ICONS.weaponSword}<kbd>2</kbd></span>
+            </div>
             <div id="crosshair" aria-hidden="true"></div>
             <p class="herald" role="status"></p>
             <p class="countdown" hidden></p>
@@ -88,6 +92,17 @@ export class HUDManager {
 
     updateAmmo(current, reserve) {
         this.ammoDisplay.update(current, reserve);
+    }
+
+    // `weapon`: 'staff' or 'sword'. The body class swaps the touch buttons' icons.
+    updateWeapon(weapon) {
+        if (weapon === this._weapon) return; // Called every frame
+        this._weapon = weapon;
+        for (const slot of this.container.querySelectorAll('.weapons__slot')) {
+            slot.classList.toggle('is-active', slot.dataset.weapon === weapon);
+        }
+        this.container.querySelector('.weapons').setAttribute('aria-label', `Arme en main : ${weapon === 'sword' ? 'épée' : 'bâton'}`);
+        document.body.classList.toggle('weapon-sword', weapon === 'sword');
     }
 
     updateLevel(level) {

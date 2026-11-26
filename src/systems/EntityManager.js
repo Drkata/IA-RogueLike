@@ -225,7 +225,8 @@ export class EntityManager {
                 const enemy = this.entities[j];
                 if (enemy.isDead || enemy.entityType !== 'enemy') continue;
                 if (projectile.hitEntities.has(enemy.id)) continue; // Already pierced through it
-                if (projectile.position.distanceToSquared(enemy.position) >= enemy.radius * enemy.radius) continue;
+                const reach = enemy.radius + projectile.size;
+                if (projectile.position.distanceToSquared(enemy.position) >= reach * reach) continue;
 
                 const died = enemy.takeDamage(projectile.damage, projectile.isCritical);
 

@@ -30,33 +30,39 @@ const LEVEL_CLEAR_DELAY = 2; // s between the last kill and the upgrade menu
 const MAX_DT = 0.05; // s: a longer frame (hitch, tab switch) is simulated as this one, so nothing jumps
 const RELOCK_DELAY = 1000; // ms: Chrome refuses to lock the pointer again for about a second after Escape
 
-const UPGRADES = [
-    { id: 'damage', source: 'weapon', label: 'Dégâts' },
-    { id: 'fireRate', source: 'weapon', label: 'Cadence de tir' },
-    { id: 'reload', source: 'weapon', label: 'Rechargement' },
-    { id: 'ammo', source: 'weapon', label: 'Mana max' },
-    { id: 'range', source: 'weapon', label: 'Portée' },
-    { id: 'projectileSpeed', source: 'weapon', label: 'Vitesse des projectiles' },
-    { id: 'bulletCount', source: 'weapon', label: 'Tir multiple' },
-    { id: 'piercing', source: 'weapon', label: 'Perforation' },
-    { id: 'critChance', source: 'weapon', label: 'Chance de critique' },
-    { id: 'critDamage', source: 'weapon', label: 'Dégâts critiques' },
-    { id: 'maxHealth', source: 'player', label: 'Vie max' },
-    { id: 'armor', source: 'player', label: 'Armure' },
-    { id: 'vampirism', source: 'player', label: 'Vol de vie' },
-    { id: 'regen', source: 'player', label: 'Régénération' },
-    { id: 'speed', source: 'player', label: 'Vitesse' },
-    { id: 'knockback', source: 'weapon', label: 'Recul' },
-    { id: 'explosion', source: 'weapon', label: 'Explosion' },
-    { id: 'ricochet', source: 'weapon', label: 'Ricochet' },
-    { id: 'homing', source: 'weapon', label: 'Tête chercheuse' },
-    { id: 'meleeDamage', source: 'player', label: 'Coup de bâton' },
-    { id: 'immolation', source: 'player', label: "Aura d'immolation" },
-    { id: 'magnet', source: 'player', label: 'Aimant à butin' }
+// `for`: what an upgrade or a pact works on, written on its card so the player knows (WEAPON_TAGS)
+export const WEAPON_TAGS = { staff: 'Bâton', sword: 'Épée', both: 'Bâton + Épée', general: 'Général' };
+
+// `source`: who holds the level (Weapon is the staff)
+export const UPGRADES = [
+    { id: 'damage', source: 'weapon', for: 'staff', label: 'Dégâts du bâton' },
+    { id: 'fireRate', source: 'weapon', for: 'staff', label: 'Cadence de tir' },
+    { id: 'reload', source: 'weapon', for: 'staff', label: 'Rechargement' },
+    { id: 'ammo', source: 'weapon', for: 'staff', label: 'Mana max' },
+    { id: 'range', source: 'weapon', for: 'staff', label: 'Portée des tirs' },
+    { id: 'projectileSpeed', source: 'weapon', for: 'staff', label: 'Vitesse des projectiles' },
+    { id: 'bulletCount', source: 'weapon', for: 'staff', label: 'Tir multiple' },
+    { id: 'piercing', source: 'weapon', for: 'staff', label: 'Perforation' },
+    { id: 'critChance', source: 'weapon', for: 'both', label: 'Chance de critique' },
+    { id: 'critDamage', source: 'weapon', for: 'both', label: 'Dégâts critiques' },
+    { id: 'maxHealth', source: 'player', for: 'general', label: 'Vie max' },
+    { id: 'armor', source: 'player', for: 'general', label: 'Armure' },
+    { id: 'vampirism', source: 'player', for: 'both', label: 'Vol de vie' },
+    { id: 'regen', source: 'player', for: 'general', label: 'Régénération' },
+    { id: 'speed', source: 'player', for: 'general', label: 'Vitesse' },
+    { id: 'knockback', source: 'weapon', for: 'staff', label: 'Recul' },
+    { id: 'explosion', source: 'weapon', for: 'staff', label: 'Explosion' },
+    { id: 'ricochet', source: 'weapon', for: 'staff', label: 'Ricochet' },
+    { id: 'homing', source: 'weapon', for: 'staff', label: 'Tête chercheuse' },
+    { id: 'meleeDamage', source: 'sword', for: 'sword', label: "Dégâts de l'épée" },
+    { id: 'attackSpeed', source: 'sword', for: 'sword', label: "Vitesse d'attaque" },
+    { id: 'reach', source: 'sword', for: 'sword', label: 'Allonge' },
+    { id: 'immolation', source: 'player', for: 'general', label: "Aura d'immolation" },
+    { id: 'magnet', source: 'player', for: 'general', label: 'Aimant à butin' }
 ];
 
 const VITALITY_STATS = new Set(['maxHealth', 'armor', 'vampirism', 'regen', 'speed']);
-const ARCANA_STATS = new Set(['bulletCount', 'piercing', 'knockback', 'explosion', 'ricochet', 'homing', 'meleeDamage', 'immolation', 'magnet']);
+const ARCANA_STATS = new Set(['bulletCount', 'piercing', 'knockback', 'explosion', 'ricochet', 'homing', 'immolation', 'magnet']);
 const PERCENT_STATS = new Set(['armor', 'vampirism', 'critChance', 'critDamage', 'speed', 'explosion']);
 
 const upgradeCategory = (id) => (VITALITY_STATS.has(id) ? 'vitality' : ARCANA_STATS.has(id) ? 'arcana' : 'offense');
@@ -70,46 +76,69 @@ const formatUpgradeValue = (stat, n) => {
     if (stat === 'immolation') return unit(n, 'dégâts/s');
     if (stat === 'magnet') return unit(n, 'm');
     if (stat === 'regen') return unit(n, 'PV/s');
+    if (stat === 'attackSpeed') return unit(n, 'coups/s');
+    if (stat === 'reach') return unit(n, 'm');
     return num(n);
 };
 
 // Altar pacts: a lasting boon for a lasting price, each worth about what it costs so the choice is
-// about the build. An altar offers 2 at random; sealing one again stacks it.
+// about the build. An altar offers 2 at random; sealing one again stacks it. `for`: the weapon it works on
+// (WEAPON_TAGS), on its card. `apply(player, staff, sword)`.
 export const PACTS = [
-    // Offense
-    { id: 'blood', icon: 'blood', title: 'Pacte de sang', gain: '+40 % de dégâts', cost: '−25 % de vie max',
+    // Staff
+    { id: 'blood', for: 'staff', icon: 'blood', title: 'Pacte de sang', gain: '+40 % de dégâts du bâton', cost: '−25 % de vie max',
         apply: (p, w) => { p.pactHpMultiplier *= 0.75; w.pactDamageMultiplier *= 1.4; } },
-    { id: 'wizard', icon: 'wizard', title: 'Pacte du magicien', gain: '+50 % de cadence de tir', cost: '−20 % de dégâts',
+    { id: 'wizard', for: 'staff', icon: 'wizard', title: 'Pacte du magicien', gain: '+50 % de cadence de tir', cost: '−20 % de dégâts du bâton',
         apply: (p, w) => { w.pactDamageMultiplier *= 0.8; w.pactFireRateMultiplier *= 1.5; } },
-    { id: 'precision', icon: 'precision', title: 'Pacte de précision', gain: '+50 % de vitesse des projectiles', cost: "−20 % d'armure",
+    { id: 'precision', for: 'staff', icon: 'precision', title: 'Pacte de précision', gain: '+50 % de vitesse des projectiles', cost: "−20 % d'armure",
         apply: (p, w) => { w.pactProjectileSpeedMultiplier *= 1.5; p.pactArmorBonus -= 0.20; } },
-    { id: 'hunter', icon: 'hunter', title: 'Pacte du chasseur', gain: '+25 % de chance et +50 % de dégâts critiques', cost: '−15 % de cadence de tir',
+    { id: 'hunter', for: 'staff', icon: 'hunter', title: 'Pacte du chasseur', gain: '+25 % de chance et +50 % de dégâts critiques aux tirs', cost: '−15 % de cadence de tir',
         apply: (p, w) => { w.pactCritChance += 0.25; w.pactCritDamage += 0.5; w.pactFireRateMultiplier *= 0.85; } },
-    { id: 'storm', icon: 'storm', title: "Pacte de l'orage", gain: "Vos tirs sautent d'un ennemi touché sur 2 autres ennemis proches", cost: '−25 % de dégâts',
+    { id: 'storm', for: 'staff', icon: 'storm', title: "Pacte de l'orage", gain: "Vos tirs sautent d'un ennemi touché sur 2 autres ennemis proches", cost: '−25 % de dégâts du bâton',
         apply: (p, w) => { w.pactChain += 2; w.pactDamageMultiplier *= 0.75; } },
-    { id: 'cataclysm', icon: 'cataclysm', title: 'Pacte du cataclysme', gain: 'Tous les 8 ennemis tués, une onde de choc part de vous', cost: '−20 % de vie max',
-        apply: (p) => { p.pactShockwaveKills = 8; p.nextShockwaveAt = p.sessionStats.kills + 8; p.pactHpMultiplier *= 0.8; } },
-    { id: 'pyre', icon: 'pyre', title: 'Pacte du bûcher', gain: 'Aura de feu : +10 dégâts par seconde aux ennemis à moins de 9 m', cost: '−25 % de vitesse des projectiles',
+    { id: 'pyre', for: 'staff', icon: 'pyre', title: 'Pacte du bûcher', gain: 'Aura de feu : +10 dégâts par seconde aux ennemis à moins de 9 m', cost: '−25 % de vitesse des projectiles',
         apply: (p, w) => { p.pactImmolation += 10; w.pactProjectileSpeedMultiplier *= 0.75; } },
-    { id: 'pyromancy', icon: 'pyromancy', title: 'Pacte de pyromancie', gain: '+25 % de chance que vos tirs explosent', cost: 'Rechargement deux fois plus long',
+    { id: 'pyromancy', for: 'staff', icon: 'pyromancy', title: 'Pacte de pyromancie', gain: '+25 % de chance que vos tirs explosent', cost: 'Rechargement deux fois plus long',
         apply: (p, w) => { w.pactExplosion += 0.25; w.pactReloadMultiplier *= 2; } },
-    // Defense
-    { id: 'colossus', icon: 'colossus', title: 'Pacte du colosse', gain: '+50 % de vie max', cost: '−25 % de dégâts',
+    { id: 'colossus', for: 'staff', icon: 'colossus', title: 'Pacte du colosse', gain: '+50 % de vie max', cost: '−25 % de dégâts du bâton',
         apply: (p, w) => { p.pactHpMultiplier *= 1.5; w.pactDamageMultiplier *= 0.75; } },
-    { id: 'aegis', icon: 'aegis', title: "Pacte de l'égide", gain: 'Un bouclier de 40 points se recharge après 4 s sans dégâts', cost: "−50 % d'or ramassé",
-        apply: (p) => { p.pactShieldCap = Math.max(p.pactShieldCap, 40); p.pactGoldMultiplier *= 0.5; } },
-    { id: 'armor', icon: 'armor_pact', title: "Pacte d'armure", gain: "+20 % d'armure", cost: '−15 % de vitesse',
-        apply: (p) => { p.pactSpeedMultiplier *= 0.85; p.pactArmorBonus += 0.20; } },
-    { id: 'resilience', icon: 'resilience', title: 'Pacte de résilience', gain: 'Régénère 2 PV par seconde', cost: '−20 % de dégâts',
+    { id: 'resilience', for: 'staff', icon: 'resilience', title: 'Pacte de résilience', gain: 'Régénère 2 PV par seconde', cost: '−20 % de dégâts du bâton',
         apply: (p, w) => { w.pactDamageMultiplier *= 0.8; p.healthRegen += 2; } },
-    { id: 'vampire', icon: 'vampire', title: 'Pacte de vampirisme', gain: '+20 % de vol de vie', cost: 'Perd 1 PV par seconde',
-        apply: (p) => { p.pactVampirism += 0.20; p.healthRegen -= 1; } },
-    // Movement and fortune
-    { id: 'speed', icon: 'speed_pact', title: 'Pacte de vitesse', gain: '+30 % de vitesse', cost: '−20 % de vie max',
-        apply: (p) => { p.pactSpeedMultiplier *= 1.30; p.pactHpMultiplier *= 0.80; } },
-    { id: 'wings', icon: 'wings', title: 'Pacte des ailes', gain: "Sauts 50 % plus hauts : assez pour monter sur un mur d'un étage", cost: '−25 % de mana max',
+    { id: 'wings', for: 'staff', icon: 'wings', title: 'Pacte des ailes', gain: "Sauts 50 % plus hauts : assez pour monter sur un mur d'un étage", cost: '−25 % de mana max',
         apply: (p, w) => { p.pactJumpMultiplier *= Math.sqrt(1.5); w.pactAmmoMultiplier *= 0.75; } }, // Jump height grows with the square of the impulse
-    { id: 'greed', icon: 'greed', title: 'Pacte de cupidité', gain: "Double l'or ramassé", cost: 'Les potions au sol soignent moitié moins',
+    // Sword
+    { id: 'berserker', for: 'sword', icon: 'berserker', title: 'Pacte du berserker', gain: "+40 % de dégâts de l'épée", cost: '−25 % de vie max',
+        apply: (p, w, s) => { s.pactDamageMultiplier *= 1.4; p.pactHpMultiplier *= 0.75; } },
+    { id: 'duelist', for: 'sword', icon: 'duelist', title: 'Pacte du duelliste', gain: "+50 % de vitesse d'attaque", cost: "−20 % de dégâts de l'épée",
+        apply: (p, w, s) => { s.pactSpeedMultiplier *= 1.5; s.pactDamageMultiplier *= 0.8; } },
+    { id: 'reach', for: 'sword', icon: 'reach_pact', title: "Pacte de l'allonge", gain: "+50 % de portée de l'épée", cost: "−20 % d'armure",
+        apply: (p, w, s) => { s.pactReachMultiplier *= 1.5; p.pactArmorBonus -= 0.20; } },
+    { id: 'executioner', for: 'sword', icon: 'executioner', title: 'Pacte du bourreau', gain: "+25 % de chance et +50 % de dégâts critiques à l'épée", cost: "−15 % de vitesse d'attaque",
+        apply: (p, w, s) => { s.pactCritChance += 0.25; s.pactCritDamage += 0.5; s.pactSpeedMultiplier *= 0.85; } },
+    { id: 'whirlwind', for: 'sword', icon: 'whirlwind', title: 'Pacte du tourbillon', gain: "L'épée frappe tout autour de vous (360°)", cost: "−25 % de dégâts de l'épée",
+        apply: (p, w, s) => { s.whirlwind = true; s.pactDamageMultiplier *= 0.75; } },
+    { id: 'riposte', for: 'sword', icon: 'riposte', title: 'Pacte de la riposte', gain: "Après une parade parfaite, votre coup d'épée suivant fait triple dégâts", cost: '−15 % de vie max',
+        apply: (p, w, s) => { s.riposte = true; p.pactHpMultiplier *= 0.85; } },
+    { id: 'mirror', for: 'sword', icon: 'mirror', title: 'Pacte du miroir', gain: 'Les projectiles parés repartent avec deux fois leurs dégâts', cost: "−20 % de dégâts de l'épée",
+        apply: (p, w, s) => { s.mirror *= 2; s.pactDamageMultiplier *= 0.8; } },
+    { id: 'greedyBlade', for: 'sword', icon: 'greedy_blade', title: 'Pacte de la lame avide', gain: "Chaque ennemi touché à l'épée rend 5 mana au bâton", cost: '−25 % de mana max',
+        apply: (p, w, s) => { s.manaOnHit += 5; w.pactAmmoMultiplier *= 0.75; } },
+    { id: 'leech', for: 'sword', icon: 'leech', title: 'Pacte de la sangsue', gain: "Vos coups d'épée volent 15 % de vie", cost: 'Perd 1 PV par seconde',
+        apply: (p, w, s) => { s.lifeSteal += 0.15; p.healthRegen -= 1; } },
+    { id: 'wave', for: 'sword', icon: 'wave', title: "Pacte de la lame d'onde", gain: "Chaque coup d'épée lance une onde tranchante jusqu'à 8 m", cost: "−30 % de vitesse d'attaque",
+        apply: (p, w, s) => { s.waves += 1; s.pactSpeedMultiplier *= 0.7; } },
+    // General
+    { id: 'cataclysm', for: 'general', icon: 'cataclysm', title: 'Pacte du cataclysme', gain: 'Tous les 8 ennemis tués, une onde de choc part de vous', cost: '−20 % de vie max',
+        apply: (p) => { p.pactShockwaveKills = 8; p.nextShockwaveAt = p.sessionStats.kills + 8; p.pactHpMultiplier *= 0.8; } },
+    { id: 'aegis', for: 'general', icon: 'aegis', title: "Pacte de l'égide", gain: 'Un bouclier de 40 points se recharge après 4 s sans dégâts', cost: "−50 % d'or ramassé",
+        apply: (p) => { p.pactShieldCap = Math.max(p.pactShieldCap, 40); p.pactGoldMultiplier *= 0.5; } },
+    { id: 'armor', for: 'general', icon: 'armor_pact', title: "Pacte d'armure", gain: "+20 % d'armure", cost: '−15 % de vitesse',
+        apply: (p) => { p.pactSpeedMultiplier *= 0.85; p.pactArmorBonus += 0.20; } },
+    { id: 'vampire', for: 'general', icon: 'vampire', title: 'Pacte de vampirisme', gain: '+20 % de vol de vie (bâton et épée)', cost: 'Perd 1 PV par seconde',
+        apply: (p) => { p.pactVampirism += 0.20; p.healthRegen -= 1; } },
+    { id: 'speed', for: 'general', icon: 'speed_pact', title: 'Pacte de vitesse', gain: '+30 % de vitesse', cost: '−20 % de vie max',
+        apply: (p) => { p.pactSpeedMultiplier *= 1.30; p.pactHpMultiplier *= 0.80; } },
+    { id: 'greed', for: 'general', icon: 'greed', title: 'Pacte de cupidité', gain: "Double l'or ramassé", cost: 'Les potions au sol soignent moitié moins',
         apply: (p) => { p.pactGoldMultiplier *= 2; p.pactPotionMultiplier *= 0.5; } }
 ];
 
@@ -628,7 +657,8 @@ export class Game {
     // ─── Upgrade menu ────────────────────────────────────────────────────────
 
     _upgradeSource(item) {
-        return item.source === 'weapon' ? this.player.weapon : this.player;
+        if (item.source === 'weapon') return this.player.weapon;
+        return item.source === 'sword' ? this.player.sword : this.player;
     }
 
     getAvailableUpgrades() {
@@ -755,6 +785,7 @@ export class Game {
         card.disabled = !usable;
         card.innerHTML = `
             <span class="upgrade-card__face">
+                <span class="weapon-tag weapon-tag--${item.for}">${WEAPON_TAGS[item.for]}</span>
                 <span class="upgrade-card__sigil">${SVG_ICONS[item.id] || ''}</span>
                 <span class="upgrade-card__name">${item.label}</span>
                 <span class="upgrade-card__values"><span>${current}</span><span class="upgrade-card__next">${next}</span></span>
@@ -826,6 +857,7 @@ export class Game {
         const [p1, p2] = shuffle([...PACTS]);
         document.getElementById('altar-grid-container').innerHTML = [p1, p2].map(pact => `
             <article class="pact">
+                <span class="weapon-tag weapon-tag--${pact.for}">${WEAPON_TAGS[pact.for]}</span>
                 <span class="pact__sigil">${SVG_ICONS[pact.icon]}</span>
                 <h3 class="pact__title">${pact.title}</h3>
                 <p class="pact__gain">${pact.gain}</p>
@@ -839,12 +871,13 @@ export class Game {
         const pact = PACTS.find(p => p.id === pactId);
         if (!this.currentAltar || !pact) return;
 
-        pact.apply(this.player, this.player.weapon);
+        pact.apply(this.player, this.player.weapon, this.player.sword);
         soundManager.play('pact');
         this.player.recalculateStats();
         this.player.weapon.recalculateStats();
+        this.player.sword.recalculateStats();
         this.player.updateHUD();
-        this.hudManager.showMessage(`${pact.title} scellé : ${pact.gain}, ${pact.cost.charAt(0).toLowerCase()}${pact.cost.slice(1)}`);
+        this.hudManager.showMessage(`${pact.title} (${WEAPON_TAGS[pact.for]}) scellé : ${pact.gain}, ${pact.cost.charAt(0).toLowerCase()}${pact.cost.slice(1)}`);
         this.closeAltarMenu();
     }
 

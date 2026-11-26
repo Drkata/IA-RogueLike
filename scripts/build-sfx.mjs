@@ -33,9 +33,12 @@ const SOUNDS = [
     ['melee-1', 'rpgPack', `${R}/battle/swing.wav`],
     ['melee-2', 'rpgPack', `${R}/battle/swing2.wav`],
     ['melee-3', 'rpgPack', `${R}/battle/swing3.wav`],
-    ['melee-hit-1', 'woodmetal', 'wood_hit_01.ogg'],
-    ['melee-hit-2', 'woodmetal', 'wood_hit_03.ogg'],
-    ['melee-hit-3', 'woodmetal', 'wood_hit_04.ogg'],
+    ['melee-hit-1', 'kenneyRpg', `${K}/knifeSlice.ogg`, 0.45], // The sword's blade cutting in
+    ['melee-hit-2', 'kenneyRpg', `${K}/knifeSlice2.ogg`, 0.45],
+    ['sword-draw', 'rpgPack', `${R}/battle/sword-unsheathe5.wav`],
+    ['staff-draw', 'kenneyRpg', `${K}/cloth3.ogg`],
+    ['parry', 'rpgPack', `${R}/inventory/metal-ringing.wav`], // A clear ring: the shot goes back
+    ['block', 'woodmetal', 'metal_hit_04.ogg', 0, 'lowpass=f=2500'], // A dull clank: the guard took it
     ['reload', 'cc100', 'glass_04.ogg', 0, DRAW_IN], // ~1.4 s swell
     ['reload-done', 'cc100', 'glass_04.ogg', 0.8, OCTAVE],
     ['empty', 'rpg80', 'spell_02.ogg', 0.22, 'lowpass=f=600,lowpass=f=600'], // The shot's own spell, stifled

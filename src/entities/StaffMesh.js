@@ -34,6 +34,15 @@ function inFront(renderer) {
 function restoreDepth(renderer) {
     renderer.getContext().depthRange(0, 1);
 }
+// Every part of a first-person model (staff, sword) is drawn that way
+export function drawInFront(root) {
+    root.traverse(obj => {
+        if (obj.isMesh || obj.isSprite || obj.isPoints) {
+            obj.onBeforeRender = inFront;
+            obj.onAfterRender = restoreDepth;
+        }
+    });
+}
 
 class Helix extends THREE.Curve {
     constructor(radius, z0, z1, turns) {
@@ -237,11 +246,6 @@ export function buildStaff(tier) {
     motes.frustumCulled = false; // Moved every frame: its bounding sphere would be stale
     group.add(motes);
 
-    group.traverse(obj => {
-        if (obj.isMesh || obj.isSprite || obj.isPoints) {
-            obj.onBeforeRender = inFront;
-            obj.onAfterRender = restoreDepth;
-        }
-    });
+    drawInFront(group);
     return { group, orb, glow, motes, spinners };
 }

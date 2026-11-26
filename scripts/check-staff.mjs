@@ -1,5 +1,6 @@
 // The player's staff in plain Node (no browser): `npm run check:staff`. Builds every tier, then plays
-// every animation (walk, turn, shots, reload, dry fire, melee, idle twirl) and fails on any broken invariant.
+// every animation (walk, turn, shots, reload, dry fire, charged shot, putting it away, idle twirl) and fails
+// on any broken invariant.
 import * as THREE from 'three';
 import assert from 'assert/strict';
 const noop = () => {};
@@ -21,7 +22,7 @@ soundManager.play = (name, position, rate, endIn) => {
   played.push(name);
   if (name === 'reload') reloadEndsIn = endIn;
 };
-const { Weapon } = await import('../src/entities/Weapon.js');
+const { Weapon, CHARGE_TIME } = await import('../src/entities/Weapon.js');
 const { HEAD_Z, STAFF_TIERS, staffTier } = await import('../src/entities/StaffMesh.js');
 
 const camera = new THREE.PerspectiveCamera(75, 16 / 9, 0.1, 1000);
@@ -88,10 +89,37 @@ run(1, 0, () => weapon.shoot()); // Dry fire, held down for a second
 const dry = played.filter(n => n === 'empty').length;
 assert.ok(dry >= 2 && dry <= Math.ceil(1 / weapon.fireRate) + 1, `dry fire played ${dry} times in 1 s`);
 
-assert.ok(weapon.melee());
 run(1);
-assert.ok(!weapon.isMeleeing);
 assert.ok(!motes.visible && Math.abs(orb.position.z - HEAD_Z) < 0.006, 'crystal not back home after the reload');
+
+// Charged shot: needs mana, blocks shots and reloads while gathering, then empties the clip at once
+weapon.refill();
+assert.ok(weapon.startCharge() && !weapon.startCharge(), 'a charge must start once');
+assert.equal(weapon.shoot(), 0, 'no shot while charging');
+run(CHARGE_TIME / 2);
+assert.ok(weapon.chargeProgress() > 0.4 && weapon.chargeProgress() < 0.6 && motes.visible);
+weapon.cancelCharge();
+assert.ok(!weapon.charging && weapon.currentAmmo === weapon.maxAmmo, 'a cancelled charge keeps the clip');
+weapon.startCharge();
+run(CHARGE_TIME + dt);
+assert.equal(weapon.chargeProgress(), 1);
+assert.equal(weapon.releaseCharge(), weapon.maxAmmo);
+assert.equal(weapon.currentAmmo, 0);
+assert.ok(!weapon.startCharge(), 'no charge with an empty clip');
+weapon.reserveAmmo = 100;
+weapon.reload();
+run(0.2);
+weapon.cancelReload(); // Put away mid-reload: the reload is lost
+assert.ok(!weapon.isReloading && weapon.currentAmmo === 0);
+
+// Put away: hidden below the view, its light kept
+weapon.holster = 1;
+run(0.1);
+assert.ok(!weapon.staff.group.visible && lights() === 1 && weapon.gunMesh.position.y < -0.6);
+weapon.holster = 0;
+weapon.refill();
+run(0.1);
+assert.ok(weapon.staff.group.visible);
 
 maxRoll = 0;
 run(10); // Calm: the staff twirls once

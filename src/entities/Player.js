@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { CONSTANTS } from '../core/Constants.js';
 import { Weapon } from './Weapon.js';
+import { GUARD_DAMAGE, GUARD_SLOW, Sword } from './Sword.js';
+import { WAVE_GEOMETRY } from './SwordMesh.js';
 import { Projectile } from './Projectile.js';
 import { soundManager } from '../systems/SoundManager.js';
 import { PALETTE } from '../core/Palette.js';
@@ -17,6 +19,8 @@ const COYOTE_TIME = 0.12; // s after walking off a ledge during which a jump sti
 const AEGIS_DELAY = 4; // s unhurt before the Aegis pact's shield refills
 const AEGIS_RATE = 10; // Shield points per second
 const STATS_REFRESH = 0.25; // s: the HUD stats ledger is costly to rebuild, so play refreshes it 4 times a second
+const SWITCH_TIME = 0.4; // s to put one weapon away and take the other in hand
+const WAVE = { speed: 20, range: 8, scale: 2, size: 0.6, spread: 0.15 }; // Wave pact's blade waves (spread: rad between two)
 
 // Zero-allocation scratch vectors for the per-frame code
 const _forward = new THREE.Vector3();
@@ -33,7 +37,7 @@ const _contact = { normal: new THREE.Vector3(), depth: 0 };
 // Body sample points (offsets from the eyes) tested against floating islands: feet, waist, head
 const BODY_POINTS = [-EYE_HEIGHT + 0.3, -0.8, 0];
 
-const newUpgradeStats = () => ({ maxHealth: 0, armor: 0, vampirism: 0, regen: 0, speed: 0, meleeDamage: 0, immolation: 0, magnet: 0 });
+const newUpgradeStats = () => ({ maxHealth: 0, armor: 0, vampirism: 0, regen: 0, speed: 0, immolation: 0, magnet: 0 });
 
 const newSessionStats = () => ({
     damageDealt: 0,
@@ -67,7 +71,12 @@ export class Player {
         this.yaw = 0;
         this.pitch = 0;
 
+        // Two weapons, one in hand: the staff (Weapon) and the sword
         this.weapon = new Weapon(this.camera);
+        this.sword = new Sword(this.camera);
+        this.activeWeapon = 'staff';
+        this.switchTimer = 0; // s left in a weapon switch
+        this.chargeLatch = false; // A charged shot went: the next one takes a new right click
 
         this.maxHealth = 100;
         this.health = this.maxHealth;
@@ -96,9 +105,10 @@ export class Player {
         this.updateHUD();
     }
 
-    // Permanent modifiers granted by altar pacts
+    // Permanent modifiers granted by altar pacts, and fountains
     resetPacts() {
         this.pactHpMultiplier = 1.0;
+        this.fountainHp = 0; // Flat max health from fountains of youth, after the pact multiplier
         this.pactSpeedMultiplier = 1.0;
         this.pactArmorBonus = 0;
         this.pactVampirism = 0;
@@ -182,6 +192,10 @@ export class Player {
         }
 
         this.weapon.reset();
+        this.sword.reset();
+        this.activeWeapon = 'staff';
+        this.switchTimer = 0;
+        this.chargeLatch = false;
         this.resetBuffs();
         this.recalculateStats();
     }
@@ -235,6 +249,7 @@ export class Player {
         if (!this.hudManager) return;
         this.hudManager.updateHealth(this.health, this.maxHealth, this.shield);
         this.hudManager.updateAmmo(this.weapon.currentAmmo, this.weapon.reserveAmmo);
+        this.hudManager.updateWeapon(this.activeWeapon);
         if (withStats) this.hudManager.updateStats(this);
         this.hudManager.updateGold(this.gold);
         this.hudManager.updateBerserk(this.isBerserk, this.berserkTimer, this.berserkMaxDuration);
@@ -260,11 +275,7 @@ export class Player {
         this.handleRotation();
         this.handleMovement(dt);
 
-        if (this.input.isKeyDown('Mouse0')) this.handleShooting();
-        if (this.input.isKeyDown('Mouse1')) this.handleMelee();
-        if (this.input.isKeyDown('KeyR')) this.weapon.reload();
-
-        this.weapon.update(dt, this.onGround ? Math.hypot(this.velocity.x, this.velocity.z) : 0);
+        this.handleWeapons(dt);
         this.updateImmolation(dt);
 
         // Cataclysm pact: every few kills, a shockwave from the player's feet
@@ -338,33 +349,178 @@ export class Player {
         }
     }
 
-    // Staff bash: hits the closest enemy in a 45° cone within 3m and knocks it back
-    handleMelee() {
-        if (!this.weapon.melee()) return;
+    // One weapon in hand. Q (A on AZERTY) or the mouse wheel switch, 1 takes the staff, 2 the sword. Left
+    // click attacks with the weapon in hand; right click is its second move: the staff's charged shot,
+    // the sword's guard.
+    handleWeapons(dt) {
+        const input = this.input;
+        const toggle = input.consumeKey('KeyQ') | input.consumeKey('Wheel'); // Both read, so neither lingers
+        let wanted = toggle ? (this.activeWeapon === 'staff' ? 'sword' : 'staff') : this.activeWeapon;
+        if (input.consumeKey('Digit1')) wanted = 'staff';
+        if (input.consumeKey('Digit2')) wanted = 'sword';
+        if (wanted !== this.activeWeapon && this.switchTimer <= 0) this.switchWeapon(wanted);
+
+        const w = this.weapon;
+        const s = this.sword;
+        const secondary = input.isKeyDown('Mouse1');
+        if (this.switchTimer > 0) {
+            this.switchTimer = Math.max(0, this.switchTimer - dt);
+        } else if (this.activeWeapon === 'staff') {
+            if (input.isKeyDown('Mouse0')) this.handleShooting();
+            this.handleCharge(secondary);
+            if (input.isKeyDown('KeyR')) w.reload();
+        } else {
+            s.setGuard(secondary);
+            if (input.isKeyDown('Mouse0')) this.handleSwing();
+        }
+
+        // Switching, the weapon in hand goes down over the first half, then the other comes up
+        const k = this.switchTimer > 0 ? 1 - this.switchTimer / SWITCH_TIME : 1;
+        const incoming = 1 - THREE.MathUtils.smoothstep(k, 0.5, 1);
+        const outgoing = THREE.MathUtils.smoothstep(k, 0, 0.5);
+        w.holster = this.activeWeapon === 'staff' ? incoming : outgoing;
+        s.holster = this.activeWeapon === 'sword' ? incoming : outgoing;
+        const walk = this.onGround ? Math.hypot(this.velocity.x, this.velocity.z) : 0;
+        w.update(dt, walk);
+        s.update(dt, walk);
+    }
+
+    // Puts the weapon in hand away (its reload or charge is lost) and takes the other
+    switchWeapon(to) {
+        this.activeWeapon = to;
+        this.switchTimer = SWITCH_TIME;
+        this.weapon.cancelCharge();
+        this.weapon.cancelReload();
+        this.sword.setGuard(false);
+        this.chargeLatch = false;
+        soundManager.play(to === 'sword' ? 'swordDraw' : 'staffDraw');
+    }
+
+    // Right click with the staff: held still for CHARGE_TIME, the whole clip leaves as one bolt; let go before, nothing
+    handleCharge(held) {
+        const w = this.weapon;
+        if (!held) {
+            this.chargeLatch = false;
+            w.cancelCharge();
+            return;
+        }
+        if (this.chargeLatch) return;
+        if (!w.charging && !w.startCharge()) {
+            // No mana in the clip to gather (during a reload, the charge starts once it is done)
+            if (!w.isReloading) {
+                soundManager.play('empty');
+                this.chargeLatch = true;
+            }
+            return;
+        }
+        if (w.chargeProgress() >= 1) {
+            this.fireChargedShot();
+            this.chargeLatch = true;
+        }
+    }
+
+    // A staff bolt's effects: everything the staff's upgrades and pacts give a shot
+    _shotOptions(isCritical) {
+        const w = this.weapon;
+        return {
+            piercing: w.piercing,
+            isCritical,
+            knockback: w.knockback,
+            explosion: w.explosion,
+            sourceName: 'Player',
+            sourceId: -1,
+            maxDistance: w.range,
+            ricochet: w.ricochet,
+            chain: w.chain,
+            homingLevel: w.stats.homing
+        };
+    }
+
+    // The charged shot: one bolt with the damage of every mana in the clip (one shot's damage each), as big as
+    // the mana in it
+    fireChargedShot() {
+        const w = this.weapon;
+        const ammo = w.releaseCharge();
+        const isCritical = Math.random() < w.critChance;
+        const scale = 1 + Math.min(ammo, 60) / 15;
+        _dir.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+        _startPos.copy(this.camera.position).addScaledVector(_dir, 0.5);
+        this.sessionStats.shotsFired++;
+        soundManager.play('chargeShot');
+        const damage = w.damage * ammo * (isCritical ? w.critDamage : 1);
+        this.entityManager.add(new Projectile(_startPos, _dir, w.projectileSpeed, damage, this.levelManager, {
+            ...this._shotOptions(isCritical),
+            scale,
+            size: 0.1 * scale
+        }));
+    }
+
+    // Sword strike: every enemy within reach, in the arc and in sight. Crits come from the shared crit
+    // upgrades (not the staff's pacts) plus the sword's pacts; life steal is the player's plus the sword's.
+    handleSwing() {
+        const s = this.sword;
+        if (!s.swing()) return;
         soundManager.play('melee');
+        const w = this.weapon;
+        const critChance = s.critChance(w);
+        const critDamage = s.critDamage(w);
+        const damage = s.damage * s.takeRiposte();
+        const stats = this.sessionStats;
+        _forward.set(0, 0, -1).applyAxisAngle(_yAxis, this.yaw);
+        for (const enemy of this.entityManager.entities) {
+            if (enemy.entityType !== 'enemy' || enemy.isDead || !s.inArc(this.position, _forward, enemy)) continue;
+            if (!this.levelManager.pathfinder.hasLineOfSight(this.position, enemy.position, 0)) continue;
+            const isCritical = Math.random() < critChance;
+            const dealt = damage * (isCritical ? critDamage : 1);
+            const died = enemy.takeDamage(dealt, isCritical);
+            stats.damageDealt += dealt;
+            if (died) stats.kills++;
+            if (isCritical) stats.critCount++;
+            stats.maxDamageHit = Math.max(stats.maxDamageHit, dealt);
+            const steal = this.vampirism + s.lifeSteal;
+            if (steal > 0) this.heal(dealt * steal);
+            if (enemy.ai) enemy.ai.knockback(enemy.position.x - this.position.x, enemy.position.z - this.position.z, 1.0);
+            if (s.manaOnHit > 0) w.currentAmmo = Math.min(w.maxAmmo, w.currentAmmo + s.manaOnHit);
+            this.entityManager.createHitEffect(enemy.position, isCritical);
+            soundManager.play(isCritical ? 'crit' : 'meleeHit', enemy.position);
+        }
+        // Wave pact: blade waves fly on from the strike, through every enemy in their way
+        for (let i = 0; i < s.waves; i++) {
+            _dir.set(0, 0, -1).applyQuaternion(this.camera.quaternion).applyAxisAngle(_yAxis, (i - (s.waves - 1) / 2) * WAVE.spread);
+            _startPos.copy(this.camera.position).addScaledVector(_dir, 0.6);
+            this.entityManager.add(new Projectile(_startPos, _dir, WAVE.speed, damage, this.levelManager, {
+                piercing: Infinity,
+                sourceName: 'Player',
+                sourceId: -1,
+                maxDistance: WAVE.range,
+                color: PALETTE.aetherBright,
+                geometry: WAVE_GEOMETRY,
+                scale: WAVE.scale,
+                size: WAVE.size
+            }));
+        }
+    }
 
-        const range = 3.0;
-        const damage = 10 + this.stats.meleeDamage * 15;
-        _forward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
-
-        let closestEnemy = null;
-        let closestDist = Infinity;
-        for (const entity of this.entityManager.entities) {
-            if (entity.entityType !== 'enemy' || entity.isDead) continue;
-            _toEnemy.subVectors(entity.position, this.camera.position);
-            const dist = _toEnemy.length();
-            if (dist < range + entity.radius && dist < closestDist && _toEnemy.angleTo(_forward) < Math.PI / 4) {
-                closestDist = dist;
-                closestEnemy = entity;
+    // An enemy shot reaches the player: the sword's guard may send it back or soften it (not a falling meteor)
+    takeShot(shot) {
+        if (this.activeWeapon === 'sword' && shot.gravity === 0) {
+            _forward.set(0, 0, -1).applyAxisAngle(_yAxis, this.yaw);
+            const guard = this.sword.meetShot(shot.direction, _forward);
+            if (guard === 'parry') {
+                shot.reflect(this.sword.mirror);
+                soundManager.play('parry');
+                this.entityManager.createHitEffect(shot.position, true);
+                return;
+            }
+            if (guard === 'block') {
+                soundManager.play('block');
+                this.takeDamage(shot.damage * GUARD_DAMAGE, shot.sourceName, shot.sourceId);
+                shot.isDead = true;
+                return;
             }
         }
-        if (!closestEnemy) return;
-
-        closestEnemy.takeDamage(damage);
-        if (closestEnemy.ai) {
-            closestEnemy.ai.knockback(closestEnemy.position.x - this.camera.position.x, closestEnemy.position.z - this.camera.position.z, 1.0);
-        }
-        soundManager.play('meleeHit', closestEnemy.position);
+        this.takeDamage(shot.damage, shot.sourceName, shot.sourceId);
+        shot.isDead = true;
     }
 
     handleShooting() {
@@ -389,18 +545,8 @@ export class Player {
             const isCritical = Math.random() < w.critChance;
             _startPos.copy(this.camera.position).addScaledVector(_dir, 0.5);
 
-            this.entityManager.add(new Projectile(_startPos, _dir, w.projectileSpeed, isCritical ? w.damage * w.critDamage : w.damage, this.levelManager, {
-                piercing: w.piercing,
-                isCritical,
-                knockback: w.knockback,
-                explosion: w.explosion,
-                sourceName: 'Player',
-                sourceId: -1,
-                maxDistance: w.range,
-                ricochet: w.ricochet,
-                chain: w.chain,
-                homingLevel: w.stats.homing
-            }));
+            this.entityManager.add(new Projectile(_startPos, _dir, w.projectileSpeed, isCritical ? w.damage * w.critDamage : w.damage, this.levelManager,
+                this._shotOptions(isCritical)));
         }
     }
 
@@ -423,7 +569,8 @@ export class Player {
     }
 
     handleMovement(dt) {
-        const speed = this.speed * this.slowMultiplier;
+        const rooted = this.weapon.charging; // The charged shot is gathered standing still
+        const speed = this.speed * this.slowMultiplier * (this.sword.guarding ? GUARD_SLOW : 1);
         _forward.set(0, 0, -1).applyAxisAngle(_yAxis, this.yaw);
         _right.set(1, 0, 0).applyAxisAngle(_yAxis, this.yaw);
 
@@ -436,14 +583,14 @@ export class Player {
         const axis = this.input.moveAxis;
         _moveDir.addScaledVector(_forward, axis.y).addScaledVector(_right, axis.x);
         const len = _moveDir.length();
-        if (len > 0) _moveDir.multiplyScalar(speed * Math.min(1, len) / len);
+        if (len > 0) _moveDir.multiplyScalar(rooted ? 0 : speed * Math.min(1, len) / len);
 
         this.velocity.x = _moveDir.x;
         this.velocity.z = _moveDir.z;
 
         // A jump pressed a hair after walking off a ledge still counts (coyote time)
         this.airTime = this.onGround ? 0 : this.airTime + dt;
-        if (this.input.isKeyDown('Space') && this.airTime < COYOTE_TIME && !this.jumping) {
+        if (this.input.isKeyDown('Space') && this.airTime < COYOTE_TIME && !this.jumping && !rooted) {
             this.velocity.y = CONSTANTS.JUMP_FORCE * this.pactJumpMultiplier;
             this.onGround = false;
             this.jumping = true;
@@ -534,7 +681,7 @@ export class Player {
     recalculateStats() {
         // Max Health: +25 per level, heal the difference so the upgrade feels good immediately
         const oldMax = this.maxHealth;
-        this.maxHealth = Math.max(25, this.getStatValue('maxHealth', this.stats.maxHealth) * this.pactHpMultiplier);
+        this.maxHealth = Math.max(25, this.getStatValue('maxHealth', this.stats.maxHealth) * this.pactHpMultiplier + this.fountainHp);
         if (this.maxHealth > oldMax) this.health += this.maxHealth - oldMax;
         this.health = Math.min(this.health, this.maxHealth);
 
@@ -555,7 +702,6 @@ export class Player {
             case 'vampirism': return level * 2; // +2% life steal per level
             case 'regen': return level * 0.3; // HP per second
             case 'speed': return (1 + level * 0.08) * 100; // +8% per level
-            case 'meleeDamage': return 10 + level * 15;
             case 'immolation': return level * 5; // Damage per second
             case 'magnet': return PICKUP_RANGE + level * 1.3; // Pickup range in metres: 2 m without the upgrade, 15 m at level 10
             default: return 0;

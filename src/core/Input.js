@@ -16,6 +16,13 @@ export class Input {
         document.addEventListener('mousemove', (e) => this.onMouseMove(e));
         document.addEventListener('mousedown', (e) => this.onMouseDown(e));
         document.addEventListener('mouseup', (e) => this.onMouseUp(e));
+        // The wheel switches weapons: one switch per scroll, however many events a trackpad sends for it
+        this.lastWheel = 0;
+        document.addEventListener('wheel', (e) => {
+            if (!document.pointerLockElement) return; // Menus scroll
+            if (e.timeStamp - this.lastWheel > 400) this.keys.Wheel = true;
+            this.lastWheel = e.timeStamp;
+        }, { passive: true });
         // Clicking the game locks the pointer (first click of a run). Menus ask for it themselves when they
         // close (Game._resume): their click must not request it a second time on its way up.
         document.addEventListener('click', () => window.game?.isPaused || this.requestPointerLock());

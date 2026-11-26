@@ -281,6 +281,68 @@ canvas {
     color: var(--ember-bright);
 }
 
+/* Above the mana: the two weapons, the one in hand lit */
+.weapons {
+    position: absolute;
+    right: 28px;
+    bottom: 108px;
+    display: flex;
+    gap: 8px;
+}
+
+.weapons__slot {
+    position: relative;
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--rule-faint);
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--ink) 60%, transparent);
+    opacity: 0.45;
+    transition: opacity 0.15s ease, border-color 0.15s ease;
+}
+
+.weapons__slot.is-active {
+    opacity: 1;
+    border-color: var(--gilt-bright);
+}
+
+.weapons__slot .ico {
+    width: 24px;
+    height: 24px;
+}
+
+.weapons__slot kbd {
+    position: absolute;
+    right: -4px;
+    bottom: -4px;
+    padding: 0 3px;
+    font: 700 10px/1.4 var(--font-text);
+    color: var(--vellum-dim);
+    background: var(--ink-deep);
+    border: 1px solid var(--rule-faint);
+    border-radius: 3px;
+}
+
+/* What an upgrade or a pact works on: the staff, the sword, both, or the player */
+.weapon-tag {
+    padding: 2px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--ink-deep) 80%, transparent);
+}
+
+.weapon-tag--staff { color: var(--aether-bright); }
+.weapon-tag--sword { color: var(--vellum); }
+.weapon-tag--both { color: var(--gilt-bright); }
+.weapon-tag--general { color: var(--sage); }
+
 /* Bottom centre: stats ledger and buffs */
 .ledger--hud {
     position: absolute;
@@ -1352,7 +1414,24 @@ body:has(.overlay:not([hidden])) #crosshair {
 }
 
 .touch-btn--jump { right: 111px; bottom: 16px; }
-.touch-btn--melee { right: 83px; bottom: 83px; }
+.touch-btn--secondary { right: 83px; bottom: 83px; }
+.touch-btn--switch { right: 168px; bottom: 76px; border-color: var(--gilt); }
+
+/* Two-icon buttons show the staff's or the sword's move */
+.touch-btn .for-staff,
+.touch-btn .for-sword {
+    display: grid;
+    place-items: center;
+}
+
+.touch-btn .for-sword,
+.weapon-sword .touch-btn .for-staff {
+    display: none;
+}
+
+.weapon-sword .touch-btn .for-sword {
+    display: grid;
+}
 .touch-btn--reload { right: 16px; bottom: 111px; }
 .touch-btn--action { right: 140px; bottom: 140px; border-color: var(--gilt); }
 
@@ -1368,6 +1447,16 @@ body:has(.overlay:not([hidden])) #crosshair {
     bottom: auto;
     left: auto;
     width: min(240px, 30vw);
+}
+
+.is-touch .weapons {
+    top: calc(max(12px, env(safe-area-inset-top, 0px)) + 160px);
+    right: calc(max(12px, env(safe-area-inset-right, 0px)) + 56px);
+    bottom: auto;
+}
+
+.is-touch .weapons__slot kbd {
+    display: none;
 }
 
 .is-touch .mana {

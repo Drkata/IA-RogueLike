@@ -7,7 +7,13 @@ export const SFX = {
     // Player
     shoot: [['shoot-1', 'shoot-2'], 0.35, 0.08, 3],
     melee: [['melee-1', 'melee-2', 'melee-3'], 0.6, 0.06, 2],
-    meleeHit: [['melee-hit-1', 'melee-hit-2', 'melee-hit-3'], 0.7, 0.06, 2],
+    meleeHit: [['melee-hit-1', 'melee-hit-2'], 0.7, 0.08, 3], // The sword strikes an enemy
+    swordDraw: [['sword-draw'], 0.45, 0.04, 1],
+    staffDraw: [['staff-draw'], 0.4, 0.05, 1],
+    parry: [['parry'], 0.8, 0.04, 2], // A shot sent back by the guard
+    block: [['block'], 0.7, 0.06, 2], // A shot softened by the guard
+    staffCharge: [['reload'], 0.6, 0, 1, 0.8], // The reload's swell, deeper, timed to the charged shot
+    chargeShot: [['shoot-1', 'shoot-2'], 0.8, 0.03, 1, 0.5], // The shot an octave down
     reload: [['reload'], 0.55, 0.02, 1], // The crystal draws mana in: swells up to the end of the reload
     reloadDone: [['reload-done'], 0.45, 0.02, 1], // …then rings: the same crystal, played forwards
     empty: [['empty'], 0.5, 0.08, 1, 0.85], // Out of mana: a stifled spell
@@ -176,6 +182,17 @@ export class SoundManager {
         const length = buffer.duration / speed; // Seconds as played
         if (endIn > 0) source.start(now + Math.max(0, endIn - length), Math.max(0, length - endIn) * speed);
         else source.start();
+    }
+
+    // Fades out every copy of a sound still playing or waiting to start (a swell whose event was called off)
+    stop(name) {
+        const voices = this.voices.get(name);
+        if (!voices) return;
+        const now = this.ctx.currentTime;
+        for (const { source, gain } of voices.splice(0)) {
+            gain.gain.setTargetAtTime(0, now, 0.01);
+            source.stop(now + 0.05);
+        }
     }
 
     // The ears follow the camera (called every frame)

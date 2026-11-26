@@ -347,6 +347,7 @@ export class EnemyAI {
         this.entityManager.add(new Projectile(_spawnPos, _shootDir, this.projectileSpeed, this.damage, this.levelManager, {
             sourceName: "Minion",
             sourceId: this.enemy.id,
+            source: this.enemy,
             maxDistance: 100
         }));
     }

@@ -37,8 +37,12 @@ export const SVG_ICONS = {
     ricochet: makeIcon('ricochet', ARCANA),
     immolation: makeIcon('fire-ring', ARCANA),
     magnet: makeIcon('magnet', ARCANA),
-    meleeDamage: makeIcon('wood-club', ARCANA),
     homing: makeIcon('target-arrows', ARCANA),
+
+    // Sword upgrades
+    meleeDamage: makeIcon('broadsword', OFFENSE),
+    attackSpeed: makeIcon('sword-brandish', OFFENSE),
+    reach: makeIcon('saber-slash', OFFENSE),
 
     // Altar pacts
     blood: makeIcon('blood', '#e0563f'),
@@ -57,6 +61,16 @@ export const SVG_ICONS = {
     pyromancy: makeIcon('fire-bomb', '#e0563f'),
     colossus: makeIcon('giant', '#c9bfa8'),
     aegis: makeIcon('magic-shield', '#9ef0e2'),
+    berserker: makeIcon('bloody-sword', '#e0563f'),
+    duelist: makeIcon('fencer', OFFENSE),
+    reach_pact: makeIcon('sword-array', '#c9bfa8'),
+    executioner: makeIcon('executioner-hood', '#e0563f'),
+    whirlwind: makeIcon('whirlwind', '#9ef0e2'),
+    riposte: makeIcon('sword-clash', GILT),
+    mirror: makeIcon('shield-reflect', '#9ef0e2'),
+    greedy_blade: makeIcon('energy-sword', '#7fd6c9'),
+    leech: makeIcon('dripping-sword', '#e0563f'),
+    wave: makeIcon('sword-slice', '#9ef0e2'),
 
     // Shop
     potion: makeIcon('health-potion', '#e0563f'),
@@ -70,6 +84,14 @@ export const SVG_ICONS = {
     touchJump: makeIcon('jump-across', '#ece3cc'), // --vellum
     touchReload: makeIcon('magic-swirl', '#9ef0e2'),
     touchAction: makeIcon('open-palm', GILT),
+    touchSlash: makeIcon('sword-slice', '#ece3cc'),
+    touchCharge: makeIcon('crystal-wand', '#9ef0e2'),
+    touchGuard: makeIcon('checked-shield', '#ece3cc'),
+    touchSwitch: makeIcon('switch-weapon', GILT),
+
+    // Weapon in hand
+    weaponStaff: makeIcon('wizard-staff', '#9ef0e2'),
+    weaponSword: makeIcon('broadsword', '#ece3cc'),
 
     // HUD
     audioOn: makeIcon('speaker', GILT),
