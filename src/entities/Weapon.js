@@ -45,7 +45,7 @@ export class Weapon {
         this.baseFireRate = 0.4; // Halved from 0.2 (Slower)
         this.baseMaxAmmo = 20;
         this.baseReloadTime = 1.6;
-        this.baseRange = 15;
+        this.baseRange = 25;
         this.baseProjectileSpeed = 25; // Base projectile speed (Halved)
         this.baseCritChance = 0; // 0% base
         this.baseCritDamage = 1.5; // 150% base
