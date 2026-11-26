@@ -264,7 +264,7 @@ export class Player {
         if (this.input.isKeyDown('Mouse1')) this.handleMelee();
         if (this.input.isKeyDown('KeyR')) this.weapon.reload();
 
-        this.weapon.update(dt);
+        this.weapon.update(dt, this.onGround ? Math.hypot(this.velocity.x, this.velocity.z) : 0);
         this.updateImmolation(dt);
 
         // Cataclysm pact: every few kills, a shockwave from the player's feet
@@ -372,7 +372,7 @@ export class Player {
         if (count <= 0) return;
 
         this.sessionStats.shotsFired += count;
-        soundManager.play('shoot');
+        soundManager.play('shoot', null, this.weapon.shotRate);
 
         const w = this.weapon;
         const totalArcRad = THREE.MathUtils.degToRad(w.arc || 0);

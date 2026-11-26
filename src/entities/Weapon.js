@@ -1,10 +1,14 @@
 import * as THREE from 'three';
 import { soundManager } from '../systems/SoundManager.js';
-import { PALETTE } from '../core/Palette.js';
+import { HEAD_Z, STAFF_TIERS, buildStaff, staffTier } from './StaffMesh.js';
 
-// Staff orb colour by total upgrade level: aether → sage → frost → hex → hex bright → gilt
-const ORB_TIERS = [[26, PALETTE.giltBright], [21, PALETTE.hexBright], [16, PALETTE.hex], [11, 0x7fb0ff], [6, PALETTE.sage], [0, PALETTE.aetherBright]];
-const ORB_LIGHT = 2;
+const ORB_LIGHT = 2; // cd at rest; each shot flares it (ART_DIRECTION.md, section 7)
+const REST = { x: 0.3, y: -0.3, z: -0.5, tilt: 0.2 }; // The staff's pose in camera space
+const FLOURISH_AFTER = 8; // s of calm before the staff twirls in the hand
+const FLOURISH_TIME = 1.1; // s
+// Players who ask for reduced motion keep a steadier staff: no walk bob, sway or twirl
+const MOTION = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : 1;
+const { damp, clamp, lerp } = THREE.MathUtils;
 
 const newUpgradeStats = () => ({
     damage: 0,
@@ -70,7 +74,17 @@ export class Weapon {
         this.mesh = new THREE.Group();
         this.mesh.name = 'WeaponMesh';
         this.camera.add(this.mesh);
-        this.rebuildMesh(0); // Initial Mesh
+        this.gunMesh = new THREE.Group(); // Pose: bob, sway, recoil, reload, melee; holds the staff of the tier
+        this.mesh.add(this.gunMesh);
+        // The crystal's light, made once: adding a light mid-level recompiles every shader
+        this.flash = new THREE.PointLight(STAFF_TIERS[0].orb, ORB_LIGHT, 3);
+        this.flash.position.z = HEAD_Z;
+        this.gunMesh.add(this.flash);
+        // Animation state: clock, walk bob phase and amount, look sway, calm time, twirl progress (-1: none),
+        // crystal spin speed factor, flare left after a reload
+        this.anim = { time: 0, bob: 0, bobAmount: 0, swayX: 0, swayY: 0, yaw: camera.rotation.y, pitch: camera.rotation.x, calm: 0, flourish: -1, spin: 1, pop: 0 };
+        this.tier = -1;
+        this.rebuildMesh(0);
     }
 
 
@@ -189,8 +203,8 @@ export class Weapon {
         this.rebuildMesh(0);
     }
 
-    update(dt) {
-        // Reload Logic
+    // `speed`: the player's walking speed (m/s, 0 in the air), for the walk bob
+    update(dt, speed = 0) {
         if (this.isReloading) {
             this.reloadTimer -= dt;
             if (this.reloadTimer <= 0) {
@@ -201,76 +215,124 @@ export class Weapon {
 
                 this.currentAmmo += available;
                 this.reserveAmmo -= available;
+                // The recharged crystal flares
+                this.flashTime = 0.05;
+                this.anim.pop = 1;
+                soundManager.play('reloadDone');
             }
         }
 
-        // Melee Animation Logic
         if (this.isMeleeing) {
             this.meleeTimer += dt;
-
-            // Animation Phases
-            // 0.0 - 0.2: Wind up (Pull back)
-            // 0.2 - 0.3: Strike (Thrust forward + Rotate)
-            // 0.3 - 0.8: Recover (Return to idle)
-
-            if (this.gunMesh) {
-                if (this.meleeTimer < 0.2) {
-                    // Wind Up
-                    const t = Math.min(1.0, this.meleeTimer / 0.2);
-                    this.gunMesh.position.z = THREE.MathUtils.lerp(-0.5, -0.2, t); // Pull back
-                    this.gunMesh.rotation.x = THREE.MathUtils.lerp(0.2, -0.5, t); // Cock back
-                    this.gunMesh.rotation.y = THREE.MathUtils.lerp(0, 0.5, t); // Twist
-                } else if (this.meleeTimer < 0.3) {
-                    // Strike
-                    const t = Math.min(1.0, (this.meleeTimer - 0.2) / 0.1);
-                    this.gunMesh.position.z = THREE.MathUtils.lerp(-0.2, -1.2, t); // Thrust deep
-                    this.gunMesh.rotation.x = THREE.MathUtils.lerp(-0.5, 0.5, t); // Bash down
-                    this.gunMesh.rotation.y = THREE.MathUtils.lerp(0.5, -0.5, t); // Twist opposite
-                } else {
-                    // Recover
-                    const t = Math.min(1.0, (this.meleeTimer - 0.3) / 0.5);
-                    this.gunMesh.position.z = THREE.MathUtils.lerp(-1.2, -0.5, t);
-                    this.gunMesh.rotation.x = THREE.MathUtils.lerp(0.5, 0.2, t);
-                    this.gunMesh.rotation.y = THREE.MathUtils.lerp(-0.5, 0, t);
-                }
-            }
-
             if (this.meleeTimer >= this.meleeCooldown) {
                 this.isMeleeing = false;
                 this.meleeTimer = 0;
-
-                // Force reset to idle state
-                if (this.gunMesh) {
-                    this.gunMesh.position.set(0.3, -0.3, -0.5);
-                    this.gunMesh.rotation.set(0.2, 0, 0);
-                }
             }
-        } else if (this.gunMesh) {
-            // Recoil recovery
-            this.recoil = THREE.MathUtils.lerp(this.recoil, 0, dt * 10); // Fast recovery
-
-            // Base Idle Animation (Bobbing / Floating)
-            const time = performance.now() / 1000;
-            const baseY = -0.3 + Math.sin(time * 2) * 0.02; // Gentle bob
-            this.gunMesh.position.set(0.3, baseY, -0.5);
-            this.gunMesh.rotation.set(0.2, 0, Math.sin(time * 1.5) * 0.05);
-
-            // Apply recoil offsets
-            this.gunMesh.position.z += this.recoil * 0.2; // Move back
-            this.gunMesh.rotation.x -= this.recoil * 0.3; // Tilt up
         }
 
-        // Flash fade (Orb glow pulse)
+        this.animate(dt, speed);
+
+        // Crystal light: idle glow, flare on a shot
         if (this.flashTime > 0) {
             this.flashTime -= dt;
-            if (this.flash) {
-                this.flash.intensity = ORB_LIGHT + (this.flashTime / 0.1) * 25; // Shot flash
-                this.flash.distance = 6;
-            }
-        } else if (this.flash) {
-            this.flash.intensity = ORB_LIGHT; // Idle glow
+            this.flash.intensity = ORB_LIGHT + (Math.max(0, this.flashTime) / 0.1) * 25;
+            this.flash.distance = 6;
+        } else {
+            this.flash.intensity = ORB_LIGHT;
             this.flash.distance = 3;
         }
+    }
+
+    animate(dt, speed) {
+        const a = this.anim;
+        const g = this.gunMesh;
+        const { orb, glow, spinners } = this.staff;
+        a.time += dt;
+        const t = a.time;
+        this.recoil = damp(this.recoil, 0, 10, dt);
+
+        // Reload: the staff comes in toward the centre of the view, crystal up, while it refills
+        const reload = this.isReloading ? 1 - this.reloadTimer / this.reloadTime : 0;
+        const dip = Math.sin(Math.PI * reload);
+
+        // Walk bob, one dip per footstep (Player plays one every 2.2 m)
+        a.bob += speed * dt * Math.PI / 2.2;
+        a.bobAmount = damp(a.bobAmount, Math.min(1, speed / 10) * MOTION, 8, dt);
+        // Look sway: the staff lags a little behind the view
+        const cam = this.camera.rotation;
+        if (dt > 0) {
+            a.swayX = damp(a.swayX, clamp((cam.y - a.yaw) / dt * 0.012, -0.05, 0.05) * MOTION, 10, dt);
+            a.swayY = damp(a.swayY, clamp((cam.x - a.pitch) / dt * -0.012, -0.04, 0.04) * MOTION, 10, dt);
+        }
+        a.yaw = cam.y;
+        a.pitch = cam.x;
+
+        // After a calm spell, the staff twirls once about its own axis, lifted a little
+        const busy = speed > 0.5 || this.isReloading || this.isMeleeing || this.recoil > 0.05;
+        a.calm = busy ? 0 : a.calm + dt;
+        if (a.flourish < 0 && a.calm > FLOURISH_AFTER && MOTION) a.flourish = 0;
+        let twirl = 0;
+        let lift = 0;
+        if (a.flourish >= 0) {
+            a.flourish += dt / FLOURISH_TIME;
+            if (a.flourish >= 1) {
+                a.flourish = -1;
+                a.calm = 0;
+            } else {
+                const f = a.flourish;
+                twirl = f * f * (3 - 2 * f) * Math.PI * 2;
+                lift = Math.sin(Math.PI * f) * 0.03;
+            }
+        }
+
+        if (this.isMeleeing) {
+            // 0 – 0.2 s wind up (pull back), 0.2 – 0.3 s strike (thrust and twist), then recover
+            const m = this.meleeTimer;
+            if (m < 0.2) {
+                const k = m / 0.2;
+                g.position.z = lerp(REST.z, -0.2, k);
+                g.rotation.x = lerp(REST.tilt, -0.5, k);
+                g.rotation.y = lerp(0, 0.5, k);
+            } else if (m < 0.3) {
+                const k = (m - 0.2) / 0.1;
+                g.position.z = lerp(-0.2, -1.2, k);
+                g.rotation.x = lerp(-0.5, 0.5, k);
+                g.rotation.y = lerp(0.5, -0.5, k);
+            } else {
+                const k = Math.min(1, (m - 0.3) / 0.5);
+                g.position.z = lerp(-1.2, REST.z, k);
+                g.rotation.x = lerp(0.5, REST.tilt, k);
+                g.rotation.y = lerp(-0.5, 0, k);
+            }
+        } else {
+            const bobX = Math.sin(a.bob) * 0.012 * a.bobAmount;
+            const bobY = -Math.abs(Math.cos(a.bob)) * 0.018 * a.bobAmount;
+            g.position.set(
+                REST.x + Math.sin(t * 1.1) * 0.006 + bobX + a.swayX - 0.09 * dip,
+                REST.y + Math.sin(t * 2) * 0.012 + bobY + a.swayY + 0.04 * dip + lift,
+                REST.z + this.recoil * 0.2 + 0.08 * dip
+            );
+            g.rotation.set(
+                REST.tilt - this.recoil * 0.3 + 0.5 * dip,
+                -a.swayX * 1.5 + 0.3 * dip,
+                Math.sin(t * 1.5) * 0.05 - a.swayX * 2 + 0.6 * dip + twirl
+            );
+        }
+
+        // Crystal: as bright as the clip is full, refilling during a reload, flaring on each shot
+        const fill = this.isReloading ? reload : (this.infiniteAmmo || this.maxAmmo <= 0 ? 1 : this.currentAmmo / this.maxAmmo);
+        const shot = Math.max(0, this.flashTime) / 0.1;
+        const pulse = 0.5 + 0.5 * Math.sin(t * 2.4);
+        a.pop = Math.max(0, a.pop - dt * 4);
+        orb.material.emissiveIntensity = 0.25 + 1.1 * fill + 0.15 * pulse + 2.5 * shot + 1.5 * a.pop;
+        glow.material.opacity = 0.2 + 0.6 * fill + 0.2 * a.pop;
+        glow.scale.setScalar((0.16 + 0.04 * pulse) * (0.6 + 0.4 * fill) + 0.12 * shot + 0.15 * a.pop);
+        // It hovers and turns in its claws, and whirls while recharging, with everything orbiting it
+        a.spin = damp(a.spin, this.isReloading ? 5 : 1, 4, dt);
+        orb.rotation.z += dt * 0.8 * a.spin;
+        orb.position.z = HEAD_Z + Math.sin(t * 1.7) * 0.004;
+        orb.scale.setScalar(1 + 0.25 * shot + 0.2 * a.pop - 0.15 * dip);
+        for (const s of spinners) s.rotation.z += s.userData.spin * a.spin * dt;
     }
 
     melee() {
@@ -282,13 +344,19 @@ export class Weapon {
     }
 
     shoot() {
-        if (this.isReloading || (this.currentAmmo <= 0 && !this.infiniteAmmo)) {
-            if (this.currentAmmo <= 0 && !this.isReloading && !this.infiniteAmmo) this.reload();
-            return 0;
-        }
-
+        if (this.isReloading) return 0;
         const now = performance.now() / 1000;
         const effectiveFireRate = this.fireRate / this.fireRateMultiplier;
+        if (this.currentAmmo <= 0 && !this.infiniteAmmo) {
+            this.reload();
+            // No mana left to reload with: the crystal sputters, at the fire rate
+            if (!this.isReloading && now - this.lastShootTime >= effectiveFireRate) {
+                this.lastShootTime = now;
+                this.recoil = 0.25;
+                soundManager.play('empty');
+            }
+            return 0;
+        }
         if (now - this.lastShootTime < effectiveFireRate) return 0;
 
         // Multishot Logic: Determine how many bullets to fire
@@ -313,89 +381,21 @@ export class Weapon {
         return bulletsToFire;
     }
 
+    // Swaps in the staff of the tier `totalLevel` reaches (StaffMesh.js); nothing to do within a tier
     rebuildMesh(totalLevel) {
-        // Free the previous staff's GPU resources before rebuilding it
-        this.mesh.traverse(obj => {
-            if (obj.geometry) obj.geometry.dispose();
-            if (obj.material) obj.material.dispose();
-        });
-        this.mesh.clear();
-
-        const orbColor = ORB_TIERS.find(([level]) => totalLevel >= level)[1];
-        const woodColor = 0x4a3322;
-
-        // Materials
-        const woodMat = new THREE.MeshStandardMaterial({ color: woodColor, roughness: 0.9, metalness: 0.1 });
-        const orbMat = new THREE.MeshStandardMaterial({
-            color: orbColor,
-            emissive: orbColor,
-            emissiveIntensity: 1.5,
-            roughness: 0.2,
-            metalness: 0.8,
-            transparent: true,
-            opacity: 0.9
-        });
-        const metalMat = new THREE.MeshStandardMaterial({ color: PALETTE.gilt, roughness: 0.35, metalness: 0.8 });
-
-        this.gunMesh = new THREE.Group();
-        // Position: Right hand side, lower
-        this.gunMesh.position.set(0.3, -0.3, -0.5);
-        this.gunMesh.rotation.x = 0.2; // Tilt forward slightly
-
-        // 1. Staff Shaft (Long cylinder)
-        const shaftGeo = new THREE.CylinderGeometry(0.02, 0.015, 1.5, 8);
-        shaftGeo.rotateX(Math.PI / 2); // Point forward
-        const shaft = new THREE.Mesh(shaftGeo, woodMat);
-        shaft.position.z = 0.2; // Center it
-        this.gunMesh.add(shaft);
-
-        // 2. Staff Head (The Orb Holder)
-        const headGeo = new THREE.TorusGeometry(0.06, 0.01, 8, 16);
-        const head = new THREE.Mesh(headGeo, metalMat);
-        head.position.z = -0.6; // Tip
-        this.gunMesh.add(head);
-
-        // 3. The Orb (Glowing Crystal)
-        const orbGeo = new THREE.IcosahedronGeometry(0.05, 1);
-        const orb = new THREE.Mesh(orbGeo, orbMat);
-        orb.position.z = -0.6;
-        this.gunMesh.add(orb);
-
-        // Orb animation reference
-        this.orbMesh = orb;
-
-        // Tier 1: Nature (Leaves/Vines)
-        if (totalLevel >= 6) {
-            const vineGeo = new THREE.TorusKnotGeometry(0.03, 0.005, 32, 4);
-            const vine = new THREE.Mesh(vineGeo, new THREE.MeshStandardMaterial({ color: PALETTE.sage }));
-            vine.position.z = -0.4;
-            this.gunMesh.add(vine);
+        const tier = staffTier(totalLevel);
+        if (tier === this.tier) return;
+        this.tier = tier;
+        if (this.staff) {
+            this.staff.group.traverse(obj => {
+                obj.geometry?.dispose();
+                obj.material?.dispose();
+            });
+            this.gunMesh.remove(this.staff.group);
         }
-
-        // Tier 2: Frost (Floating Ice Shards)
-        if (totalLevel >= 11) {
-            const shardGeo = new THREE.ConeGeometry(0.01, 0.05, 3);
-            for (let i = 0; i < 3; i++) {
-                const shard = new THREE.Mesh(shardGeo, new THREE.MeshStandardMaterial({ color: 0xaaddff, emissive: 0x004488 }));
-                shard.position.set(Math.cos(i * 2) * 0.1, Math.sin(i * 2) * 0.1, -0.6);
-                shard.lookAt(0, 0, -1);
-                this.gunMesh.add(shard);
-            }
-        }
-
-        // Tier 3: Void (Dark Rings)
-        if (totalLevel >= 16) {
-            const ringGeo = new THREE.RingGeometry(0.08, 0.09, 32);
-            const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.DoubleSide }));
-            ring.position.z = -0.6;
-            this.gunMesh.add(ring);
-        }
-
-        this.mesh.add(this.gunMesh);
-
-        // Light Source (Instead of Muzzle Flash plane)
-        this.flash = new THREE.PointLight(orbColor, ORB_LIGHT, 3);
-        this.flash.position.set(0, 0, -0.6);
-        this.gunMesh.add(this.flash);
+        this.staff = buildStaff(tier);
+        this.gunMesh.add(this.staff.group);
+        this.flash.color.setHex(STAFF_TIERS[tier].orb);
+        this.shotRate = 1 - tier * 0.03; // Shot sound playback rate: each tier sounds a little heavier
     }
 }

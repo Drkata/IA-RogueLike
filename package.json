@@ -10,6 +10,7 @@
     "check:levels": "node scripts/check-levels.mjs",
     "check:ai": "node scripts/check-ai.mjs",
     "check:boss": "node scripts/check-boss.mjs",
+    "check:staff": "node scripts/check-staff.mjs",
     "preview:visuals": "node scripts/preview-visuals.mjs previews",
     "build:sfx": "node scripts/build-sfx.mjs",
     "deploy": "vite build && rsync -a --delete dist/ /srv/arcaniste/"

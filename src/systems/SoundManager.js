@@ -3,12 +3,14 @@
 // See ART_DIRECTION.md, section « Son ».
 
 // name: [variant files, volume, pitch spread (±), max simultaneous voices, base playback rate]
-const SFX = {
+export const SFX = {
     // Player
     shoot: [['shoot-1', 'shoot-2'], 0.35, 0.08, 3],
     melee: [['melee-1', 'melee-2', 'melee-3'], 0.6, 0.06, 2],
     meleeHit: [['melee-hit-1', 'melee-hit-2', 'melee-hit-3'], 0.7, 0.06, 2],
     reload: [['reload'], 0.6, 0.03, 1],
+    reloadDone: [['reload-done'], 0.35, 0.03, 1], // The crystal is full again
+    empty: [['empty'], 0.5, 0.08, 1, 0.85], // Out of mana: a stifled spell
     footstep: [['footstep-1', 'footstep-2', 'footstep-3', 'footstep-4', 'footstep-5', 'footstep-6', 'footstep-7', 'footstep-8', 'footstep-9', 'footstep-10'], 0.22, 0.06, 2],
     jump: [['jump'], 0.3, 0.05, 1],
     land: [['land'], 0.45, 0.06, 1],
@@ -88,7 +90,7 @@ export class SoundManager {
         this.sfxBus.connect(this.ctx.destination);
 
         this.buffers = new Map(); // file name -> AudioBuffer (missing until loaded)
-        this.voices = new Map(); // sound name -> playing count
+        this.voices = new Map(); // sound name -> playing voices { source, gain }, oldest first
         this.lastStart = new Map(); // sound name -> ctx time
         this._loadAll();
 
@@ -123,14 +125,23 @@ export class SoundManager {
     /**
      * Plays a sound effect. With a `position` (THREE.Vector3) it comes from that point in the world;
      * without, it plays at the listener (player, interface). `rate` > 1 plays it higher. Returns
-     * nothing; silently skipped while the file is loading or when too many copies already play.
+     * nothing; silently skipped while the file is loading. With too many copies already playing,
+     * the oldest one fades out: the newest event is the one to hear (a fast staff never goes mute).
      */
     play(name, position = null, rate = 1) {
         const [variants, volume, pitch, maxVoices, baseRate = 1] = SFX[name];
         const now = this.ctx.currentTime;
-        if ((this.voices.get(name) || 0) >= maxVoices || now - (this.lastStart.get(name) ?? -1) < MIN_GAP) return;
+        if (now - (this.lastStart.get(name) ?? -1) < MIN_GAP) return;
         const buffer = this.buffers.get(variants[Math.floor(Math.random() * variants.length)]);
         if (!buffer || this.ctx.state !== 'running') return;
+
+        let voices = this.voices.get(name);
+        if (!voices) this.voices.set(name, (voices = []));
+        if (voices.length >= maxVoices) {
+            const oldest = voices.shift();
+            oldest.gain.gain.setTargetAtTime(0, now, 0.01); // ~50 ms fade: no click
+            oldest.source.stop(now + 0.05);
+        }
 
         const source = this.ctx.createBufferSource();
         source.buffer = buffer;
@@ -153,9 +164,13 @@ export class SoundManager {
             gain.connect(this.sfxBus);
         }
 
-        this.voices.set(name, (this.voices.get(name) || 0) + 1);
+        const voice = { source, gain };
+        voices.push(voice);
         this.lastStart.set(name, now);
-        source.onended = () => this.voices.set(name, this.voices.get(name) - 1);
+        source.onended = () => {
+            const i = voices.indexOf(voice);
+            if (i >= 0) voices.splice(i, 1);
+        };
         source.start();
     }
 

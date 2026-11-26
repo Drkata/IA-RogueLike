@@ -172,7 +172,7 @@ Sous 5 cd, une `PointLight` est quasi invisible.
 
 | Élément | Forme | Couleur | Notes |
 |---|---|---|---|
-| Bâton du joueur | Bâton de bois, tête dorée, orbe | Orbe par paliers d'amélioration : éther, sauge, givre `#7fb0ff`, maléfice, maléfice clair, dorure | `Weapon.js`, `ORB_TIERS` |
+| Bâton du joueur | Un modèle par palier d'améliorations d'arme (0, 6, 11, 16, 21, 26 niveaux) : apprenti (griffes dorées), sève (racines, liane et feuilles), givre (griffes d'argent, glace, éclats en orbite), maléfice (croissant de cornes d'os, anneau de runes), abysses (deux anneaux en gyroscope), soleil (couronne dorée, auréole à rayons, incrustation en spirale). Cristal à facettes et halo additif | Cristal, glace, runes et auréole : éther, sauge, givre `#7fb0ff`, maléfice, maléfice clair, dorure. Bois de chêne, puis d'ébène `#352838` cerclé d'or dès le maléfice | `StaffMesh.js` (`STAFF_TIERS`), animé par `Weapon.js`. Dessiné dans le premier 2 % de la profondeur : il ne s'enfonce jamais dans un mur. **Le cristal dit le mana** : son éclat suit le chargeur, il se remplit pendant la recharge et s'embrase à chaque tir. Animations : respiration, balancement à chaque pas, retard sur le regard, recul ; à la recharge le bâton vient au centre, cristal levé, et tout ce qui tourne accélère ; après 8 s de calme, un moulinet. Sans mouvement si `prefers-reduced-motion` |
 | Tirs du joueur | Cristal et halo additif | `aetherBright` ; critique `hexBright` ; explosif `emberBright` | `Projectile.js`, choix automatique |
 | Tirs ennemis | Idem | `emberBright` | Laser du boss `hexBright` (sphères), météores `ember` |
 | Tirs des gardiens | Orbe lent | `hexBright` | Distinct des tirs de sbires |
@@ -202,14 +202,14 @@ Sous 5 cd, une `PointLight` est quasi invisible.
 
 **Principe** : de vrais bruitages, enregistrés, en CC0 (domaine public), plutôt que des sons synthétisés. La source de chaque son est tracée.
 
-- **Fichiers** : `public/sounds/sfx/*.mp3`, générés par `npm run build:sfx` (`scripts/build-sfx.mjs`). Le script télécharge les banques, prend pour chaque son un fichier précis, coupe le silence de début, limite la durée, passe en mono et normalise (RMS −20 dB, crêtes ≤ −2 dB). Crédits : `public/sounds/CREDITS.md`. Ne jamais déposer un son à la main : l'ajouter au script.
+- **Fichiers** : `public/sounds/sfx/*.mp3`, générés par `npm run build:sfx` (`scripts/build-sfx.mjs`). Le script télécharge les banques, prend pour chaque son un fichier précis, lui applique au besoin un filtre (inversé, étouffé…), coupe le silence de début, limite la durée, passe en mono et normalise (RMS −20 dB, crêtes ≤ −2 dB). Crédits : `public/sounds/CREDITS.md`. Ne jamais déposer un son à la main : l'ajouter au script.
 - **Mixage** : uniquement dans le tableau `SFX` de `src/systems/SoundManager.js`. Pour chaque événement : variantes, volume, variation de hauteur aléatoire (±), nombre maximal de voix simultanées, vitesse de base. Les fichiers étant normalisés, le volume du tableau est le seul réglage de mixage.
 - **Jouer un son** : `soundManager.play('nom')` pour le joueur et l'interface, `soundManager.play('nom', position)` pour un son du monde. Avec une position, le son est spatialisé : plein volume à 4 m, moitié à 8 m. Les sons de menace (`PRECISE_PANNING` : tirs ennemis, tourelles, météores) utilisent le HRTF, qui situe aussi devant/derrière et la hauteur ; les autres, bien plus fréquents, un panoramique gauche/droite (`equalpower`), beaucoup moins coûteux. Les oreilles suivent la caméra (`updateListener`, à chaque frame).
-- **Anti-cacophonie** : un même son relancé à moins de 30 ms est ignoré, et chaque événement a un plafond de voix (4 impacts au plus, par exemple). Les variantes et la variation de hauteur évitent l'effet « mitraillette ».
+- **Anti-cacophonie** : un même son relancé à moins de 30 ms est ignoré, et chaque événement a un plafond de voix (4 impacts au plus, par exemple). Au plafond, c'est la plus ancienne copie qui s'éteint en fondu (50 ms), jamais la nouvelle : un bâton qui tire vite ne devient pas muet. Les variantes et la variation de hauteur évitent l'effet « mitraillette ».
 
 | Famille | Caractère | Événements |
 |---|---|---|
-| Magie du joueur | Sorts clairs et brefs | `shoot`, `reload`, `crit` (cristallin), `ricochet` (« tink » métallique au rebond) |
+| Magie du joueur | Sorts clairs et brefs | `shoot` (un peu plus grave à chaque palier du bâton), `reload`, `reloadDone` (fin « ting » de cristal : le chargeur est plein), `empty` (le sort du tir étouffé : plus de mana), `crit` (cristallin), `ricochet` (« tink » métallique au rebond) |
 | Corps du joueur | Bruits de cuir et de tissu | `footstep` (tous les 2,2 m), `jump`, `land`, `playerHurt` |
 | Bâton | Souffle, puis bois qui frappe | `melee`, `meleeHit` |
 | Ennemis | Feu sombre, grognements de bête | `enemyShoot`, `enemyDeath`, `shieldBreak` |
@@ -238,7 +238,7 @@ Sous 5 cd, une `PointLight` est quasi invisible.
 
 1. `npm i --no-save canvas`, une seule fois : node-canvas, un canvas 2D en CPU qui ne modifie pas `package.json`.
 2. `npm run preview:visuals` : écrit des planches PNG dans `previews/` (murs en mosaïque 2 × 2 pour voir les raccords, rendu éclairé, sols, ciels, salles spéciales) et affiche le tableau de calibration de la section 7. Il sort en erreur si une valeur est hors cible.
-3. `npm run check:levels` : invariants de génération des niveaux.
+3. `npm run check:levels` : invariants de génération des niveaux. `npm run check:staff` après toute retouche du bâton (paliers, budget de draw calls, lumière unique, animations, sons).
 4. `npm run build`.
 5. Test en jeu par une personne, dans son navigateur : un niveau par biome (1, 6, 11, 16) et un boss (touche P).
 
