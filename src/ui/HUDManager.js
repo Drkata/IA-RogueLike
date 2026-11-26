@@ -19,7 +19,7 @@ export class HUDManager {
 
         this.container.insertAdjacentHTML('beforeend', `
             <div class="weapons" role="status" aria-label="Arme en main">
-                <span class="weapons__slot" data-weapon="staff" title="Bâton">${SVG_ICONS.weaponStaff}<kbd>1</kbd></span>
+                <span class="weapons__slot" data-weapon="staff" title="Sceptre">${SVG_ICONS.weaponStaff}<kbd>1</kbd></span>
                 <span class="weapons__slot" data-weapon="sword" title="Épée">${SVG_ICONS.weaponSword}<kbd>2</kbd></span>
             </div>
             <div id="crosshair" aria-hidden="true"></div>
@@ -101,7 +101,7 @@ export class HUDManager {
         for (const slot of this.container.querySelectorAll('.weapons__slot')) {
             slot.classList.toggle('is-active', slot.dataset.weapon === weapon);
         }
-        this.container.querySelector('.weapons').setAttribute('aria-label', `Arme en main : ${weapon === 'sword' ? 'épée' : 'bâton'}`);
+        this.container.querySelector('.weapons').setAttribute('aria-label', `Arme en main : ${weapon === 'sword' ? 'épée' : 'sceptre'}`);
         document.body.classList.toggle('weapon-sword', weapon === 'sword');
     }
 

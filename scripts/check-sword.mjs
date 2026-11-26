@@ -280,4 +280,35 @@ shop._upgradeSource(last1).stats[last1.id] = 3;
 shop._upgradeSource(last2).stats[last2.id] = 9;
 assert.equal(shop._drawShopUpgrades().length, 2, 'only what can still be raised');
 
-console.log(`Épée : arc, garde, parade, tir chargé et ${PACTS.length} pactes OK ; boutique OK`);
+// Upgrade cards show the stats with everything lasting: fountains and pacts, not the fury (it passes)
+const { num, pct, unit } = await import('../src/ui/format.js');
+const hero = Object.assign(Object.create(Player.prototype), { stats: { maxHealth: 0, armor: 0, vampirism: 0, regen: 0, speed: 0, immolation: 0, magnet: 0 },
+  weapon: new Weapon(new THREE.PerspectiveCamera()), sword: new Sword(new THREE.PerspectiveCamera()), sessionStats: { kills: 0 }, MAX_LEVEL: 10, updateHUD: noop });
+hero.resetPacts();
+const menu = Object.assign(Object.create(game.Game.prototype), { player: hero });
+const card = (id) => menu._upgradeValues(game.UPGRADES.find(u => u.id === id)).map(v => [v.label, v.now, v.next]);
+const seal = (id) => {
+  PACTS.find(p => p.id === id).apply(hero, hero.weapon, hero.sword);
+  hero.weapon.recalculateStats();
+  hero.sword.recalculateStats();
+};
+const crit = (l) => hero.weapon.getStatValue('critChance', l);
+assert.deepEqual(card('maxHealth'), [[null, num(100), num(125)]]);
+hero.fountainHp = 30;
+assert.deepEqual(card('maxHealth'), [[null, num(130), num(155)]], 'a fountain counts');
+seal('colossus'); // ×1.5 max health, ×0.75 staff damage
+assert.deepEqual(card('maxHealth'), [[null, num(180), num(217.5)]], 'and a pact');
+assert.equal(card('damage')[0][1], num(hero.weapon.damage), 'the card shows the damage the staff deals');
+seal('resilience'); // +2 HP/s
+assert.deepEqual(card('regen'), [[null, unit(2, 'PV/s'), unit(2.3, 'PV/s')]]);
+assert.deepEqual(card('critChance'), [[null, pct(crit(0)), pct(crit(1))]], 'same crits on both weapons: one row');
+seal('hunter'); // +25 % crit chance on the staff only
+assert.deepEqual(card('critChance'), [['Sceptre', pct(crit(0) + 25), pct(crit(1) + 25)], ['Épée', pct(crit(0)), pct(crit(1))]]);
+seal('duelist'); // ×1.5 strikes per second
+assert.deepEqual(card('attackSpeed'), [[null, unit(1.25 * 1.5, 'coups/s'), unit(1.375 * 1.5, 'coups/s')]]);
+hero._setFury(true);
+assert.deepEqual(card('attackSpeed'), [[null, unit(1.25 * 1.5, 'coups/s'), unit(1.375 * 1.5, 'coups/s')]], 'not the fury');
+hero.stats.maxHealth = 10;
+assert.equal(card('maxHealth')[0][2], 'max');
+
+console.log(`Épée : arc, garde, parade, tir chargé et ${PACTS.length} pactes OK ; boutique OK ; cartes avec pactes et fontaines OK`);

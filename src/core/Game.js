@@ -32,14 +32,14 @@ const MAX_DT = 0.05; // s: a longer frame (hitch, tab switch) is simulated as th
 const RELOCK_DELAY = 1000; // ms: Chrome refuses to lock the pointer again for about a second after Escape
 
 // `for`: what an upgrade or a pact works on, written on its card so the player knows (WEAPON_TAGS)
-export const WEAPON_TAGS = { staff: 'Bâton', sword: 'Épée', both: 'Bâton + Épée', general: 'Général' };
+export const WEAPON_TAGS = { staff: 'Sceptre', sword: 'Épée', both: 'Sceptre + Épée', general: 'Général' };
 
 // `source`: who holds the level (Weapon is the staff)
 export const UPGRADES = [
-    { id: 'damage', source: 'weapon', for: 'staff', label: 'Dégâts du bâton' },
+    { id: 'damage', source: 'weapon', for: 'staff', label: 'Dégâts du sceptre' },
     { id: 'fireRate', source: 'weapon', for: 'staff', label: 'Cadence de tir' },
     { id: 'reload', source: 'weapon', for: 'staff', label: 'Rechargement' },
-    { id: 'ammo', source: 'weapon', for: 'staff', label: 'Mana max' },
+    { id: 'ammo', source: 'weapon', for: 'staff', label: "Capacité de l'orbe" },
     { id: 'range', source: 'weapon', for: 'staff', label: 'Portée des tirs' },
     { id: 'projectileSpeed', source: 'weapon', for: 'staff', label: 'Vitesse des projectiles' },
     { id: 'bulletCount', source: 'weapon', for: 'staff', label: 'Tir multiple' },
@@ -87,25 +87,25 @@ const formatUpgradeValue = (stat, n) => {
 // (WEAPON_TAGS), on its card. `apply(player, staff, sword)`.
 export const PACTS = [
     // Staff
-    { id: 'blood', for: 'staff', icon: 'blood', title: 'Pacte de sang', gain: '+40 % de dégâts du bâton', cost: '−25 % de vie max',
+    { id: 'blood', for: 'staff', icon: 'blood', title: 'Pacte de sang', gain: '+40 % de dégâts du sceptre', cost: '−25 % de vie max',
         apply: (p, w) => { p.pactHpMultiplier *= 0.75; w.pactDamageMultiplier *= 1.4; } },
-    { id: 'wizard', for: 'staff', icon: 'wizard', title: 'Pacte du magicien', gain: '+50 % de cadence de tir', cost: '−20 % de dégâts du bâton',
+    { id: 'wizard', for: 'staff', icon: 'wizard', title: 'Pacte du magicien', gain: '+50 % de cadence de tir', cost: '−20 % de dégâts du sceptre',
         apply: (p, w) => { w.pactDamageMultiplier *= 0.8; w.pactFireRateMultiplier *= 1.5; } },
     { id: 'precision', for: 'staff', icon: 'precision', title: 'Pacte de précision', gain: '+50 % de vitesse des projectiles', cost: "−20 % d'armure",
         apply: (p, w) => { w.pactProjectileSpeedMultiplier *= 1.5; p.pactArmorBonus -= 0.20; } },
     { id: 'hunter', for: 'staff', icon: 'hunter', title: 'Pacte du chasseur', gain: '+25 % de chance et +50 % de dégâts critiques aux tirs', cost: '−15 % de cadence de tir',
         apply: (p, w) => { w.pactCritChance += 0.25; w.pactCritDamage += 0.5; w.pactFireRateMultiplier *= 0.85; } },
-    { id: 'storm', for: 'staff', icon: 'storm', title: "Pacte de l'orage", gain: "Vos tirs sautent d'un ennemi touché sur 2 autres ennemis proches", cost: '−25 % de dégâts du bâton',
+    { id: 'storm', for: 'staff', icon: 'storm', title: "Pacte de l'orage", gain: "Vos tirs sautent d'un ennemi touché sur 2 autres ennemis proches", cost: '−25 % de dégâts du sceptre',
         apply: (p, w) => { w.pactChain += 2; w.pactDamageMultiplier *= 0.75; } },
     { id: 'pyre', for: 'staff', icon: 'pyre', title: 'Pacte du bûcher', gain: 'Aura de feu : +10 dégâts par seconde aux ennemis à moins de 9 m', cost: '−25 % de vitesse des projectiles',
         apply: (p, w) => { p.pactImmolation += 10; w.pactProjectileSpeedMultiplier *= 0.75; } },
     { id: 'pyromancy', for: 'staff', icon: 'pyromancy', title: 'Pacte de pyromancie', gain: '+25 % de chance que vos tirs explosent', cost: 'Rechargement deux fois plus long',
         apply: (p, w) => { w.pactExplosion += 0.25; w.pactReloadMultiplier *= 2; } },
-    { id: 'colossus', for: 'staff', icon: 'colossus', title: 'Pacte du colosse', gain: '+50 % de vie max', cost: '−25 % de dégâts du bâton',
+    { id: 'colossus', for: 'staff', icon: 'colossus', title: 'Pacte du colosse', gain: '+50 % de vie max', cost: '−25 % de dégâts du sceptre',
         apply: (p, w) => { p.pactHpMultiplier *= 1.5; w.pactDamageMultiplier *= 0.75; } },
-    { id: 'resilience', for: 'staff', icon: 'resilience', title: 'Pacte de résilience', gain: 'Régénère 2 PV par seconde', cost: '−20 % de dégâts du bâton',
+    { id: 'resilience', for: 'staff', icon: 'resilience', title: 'Pacte de résilience', gain: 'Régénère 2 PV par seconde', cost: '−20 % de dégâts du sceptre',
         apply: (p, w) => { w.pactDamageMultiplier *= 0.8; p.healthRegen += 2; } },
-    { id: 'wings', for: 'staff', icon: 'wings', title: 'Pacte des ailes', gain: "Sauts 50 % plus hauts : assez pour monter sur un mur d'un étage", cost: '−25 % de mana max',
+    { id: 'wings', for: 'staff', icon: 'wings', title: 'Pacte des ailes', gain: "Sauts 50 % plus hauts : assez pour monter sur un mur d'un étage", cost: "−25 % de capacité de l'orbe",
         apply: (p, w) => { p.pactJumpMultiplier *= Math.sqrt(1.5); w.pactAmmoMultiplier *= 0.75; } }, // Jump height grows with the square of the impulse
     // Sword
     { id: 'berserker', for: 'sword', icon: 'berserker', title: 'Pacte du berserker', gain: "+40 % de dégâts de l'épée", cost: '−25 % de vie max',
@@ -122,7 +122,7 @@ export const PACTS = [
         apply: (p, w, s) => { s.riposte = true; p.pactHpMultiplier *= 0.85; } },
     { id: 'mirror', for: 'sword', icon: 'mirror', title: 'Pacte du miroir', gain: 'Les projectiles parés repartent avec deux fois leurs dégâts', cost: "−20 % de dégâts de l'épée",
         apply: (p, w, s) => { s.mirror *= 2; s.pactDamageMultiplier *= 0.8; } },
-    { id: 'greedyBlade', for: 'sword', icon: 'greedy_blade', title: 'Pacte de la lame avide', gain: "Chaque ennemi touché à l'épée rend 5 mana au bâton", cost: '−25 % de mana max',
+    { id: 'greedyBlade', for: 'sword', icon: 'greedy_blade', title: 'Pacte de la lame avide', gain: "Chaque ennemi touché à l'épée rend 5 mana à l'orbe du sceptre", cost: "−25 % de capacité de l'orbe",
         apply: (p, w, s) => { s.manaOnHit += 5; w.pactAmmoMultiplier *= 0.75; } },
     { id: 'leech', for: 'sword', icon: 'leech', title: 'Pacte de la sangsue', gain: "Vos coups d'épée volent 15 % de vie", cost: 'Perd 1 PV par seconde',
         apply: (p, w, s) => { s.lifeSteal += 0.15; p.healthRegen -= 1; } },
@@ -135,7 +135,7 @@ export const PACTS = [
         apply: (p) => { p.pactShieldCap = Math.max(p.pactShieldCap, 40); p.pactGoldMultiplier *= 0.5; } },
     { id: 'armor', for: 'general', icon: 'armor_pact', title: "Pacte d'armure", gain: "+20 % d'armure", cost: '−15 % de vitesse',
         apply: (p) => { p.pactSpeedMultiplier *= 0.85; p.pactArmorBonus += 0.20; } },
-    { id: 'vampire', for: 'general', icon: 'vampire', title: 'Pacte de vampirisme', gain: '+20 % de vol de vie (bâton et épée)', cost: 'Perd 1 PV par seconde',
+    { id: 'vampire', for: 'general', icon: 'vampire', title: 'Pacte de vampirisme', gain: '+20 % de vol de vie (sceptre et épée)', cost: 'Perd 1 PV par seconde',
         apply: (p) => { p.pactVampirism += 0.20; p.healthRegen -= 1; } },
     { id: 'speed', for: 'general', icon: 'speed_pact', title: 'Pacte de vitesse', gain: '+30 % de vitesse', cost: '−20 % de vie max',
         apply: (p) => { p.pactSpeedMultiplier *= 1.30; p.pactHpMultiplier *= 0.80; } },
@@ -689,6 +689,36 @@ export class Game {
         return item.source === 'sword' ? this.player.sword : this.player;
     }
 
+    /**
+     * What an upgrade's card shows: its stat now and at the next level (`next` is 'max' at the top), with
+     * everything lasting the player has: pacts and fountains (not the berserk fury or a trap's slow, which pass).
+     * A shared upgrade whose staff and sword values differ (their own pacts) gets a row for each.
+     * @returns {{ label: string|null, now: string, next: string }[]}
+     */
+    _upgradeValues(item) {
+        const p = this.player;
+        const w = p.weapon;
+        const sword = p.sword;
+        const source = this._upgradeSource(item);
+        const level = source.stats[item.id];
+        const maxed = level >= source.getMaxLevel(item.id);
+        const now = (l) => source.effectiveValue(item.id, l);
+        const onSword = {
+            critChance: (l) => sword.critChance(w, l) * 100,
+            critDamage: (l) => sword.critDamage(w, l) * 100,
+            vampirism: (l) => p.effectiveValue('vampirism', l) + sword.lifeSteal * 100 // Leech pact
+        }[item.id];
+        const row = (label, value) => ({
+            label,
+            now: formatUpgradeValue(item.id, value(level)),
+            next: maxed ? 'max' : formatUpgradeValue(item.id, value(level + 1))
+        });
+        const staffRow = row(null, now);
+        const swordRow = onSword && row('Épée', onSword);
+        if (!swordRow || (swordRow.now === staffRow.now && swordRow.next === staffRow.next)) return [staffRow];
+        return [{ ...staffRow, label: 'Sceptre' }, swordRow];
+    }
+
     getAvailableUpgrades() {
         return UPGRADES.filter(item => {
             const source = this._upgradeSource(item);
@@ -808,8 +838,8 @@ export class Game {
         const isMaxed = level >= maxLevel;
         const usable = this.upgradePoints > 0 && !isMaxed;
 
-        const current = formatUpgradeValue(item.id, source.getStatValue(item.id, level));
-        const next = isMaxed ? 'max' : formatUpgradeValue(item.id, source.getStatValue(item.id, level + 1));
+        const values = this._upgradeValues(item).map(v => `
+                <span class="upgrade-card__values">${v.label ? `<span class="upgrade-card__for">${v.label}</span>` : ''}<span>${v.now}</span><span class="upgrade-card__next">${v.next}</span></span>`).join('');
         const pips = Array.from({ length: maxLevel }, (_, i) => `<span class="pip${i < level ? ' pip--on' : ''}"></span>`).join('');
 
         const card = document.createElement('button');
@@ -821,7 +851,7 @@ export class Game {
                 <span class="weapon-tag weapon-tag--${item.for}">${WEAPON_TAGS[item.for]}</span>
                 <span class="upgrade-card__sigil">${SVG_ICONS[item.id] || ''}</span>
                 <span class="upgrade-card__name">${item.label}</span>
-                <span class="upgrade-card__values"><span>${current}</span><span class="upgrade-card__next">${next}</span></span>
+                ${values}
                 <span class="upgrade-card__rank"><span class="sr-only">Rang ${level} sur ${maxLevel}</span>${pips}</span>
             </span>`;
 
@@ -938,14 +968,9 @@ export class Game {
         this._openMenu('shop-menu');
     }
 
-    // The visit's upgrades: SHOP_UPGRADES drawn from those not maxed out, with their value now and after
+    // The visit's upgrades: SHOP_UPGRADES drawn from those not maxed out
     _drawShopUpgrades() {
-        return shuffle(this.getAvailableUpgrades()).slice(0, SHOP_UPGRADES).map(item => {
-            const source = this._upgradeSource(item);
-            const level = source.stats[item.id];
-            const value = (l) => formatUpgradeValue(item.id, source.getStatValue(item.id, l));
-            return { item, now: value(level), next: value(level + 1), sold: false };
-        });
+        return shuffle(this.getAvailableUpgrades()).slice(0, SHOP_UPGRADES).map(item => ({ item, sold: false }));
     }
 
     // Every offer for the player's current state: { label, price, blocked (reason it can't be bought), buy() → message }
@@ -984,7 +1009,8 @@ export class Game {
                 buy: () => {
                     this._upgradeSource(u.item).upgrade(u.item.id);
                     u.sold = true;
-                    return `${u.item.label} (${WEAPON_TAGS[u.item.for]}) : ${u.next}.`;
+                    const values = this._upgradeValues(u.item).map(v => `${v.label ? `${v.label} ` : ''}${v.now}`).join(', ');
+                    return `${u.item.label} (${WEAPON_TAGS[u.item.for]}) : ${values}.`;
                 }
             }]))
         };
@@ -1012,7 +1038,7 @@ export class Game {
             ...this.shopUpgrades.map((u, i) => ware(
                 SVG_ICONS[u.item.id],
                 `${u.item.label} <span class="weapon-tag weapon-tag--${u.item.for}">${WEAPON_TAGS[u.item.for]}</span>`,
-                `Amélioration : ${u.now} → ${u.next}`,
+                `Amélioration : ${this._upgradeValues(u.item).map(v => `${v.label ? `${v.label} ` : ''}${v.now} → ${v.next}`).join(', ')}`,
                 [`upgrade${i}`]
             ))
         ].join('');

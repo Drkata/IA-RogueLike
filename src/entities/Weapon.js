@@ -122,33 +122,50 @@ export class Weapon {
 
     recalculateStats() {
         const s = this.stats;
-        const value = (stat) => this.getStatValue(stat, s[stat]);
+        const value = (stat) => this.effectiveValue(stat, s[stat]);
 
-        this.damage = value('damage') * this.pactDamageMultiplier;
-        this.fireRate = value('fireRate') / this.pactFireRateMultiplier;
+        this.damage = value('damage');
+        this.fireRate = value('fireRate');
         this.arc = s.bulletCount * 2; // Multishot spread: 2 degrees per extra bullet
-        this.maxAmmo = Math.floor(value('ammo') * this.pactAmmoMultiplier);
-        this.reloadTime = value('reload') * this.pactReloadMultiplier;
+        this.maxAmmo = value('ammo');
+        this.reloadTime = value('reload');
         this.range = value('range');
-        this.projectileSpeed = value('projectileSpeed') * this.pactProjectileSpeedMultiplier;
+        this.projectileSpeed = value('projectileSpeed');
         this.bulletCount = value('bulletCount');
         this.piercing = value('piercing');
-        this.critChance = value('critChance') / 100 + this.pactCritChance;
-        this.critDamage = value('critDamage') / 100 + this.pactCritDamage;
+        this.critChance = value('critChance') / 100;
+        this.critDamage = value('critDamage') / 100;
         this.knockback = value('knockback');
-        this.explosion = value('explosion') / 100 + this.pactExplosion;
+        this.explosion = value('explosion') / 100;
         this.ricochet = value('ricochet');
         this.chain = this.pactChain;
-
-        // Kinetic impact: every 1% of extra projectile speed adds 0.5% damage
-        const speedBonus = (this.projectileSpeed / this.baseProjectileSpeed) - 1;
-        if (speedBonus > 0) this.damage *= 1 + speedBonus * 0.5;
 
         // Multishot splits the damage between bullets
         if (this.bulletCount > 1) this.damage /= this.bulletCount;
     }
 
-    // Value of a stat at an upgrade level, before pacts (single source of truth for stats and the upgrade UI)
+    // A stat at an upgrade level with the pacts applied, in getStatValue's units: what the stats use and the
+    // upgrade cards show. The damage is a whole volley's (before the multishot split), with the kinetic bonus.
+    effectiveValue(stat, level) {
+        const v = this.getStatValue(stat, level);
+        switch (stat) {
+            case 'damage': {
+                // Kinetic impact: every 1% of extra projectile speed adds 0.5% damage
+                const speedBonus = this.effectiveValue('projectileSpeed', this.stats.projectileSpeed) / this.baseProjectileSpeed - 1;
+                return v * this.pactDamageMultiplier * (speedBonus > 0 ? 1 + speedBonus * 0.5 : 1);
+            }
+            case 'fireRate': return v / this.pactFireRateMultiplier;
+            case 'ammo': return Math.floor(v * this.pactAmmoMultiplier);
+            case 'reload': return v * this.pactReloadMultiplier;
+            case 'projectileSpeed': return v * this.pactProjectileSpeedMultiplier;
+            case 'critChance': return v + this.pactCritChance * 100;
+            case 'critDamage': return v + this.pactCritDamage * 100;
+            case 'explosion': return v + this.pactExplosion * 100;
+            default: return v;
+        }
+    }
+
+    // Value of a stat at an upgrade level, before pacts (effectiveValue adds them)
     getStatValue(stat, level) {
         switch (stat) {
             case 'damage': return this.baseDamage * (1 + level * 0.18);

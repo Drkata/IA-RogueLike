@@ -184,7 +184,7 @@ export function report(a) {
         Object.entries(a.upgrades).sort((x, y) => y[1].picked / (y[1].offered || 1) - x[1].picked / (x[1].offered || 1))
             .map(([id, u]) => [id, u.offered, u.picked, pc(u.picked, u.offered), pc(u.first, u.offered), fmt(median(u.firstLevels))]));
 
-    s += table('Armes par tranche de niveaux', ['Niveaux', 'Temps bâton', 'Dégâts bâton', 'Kills bâton', 'Tirs chargés/niv', 'Parades/niv', 'Changements/niv'],
+    s += table('Armes par tranche de niveaux', ['Niveaux', 'Temps sceptre', 'Dégâts sceptre', 'Kills sceptre', 'Tirs chargés/niv', 'Parades/niv', 'Changements/niv'],
         Object.entries(a.weapons).sort((x, y) => parseInt(x[0]) - parseInt(y[0])).map(([b, W]) => {
             const t = W['time.staff'] + W['time.sword'];
             const d = W['dmg.staff'] + W['dmg.sword'];

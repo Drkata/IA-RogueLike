@@ -8,7 +8,7 @@
 
 **IA-RogueLike** est un jeu de tir à la première personne (FPS) en 3D procédural développé entièrement dans le navigateur avec **Three.js** et **Vite**. Plongez dans un donjon médiéval-fantastique sombre et mystique où la maîtrise des trajectoires physiques et des rebonds est la clé de votre survie.
 
-Armé de votre bâton magique entièrement améliorable, progressez de salle en salle, éliminez les sentinelles magiques, esquivez les pièges mortels, défiez des boss colossaux et personnalisez votre arsenal pour descendre le plus profondément possible dans les tréfonds du donjon.
+Armé de votre sceptre magique entièrement améliorable, progressez de salle en salle, éliminez les sentinelles magiques, esquivez les pièges mortels, défiez des boss colossaux et personnalisez votre arsenal pour descendre le plus profondément possible dans les tréfonds du donjon.
 
 ![Aperçu du gameplay - Donjon et Îles Flottantes](public/screenshots/gameplay1.png)
 
@@ -20,7 +20,7 @@ Armé de votre bâton magique entièrement améliorable, progressez de salle en 
 
 ### ⚔️ Gameplay & Combat
 * **🎯 Système de Ricochet 3D** : Vos projectiles magiques rebondissent de manière réaliste sur le sol et sur un vaste archipel d'**îles célestes flottantes**. Ces îles, suspendues entre 8 et 40 mètres d'altitude, vous permettent d'atteindre des ennemis cachés derrière des abris par des tirs en cloche indirects.
-* **🔫 Arsenal Magique Évolutif** : Votre bâton possède **13 statistiques améliorables** : Dégâts, Cadence de tir, Munitions, Rechargement, Portée, Vitesse de projectile, Tirs multiples, Perforation, Chance critique, Dégâts critiques, Recul ennemi, Explosions et Ricochets.
+* **🔫 Arsenal Magique Évolutif** : Votre sceptre possède **13 statistiques améliorables** : Dégâts, Cadence de tir, Munitions, Rechargement, Portée, Vitesse de projectile, Tirs multiples, Perforation, Chance critique, Dégâts critiques, Recul ennemi, Explosions et Ricochets.
 * **👁️ IA Ennemie Avancée** : Les ennemis utilisent un **pathfinding A\*** pour vous pourchasser dans le donjon. Ils patrouillent, détectent le joueur, flanquent et attaquent de manière autonome.
 * **💥 Critiques & Explosions** : Les tirs critiques déclenchent des effets visuels et sonores distinctifs. Les projectiles explosifs génèrent des zones de dégâts à l'impact.
 
@@ -46,8 +46,8 @@ Armé de votre bâton magique entièrement améliorable, progressez de salle en 
 ### 💰 Économie & Progression
 * **💰 Économie d'Or** : Récupérez l'or laissé par les monstres défaits ou caché dans les **Coffres au Trésor** disséminés dans le donjon.
 * **🛒 Marchand Mystique** : Rencontrez le Marchand Magique et échangez votre butin contre des potions de vie, des munitions, des sceaux de bouclier, ou l'une des 3 améliorations qu'il propose à chaque visite (tirées au hasard, 250 or chacune, une seule fois).
-* **🩸 Autels de Pactes Anciens** : chaque autel propose 2 pactes permanents tirés au hasard parmi 26 : 10 pour le bâton, 10 pour l'épée et 6 généraux, chacun étiqueté sur sa carte. Chacun a un prix : vie, dégâts, armure, vitesse, mana, or… Certains changent la façon de jouer : éclairs qui sautent d'ennemi en ennemi, onde de choc tous les 8 ennemis tués, aura de feu, tirs explosifs, épée qui frappe tout autour, projectiles parés renvoyés deux fois plus forts, ondes tranchantes, sauts jusqu'en haut des murs.
-* **⚔️ Deux armes** : le **bâton** tire des projectiles de mana (clic droit : tir chargé de 1,5 s, immobile, qui vide tout le chargeur en un seul gros projectile, puis recharge) ; l'**épée** frappe tous les ennemis dans un arc devant vous (clic droit : garde, qui réduit de 70 % les tirs reçus de face ; dans ses 0,3 premières secondes, elle les renvoie à leur tireur). Une seule arme en main ; changer d'arme annule la recharge du bâton. Chaque amélioration dit sur sa carte si elle vaut pour le bâton, l'épée, les deux, ou le personnage.
+* **🩸 Autels de Pactes Anciens** : chaque autel propose 2 pactes permanents tirés au hasard parmi 26 : 10 pour le sceptre, 10 pour l'épée et 6 généraux, chacun étiqueté sur sa carte. Chacun a un prix : vie, dégâts, armure, vitesse, mana, or… Certains changent la façon de jouer : éclairs qui sautent d'ennemi en ennemi, onde de choc tous les 8 ennemis tués, aura de feu, tirs explosifs, épée qui frappe tout autour, projectiles parés renvoyés deux fois plus forts, ondes tranchantes, sauts jusqu'en haut des murs.
+* **⚔️ Deux armes** : le **sceptre** tire des projectiles de mana (clic droit : tir chargé de 1,5 s, immobile, qui vide tout l'orbe en un seul gros projectile, puis recharge) ; l'**épée** frappe tous les ennemis dans un arc devant vous (clic droit : garde, qui réduit de 70 % les tirs reçus de face ; dans ses 0,3 premières secondes, elle les renvoie à leur tireur). Une seule arme en main ; changer d'arme annule la recharge du sceptre. Chaque amélioration dit sur sa carte si elle vaut pour le sceptre, l'épée, les deux, ou le personnage.
 * **⛲ Fontaines de jouvence** : Boire à une fontaine augmente définitivement vos PV max de 30.
 
 ### 🌍 Systèmes Additionnels
@@ -67,9 +67,9 @@ Armé de votre bâton magique entièrement améliorable, progressez de salle en 
 | Se déplacer | `Z` `Q` `S` `D` (ou `W` `A` `S` `D`) | Joystick gauche |
 | Sauter | `Espace` | Bouton dédié |
 | Viser & Attaquer avec l'arme en main | `Souris` / `Clic gauche` | Toucher zone droite / bouton d'attaque |
-| Tir chargé (bâton) / Garde (épée) | `Clic droit` (maintenu) | Bouton dédié |
-| Changer d'arme | `A` (`Q` en QWERTY), `Molette`, `1` bâton, `2` épée | Bouton dédié |
-| Recharger le bâton | `R` | Bouton dédié |
+| Tir chargé (sceptre) / Garde (épée) | `Clic droit` (maintenu) | Bouton dédié |
+| Changer d'arme | `A` (`Q` en QWERTY), `Molette`, `1` sceptre, `2` épée | Bouton dédié |
+| Recharger le sceptre | `R` | Bouton dédié |
 | Interagir (Marchand, Autel, Fontaine, Coffre) | `E` | Bouton `E` |
 | Pause / Menu d'amélioration | Automatique (montée de niveau, transition d'étage) | — |
 

@@ -321,7 +321,7 @@ export class Player {
 
     // Burning ring: 5 damage per second per upgrade level (+ Pyre pact) to enemies within IMMOLATION_RANGE, in 0.5 s ticks
     updateImmolation(dt) {
-        const dps = this.getStatValue('immolation', this.stats.immolation) + this.pactImmolation; // Upgrade + Pyre pact
+        const dps = this.effectiveValue('immolation', this.stats.immolation); // Upgrade + Pyre pact
         if (dps <= 0) {
             if (this.immolationRing) this.immolationRing.visible = false;
             return;
@@ -705,17 +705,33 @@ export class Player {
     recalculateStats() {
         // Max Health: +25 per level, heal the difference so the upgrade feels good immediately
         const oldMax = this.maxHealth;
-        this.maxHealth = Math.max(25, this.getStatValue('maxHealth', this.stats.maxHealth) * this.pactHpMultiplier + this.fountainHp);
+        const value = (stat) => this.effectiveValue(stat, this.stats[stat]);
+        this.maxHealth = value('maxHealth');
         if (this.maxHealth > oldMax) this.health += this.maxHealth - oldMax;
         this.health = Math.min(this.health, this.maxHealth);
 
-        this.armor = this.getStatValue('armor', this.stats.armor) / 100 + this.pactArmorBonus;
-        this.vampirism = this.getStatValue('vampirism', this.stats.vampirism) / 100 + this.pactVampirism;
-        this.regen = this.getStatValue('regen', this.stats.regen);
-        this.speed = CONSTANTS.PLAYER_SPEED * (this.getStatValue('speed', this.stats.speed) / 100) * this.pactSpeedMultiplier;
+        this.armor = value('armor') / 100;
+        this.vampirism = value('vampirism') / 100;
+        this.regen = this.getStatValue('regen', this.stats.regen); // The pacts' regeneration or drain (healthRegen) is added in update()
+        this.speed = CONSTANTS.PLAYER_SPEED * value('speed') / 100;
         this.magnetRange = this.getStatValue('magnet', this.stats.magnet); // Pickups beyond PICKUP_RANGE fly to the player within this range
 
         this.updateHUD();
+    }
+
+    // A stat at an upgrade level with the pacts and fountains applied, in getStatValue's units: what the stats
+    // use and the upgrade cards show. Regeneration includes the pacts' regeneration or drain.
+    effectiveValue(stat, level) {
+        const v = this.getStatValue(stat, level);
+        switch (stat) {
+            case 'maxHealth': return Math.max(25, v * this.pactHpMultiplier + this.fountainHp);
+            case 'armor': return v + this.pactArmorBonus * 100;
+            case 'vampirism': return v + this.pactVampirism * 100;
+            case 'regen': return v + this.healthRegen;
+            case 'speed': return v * this.pactSpeedMultiplier;
+            case 'immolation': return v + this.pactImmolation;
+            default: return v;
+        }
     }
 
     // Value of a stat at an upgrade level (percent stats are returned as percentages)

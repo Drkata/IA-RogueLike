@@ -101,7 +101,7 @@ export class Sword {
         return true;
     }
 
-    // Value of a stat at an upgrade level, before pacts (single source of truth for stats and the upgrade UI)
+    // Value of a stat at an upgrade level, before pacts (effectiveValue adds them)
     getStatValue(stat, level) {
         switch (stat) {
             case 'meleeDamage': return 10 + level * 15; // Per enemy struck
@@ -111,11 +111,22 @@ export class Sword {
         }
     }
 
+    // A stat at an upgrade level with the sword pacts applied: what the stats use and the upgrade cards show
+    effectiveValue(stat, level) {
+        const v = this.getStatValue(stat, level);
+        switch (stat) {
+            case 'meleeDamage': return v * this.pactDamageMultiplier;
+            case 'attackSpeed': return v * this.pactSpeedMultiplier;
+            case 'reach': return v * this.pactReachMultiplier;
+            default: return v;
+        }
+    }
+
     recalculateStats() {
-        const value = (stat) => this.getStatValue(stat, this.stats[stat]);
-        this.damage = value('meleeDamage') * this.pactDamageMultiplier;
-        this.strikeRate = value('attackSpeed') * this.pactSpeedMultiplier;
-        this.reach = value('reach') * this.pactReachMultiplier;
+        const value = (stat) => this.effectiveValue(stat, this.stats[stat]);
+        this.damage = value('meleeDamage');
+        this.strikeRate = value('attackSpeed');
+        this.reach = value('reach');
         const arc = this.whirlwind ? Math.PI * 2 : ARC;
         if (arc !== this.arc) {
             this.arc = arc;
@@ -147,13 +158,14 @@ export class Sword {
         return (dx * forward.x + dz * forward.z) / dist >= Math.cos(this.arc / 2);
     }
 
-    // Crits: the shared crit upgrades (held by the staff, without the staff's pacts) plus the sword's pacts
-    critChance(staff) {
-        return staff.getStatValue('critChance', staff.stats.critChance) / 100 + this.pactCritChance;
+    // Crits: the shared crit upgrades (held by the staff, without the staff's pacts) plus the sword's pacts.
+    // `level`: of the crit upgrade, for the upgrade cards.
+    critChance(staff, level = staff.stats.critChance) {
+        return staff.getStatValue('critChance', level) / 100 + this.pactCritChance;
     }
 
-    critDamage(staff) {
-        return staff.getStatValue('critDamage', staff.stats.critDamage) / 100 + this.pactCritDamage;
+    critDamage(staff, level = staff.stats.critDamage) {
+        return staff.getStatValue('critDamage', level) / 100 + this.pactCritDamage;
     }
 
     // The strike after a parry, under the Riposte pact, hits harder (once)

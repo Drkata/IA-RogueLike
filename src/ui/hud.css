@@ -918,6 +918,19 @@ body:has(.overlay:not([hidden])) #crosshair {
     color: var(--gilt);
 }
 
+/* A shared upgrade whose staff and sword values differ: one smaller row each, named */
+.upgrade-card__for {
+    min-width: 3.6em;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.upgrade-card__values:has(.upgrade-card__for) .upgrade-card__next {
+    font-size: 17px;
+}
+
 .upgrade-card__rank {
     margin-top: auto; /* Along the bottom of every card */
     display: flex;

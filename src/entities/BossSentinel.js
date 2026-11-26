@@ -450,7 +450,7 @@ export class BossSentinel {
                 this.stunned = true;
                 this.targetY = STUNNED_Y;
                 soundManager.play('shieldBreak');
-                this.player.hudManager?.showMessage('Le boss est à terre : frappez-le au bâton ! Dégâts ×2');
+                this.player.hudManager?.showMessage("Le boss est à terre : frappez-le à l'épée ! Dégâts ×2");
             }],
             [fall * 0.6, () => soundManager.play('bossSlam')],
             [fall + stay - 0.8, () => soundManager.play('bossRoar')], // About to get up

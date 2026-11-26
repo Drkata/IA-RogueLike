@@ -132,4 +132,4 @@ assert.ok(maxRoll > 3, 'no idle twirl');
 const g = weapon.gunMesh;
 assert.ok(Math.abs(g.position.x - 0.3) < 0.05 && Math.abs(g.position.y + 0.3) < 0.05, 'staff not back at rest');
 
-console.log(`Bâton : ${STAFF_TIERS.length} paliers et toutes les animations OK`);
+console.log(`Sceptre : ${STAFF_TIERS.length} paliers et toutes les animations OK`);

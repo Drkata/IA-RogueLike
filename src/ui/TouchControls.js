@@ -13,7 +13,7 @@ const STICK_ZONE = 0.4; // Share of the screen width, from the left, that starts
 const BUTTONS = [
     { key: 'Mouse0', icon: ['touchFire', 'touchSlash'], label: 'Attaquer', modifier: 'fire', aims: true },
     { key: 'Space', icon: 'touchJump', label: 'Sauter', modifier: 'jump' },
-    { key: 'Mouse1', icon: ['touchCharge', 'touchGuard'], label: 'Tir chargé (bâton) ou garde (épée)', modifier: 'secondary' },
+    { key: 'Mouse1', icon: ['touchCharge', 'touchGuard'], label: 'Tir chargé (sceptre) ou garde (épée)', modifier: 'secondary' },
     { key: 'KeyR', icon: 'touchReload', label: 'Recharger', modifier: 'reload' },
     { key: 'KeyQ', icon: 'touchSwitch', label: "Changer d'arme", modifier: 'switch' },
     { key: 'KeyE', icon: 'touchAction', label: 'Interagir', modifier: 'action' }

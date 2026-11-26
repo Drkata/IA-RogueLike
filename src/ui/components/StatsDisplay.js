@@ -34,14 +34,14 @@ export class StatsDisplay {
             row('vitality', SVG_ICONS.speed, 'Vitesse', pct((player.speed / CONSTANTS.PLAYER_SPEED) * 100) + rankBadge(p.speed) + multBadge(player.pactSpeedMultiplier))
         ];
         const weapon = [
-            row('offense', SVG_ICONS.damage, 'Dégâts bâton', num(w.damage * w.bulletCount) + rankBadge(s.damage) + multBadge(w.pactDamageMultiplier)),
+            row('offense', SVG_ICONS.damage, 'Dégâts sceptre', num(w.damage * w.bulletCount) + rankBadge(s.damage) + multBadge(w.pactDamageMultiplier)),
             row('offense', SVG_ICONS.fireRate, 'Cadence', unit(1 / w.fireRate, 'tirs/s') + rankBadge(s.fireRate) + multBadge(w.pactFireRateMultiplier)),
-            row('offense', SVG_ICONS.ammo, 'Mana max', w.maxAmmo + rankBadge(s.ammo)),
+            row('offense', SVG_ICONS.ammo, "Capacité de l'orbe", w.maxAmmo + rankBadge(s.ammo)),
             row('offense', SVG_ICONS.reload, 'Rechargement', unit(w.reloadTime, 's') + rankBadge(s.reload))
         ];
         const precision = [
-            row('offense', SVG_ICONS.critChance, 'Critique bâton', pct(w.critChance * 100) + rankBadge(s.critChance)),
-            row('offense', SVG_ICONS.critDamage, 'Dégâts crit. bâton', pct(w.critDamage * 100) + rankBadge(s.critDamage)),
+            row('offense', SVG_ICONS.critChance, 'Critique sceptre', pct(w.critChance * 100) + rankBadge(s.critChance)),
+            row('offense', SVG_ICONS.critDamage, 'Dégâts crit. sceptre', pct(w.critDamage * 100) + rankBadge(s.critDamage)),
             row('offense', SVG_ICONS.range, 'Portée', num(w.range) + rankBadge(s.range)),
             row('offense', SVG_ICONS.projectileSpeed, 'Vit. projectiles', num(w.projectileSpeed) + rankBadge(s.projectileSpeed) + multBadge(w.pactProjectileSpeedMultiplier))
         ];
