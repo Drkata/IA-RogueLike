@@ -172,20 +172,20 @@ export function report(a) {
 
     const deaths = Object.values(a.causes).reduce((x, y) => x + y, 0);
     s += table('Causes de mort', ['Cause', 'Morts', 'Part'], byCount(a.causes).map(([k, n]) => [k, n, pc(n, deaths)]));
-    for (const [b, causes] of Object.entries(a.causesByBracket)) {
+    for (const [b, causes] of Object.entries(a.causesByBracket).sort((x, y) => parseInt(x[0]) - parseInt(y[0]))) {
         s += `  niveaux ${b} : ${byCount(causes).slice(0, 4).map(([k, n]) => `${k} ${n}`).join(', ')}\n`;
     }
     const hurt = sum(Object.values(a.hurtBySource));
     s += table('Dégâts subis par source (toutes manches)', ['Source', 'Dégâts', 'Part'],
         byCount(a.hurtBySource).slice(0, 12).map(([k, n]) => [k, Math.round(n), pc(n, hurt)]));
 
-    s += table('Améliorations (menus de fin de niveau, coffres, gemmes) : taux = choisie / proposée',
+    s += table('Améliorations (menus de fin de niveau, coffres, gemmes) : taux = choisie / proposée (plusieurs points sur une carte : peut dépasser 100 %)',
         ['Amélioration', 'Proposée', 'Choisie', 'Taux', 'Choisie en 1er', '1re prise (niv. médian)'],
         Object.entries(a.upgrades).sort((x, y) => y[1].picked / (y[1].offered || 1) - x[1].picked / (x[1].offered || 1))
             .map(([id, u]) => [id, u.offered, u.picked, pc(u.picked, u.offered), pc(u.first, u.offered), fmt(median(u.firstLevels))]));
 
     s += table('Armes par tranche de niveaux', ['Niveaux', 'Temps bâton', 'Dégâts bâton', 'Kills bâton', 'Tirs chargés/niv', 'Parades/niv', 'Changements/niv'],
-        Object.entries(a.weapons).map(([b, W]) => {
+        Object.entries(a.weapons).sort((x, y) => parseInt(x[0]) - parseInt(y[0])).map(([b, W]) => {
             const t = W['time.staff'] + W['time.sword'];
             const d = W['dmg.staff'] + W['dmg.sword'];
             const k = W['kills.staff'] + W['kills.sword'];
@@ -205,7 +205,8 @@ export function report(a) {
         Object.entries(a.shopUpgrades).sort((x, y) => y[1].bought - x[1].bought).map(([id, u]) => [id, u.offered, u.bought, pc(u.bought, u.offered)]));
 
     s += table('Salles spéciales', ['Salle', 'Générées', 'Utilisées', 'Taux'],
-        ['treasure', 'fountain', 'shop', 'altar'].map(k => [k, a.rooms[k] || 0, a.roomsUsed[k], pc(a.roomsUsed[k], a.rooms[k] || 0)]));
+        Object.entries({ treasure: 'coffre', fountain: 'fontaine', shop: 'boutique', altar: 'autel' })
+            .map(([k, name]) => [name, a.rooms[k] || 0, a.roomsUsed[k], pc(a.roomsUsed[k], a.rooms[k] || 0)]));
     s += `Coffres : ${byCount(a.chests).map(([k, n]) => `${k} ${n}`).join(', ') || '–'}\n`;
     s += `Images/s médianes : ${Object.entries(a.fps).map(([d, xs]) => `${d} ${fmt(median(xs))}`).join(', ') || '–'}\n`;
     return s;
