@@ -19,6 +19,12 @@ const PACKS = {
 const R = 'RPG Sound Pack';
 const K = 'OGG';
 const UI = 'Audio';
+// The staff's crystal: the glass with an octave above it (shimmer), and that, echoed in a cloud and played
+// backwards (strike muffled first, or every echo clicks), as the mana it draws in while it recharges
+const OCTAVE = 'asplit[a][b];[b]asetrate=88200,aresample=44100,volume=0.6[c];[a][c]amix=inputs=2:normalize=0';
+const DRAW_IN = 'silenceremove=start_periods=1:start_threshold=-50dB,highpass=f=900,highpass=f=900,afade=t=in:d=0.06,' +
+    `${OCTAVE},apad=pad_dur=1,aecho=0.8:0.9:37|71|113|167|229|307|401|509|631|769|919:0.6|0.55|0.5|0.45|0.4|0.34|0.28|0.22|0.16|0.11|0.07,` +
+    'areverse,compand=attacks=0.02:decays=0.2:points=-90/-90|-60/-40|-30/-22|0/-10';
 // [output name, pack, file inside the pack, max seconds, extra ffmpeg filter]
 const SOUNDS = [
     // Player
@@ -30,8 +36,8 @@ const SOUNDS = [
     ['melee-hit-1', 'woodmetal', 'wood_hit_01.ogg'],
     ['melee-hit-2', 'woodmetal', 'wood_hit_03.ogg'],
     ['melee-hit-3', 'woodmetal', 'wood_hit_04.ogg'],
-    ['reload', 'rpg80', 'item_gem_04.ogg'],
-    ['reload-done', 'kenneyUi', `${UI}/glass_004.ogg`, 0.45], // Thin crystal ping, unlike any other sound
+    ['reload', 'cc100', 'glass_04.ogg', 0, DRAW_IN], // ~1.4 s swell
+    ['reload-done', 'cc100', 'glass_04.ogg', 0.8, OCTAVE],
     ['empty', 'rpg80', 'spell_02.ogg', 0.22, 'lowpass=f=600,lowpass=f=600'], // The shot's own spell, stifled
     ...Array.from({ length: 10 }, (_, i) => [`footstep-${i + 1}`, 'kenneyRpg', `${K}/footstep0${i}.ogg`]),
     ['jump', 'kenneyRpg', `${K}/cloth1.ogg`, 0.4],

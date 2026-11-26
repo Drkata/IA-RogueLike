@@ -12,6 +12,7 @@ const OAK = 0x4a3322;
 const EBONY = 0x352838;
 const FROST = 0x7fb0ff;
 const VIEW_DEPTH = 0.02; // Share of the depth range the staff is drawn in (see inFront)
+const MOTES = 28;
 
 // Lowest first; the orb colours are the ones ART_DIRECTION.md (section 8) gives the staff
 export const STAFF_TIERS = [
@@ -132,7 +133,7 @@ const material = (color, roughness, metalness = 0, glow = 0) => new THREE.MeshSt
 
 /**
  * Builds the staff of a tier. Returns the group, the crystal (`orb`, whose material Weapon brightens
- * with the mana left and each shot), its halo sprite (`glow`), and the parts that turn on their own
+ * with the mana left and each shot), its halo sprite (`glow`), the mana `motes` (Points), and the parts that turn on their own
  * (`spinners`, rotated about z by `userData.spin` rad/s). Every material and geometry is the
  * staff's own: dispose them all when it is replaced.
  */
@@ -217,12 +218,30 @@ export function buildStaff(tier) {
     glow.position.z = HEAD_Z;
     glow.scale.setScalar(0.2);
     group.add(glow);
+    // Mana motes, hidden at rest: Weapon draws them in to the crystal while it recharges, then bursts them
+    // out. Their vertex colour is their brightness (additive: black adds nothing).
+    const dynamic = () => new THREE.BufferAttribute(new Float32Array(MOTES * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    const motes = new THREE.Points(
+        new THREE.BufferGeometry().setAttribute('position', dynamic()).setAttribute('color', dynamic()),
+        new THREE.PointsMaterial({
+            map: TextureGenerator.getGlowTexture(),
+            color: t.orb,
+            size: 0.024,
+            vertexColors: true,
+            blending: THREE.AdditiveBlending,
+            transparent: true,
+            depthWrite: false
+        })
+    );
+    motes.visible = false;
+    motes.frustumCulled = false; // Moved every frame: its bounding sphere would be stale
+    group.add(motes);
 
     group.traverse(obj => {
-        if (obj.isMesh || obj.isSprite) {
+        if (obj.isMesh || obj.isSprite || obj.isPoints) {
             obj.onBeforeRender = inFront;
             obj.onAfterRender = restoreDepth;
         }
     });
-    return { group, orb, glow, spinners };
+    return { group, orb, glow, motes, spinners };
 }

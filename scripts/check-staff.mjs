@@ -15,12 +15,14 @@ performance.now = () => simTime * 1000;
 
 const { soundManager, SFX } = await import('../src/systems/SoundManager.js');
 const played = [];
-soundManager.play = (name) => {
+let reloadEndsIn = 0;
+soundManager.play = (name, position, rate, endIn) => {
   assert.ok(name in SFX, `unknown sound ${name}`);
   played.push(name);
+  if (name === 'reload') reloadEndsIn = endIn;
 };
 const { Weapon } = await import('../src/entities/Weapon.js');
-const { STAFF_TIERS, staffTier } = await import('../src/entities/StaffMesh.js');
+const { HEAD_Z, STAFF_TIERS, staffTier } = await import('../src/entities/StaffMesh.js');
 
 const camera = new THREE.PerspectiveCamera(75, 16 / 9, 0.1, 1000);
 camera.rotation.order = 'YXZ';
@@ -35,7 +37,7 @@ STAFF_TIERS.forEach((tier, i) => {
   assert.equal(weapon.tier, i);
   let draws = 0;
   weapon.staff.group.traverse(o => {
-    if (!o.isMesh && !o.isSprite) return;
+    if (!o.isMesh && !o.isSprite && !o.isPoints) return;
     draws++;
     assert.notEqual(o.onBeforeRender, THREE.Object3D.prototype.onBeforeRender, 'staff part drawn without its depth range');
     if (o.isMesh) assert.ok(o.geometry.attributes.position.count > 0);
@@ -56,7 +58,7 @@ const run = (seconds, speed = 0, each = noop) => {
     each();
     weapon.update(dt, speed);
     const g = weapon.gunMesh;
-    for (const v of [g.position.x, g.position.y, g.position.z, g.rotation.x, g.rotation.y, g.rotation.z, weapon.staff.orb.material.emissiveIntensity, weapon.staff.glow.scale.x]) {
+    for (const v of [g.position.x, g.position.y, g.position.z, g.rotation.x, g.rotation.y, g.rotation.z, weapon.staff.orb.material.emissiveIntensity, weapon.staff.glow.scale.x, ...weapon.staff.motes.geometry.attributes.position.array]) {
       assert.ok(Number.isFinite(v), 'pose went NaN');
     }
     maxRoll = Math.max(maxRoll, g.rotation.z);
@@ -64,12 +66,20 @@ const run = (seconds, speed = 0, each = noop) => {
 };
 
 run(2, 8, () => { camera.rotation.y += 0.05; }); // Walking while turning
+assert.ok(weapon.shoot() > 0);
+run(0.05); // A cast: the staff thrusts forward and the crystal sprays sparks
+assert.ok(weapon.gunMesh.position.z < -0.53 && weapon.staff.motes.visible, 'no cast animation on a shot');
 weapon.currentAmmo = 3;
 run(2, 0, () => weapon.shoot()); // Fire until the clip is empty: it reloads by itself
 assert.ok(played.includes('reload'), 'no reload after emptying the clip');
-run(weapon.reloadTime + 0.1);
+assert.equal(reloadEndsIn, weapon.reloadTime, 'the reload swell must peak when the reload ends');
+const { orb, motes } = weapon.staff;
+assert.ok(weapon.isReloading && motes.visible, 'no mana drawn in during the reload');
+assert.ok(orb.position.z < HEAD_Z - 0.03, 'the crystal stays in its claws during the reload');
+while (weapon.isReloading) run(dt);
 assert.ok(played.includes('reloadDone'), 'no sound when the reload ends');
 assert.equal(weapon.currentAmmo, weapon.maxAmmo);
+assert.ok(motes.visible, 'no burst of mana when the crystal is full');
 
 weapon.currentAmmo = 0;
 weapon.reserveAmmo = 0;
@@ -81,6 +91,7 @@ assert.ok(dry >= 2 && dry <= Math.ceil(1 / weapon.fireRate) + 1, `dry fire playe
 assert.ok(weapon.melee());
 run(1);
 assert.ok(!weapon.isMeleeing);
+assert.ok(!motes.visible && Math.abs(orb.position.z - HEAD_Z) < 0.006, 'crystal not back home after the reload');
 
 maxRoll = 0;
 run(10); // Calm: the staff twirls once

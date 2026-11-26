@@ -8,8 +8,8 @@ export const SFX = {
     shoot: [['shoot-1', 'shoot-2'], 0.35, 0.08, 3],
     melee: [['melee-1', 'melee-2', 'melee-3'], 0.6, 0.06, 2],
     meleeHit: [['melee-hit-1', 'melee-hit-2', 'melee-hit-3'], 0.7, 0.06, 2],
-    reload: [['reload'], 0.6, 0.03, 1],
-    reloadDone: [['reload-done'], 0.35, 0.03, 1], // The crystal is full again
+    reload: [['reload'], 0.55, 0.02, 1], // The crystal draws mana in: swells up to the end of the reload
+    reloadDone: [['reload-done'], 0.45, 0.02, 1], // …then rings: the same crystal, played forwards
     empty: [['empty'], 0.5, 0.08, 1, 0.85], // Out of mana: a stifled spell
     footstep: [['footstep-1', 'footstep-2', 'footstep-3', 'footstep-4', 'footstep-5', 'footstep-6', 'footstep-7', 'footstep-8', 'footstep-9', 'footstep-10'], 0.22, 0.06, 2],
     jump: [['jump'], 0.3, 0.05, 1],
@@ -124,11 +124,12 @@ export class SoundManager {
 
     /**
      * Plays a sound effect. With a `position` (THREE.Vector3) it comes from that point in the world;
-     * without, it plays at the listener (player, interface). `rate` > 1 plays it higher. Returns
-     * nothing; silently skipped while the file is loading. With too many copies already playing,
+     * without, it plays at the listener (player, interface). `rate` > 1 plays it higher. `endIn` > 0
+     * times it to end that many seconds from now (a swell peaking on its event): it starts later, or
+     * part-way in. Returns nothing; silently skipped while the file is loading. With too many copies already playing,
      * the oldest one fades out: the newest event is the one to hear (a fast staff never goes mute).
      */
-    play(name, position = null, rate = 1) {
+    play(name, position = null, rate = 1, endIn = 0) {
         const [variants, volume, pitch, maxVoices, baseRate = 1] = SFX[name];
         const now = this.ctx.currentTime;
         if (now - (this.lastStart.get(name) ?? -1) < MIN_GAP) return;
@@ -171,7 +172,10 @@ export class SoundManager {
             const i = voices.indexOf(voice);
             if (i >= 0) voices.splice(i, 1);
         };
-        source.start();
+        const speed = source.playbackRate.value;
+        const length = buffer.duration / speed; // Seconds as played
+        if (endIn > 0) source.start(now + Math.max(0, endIn - length), Math.max(0, length - endIn) * speed);
+        else source.start();
     }
 
     // The ears follow the camera (called every frame)
