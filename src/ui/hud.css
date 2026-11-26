@@ -863,9 +863,9 @@ body:has(.overlay:not([hidden])) #crosshair {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start; /* Tag, sigil and name at the same height on every card, whatever the name's length */
     gap: 12px;
-    padding: 28px 18px;
+    padding: 16px 18px 28px;
 }
 
 .upgrade-card__face {
@@ -919,6 +919,7 @@ body:has(.overlay:not([hidden])) #crosshair {
 }
 
 .upgrade-card__rank {
+    margin-top: auto; /* Along the bottom of every card */
     display: flex;
     gap: 5px;
 }
@@ -1160,6 +1161,13 @@ body:has(.overlay:not([hidden])) #crosshair {
     font-family: var(--font-display);
     font-size: 24px;
     line-height: 1.1;
+}
+
+.ware__name .weapon-tag {
+    margin-left: 6px;
+    font-family: var(--font-text);
+    font-size: 11px;
+    vertical-align: 0.3em;
 }
 
 .ware__desc {
@@ -1593,7 +1601,7 @@ body:has(.overlay:not([hidden])) #crosshair {
 .is-phone .upgrade-card__face,
 .is-phone .reel-item {
     gap: 8px;
-    padding: 18px 12px;
+    padding: 12px 12px 18px;
 }
 
 .is-phone .upgrade-card__sigil {
@@ -1679,6 +1687,10 @@ body:has(.overlay:not([hidden])) #crosshair {
     .upgrade-card {
         --card-h: 250px;
         width: 168px;
+    }
+    .upgrade-card__sigil {
+        width: 60px;
+        height: 60px;
     }
     .upgrade-card__name {
         font-size: 22px;

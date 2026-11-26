@@ -1,6 +1,6 @@
 // The sword and the two-weapon rules in plain Node (no browser): `npm run check:sword`. The Sword alone
 // (stats, arc, guard and parry, animations), then the Player's own methods on a stand-in player (strikes,
-// shots met by the guard, charged shot), then every pact and upgrade label.
+// shots met by the guard, charged shot), then every pact and upgrade label, and the shop's upgrades.
 import * as THREE from 'three';
 import assert from 'assert/strict';
 const noop = () => {};
@@ -164,6 +164,21 @@ assert.equal(added.length, 1, 'one blade wave');
 assert.ok(added[0].isPlayerProjectile && added[0].maxDistance === 8 && added[0].piercing === Infinity && added[0].size > 0);
 assert.ok(played.includes('meleeHit'));
 
+// Berserk fury: strikes twice as fast, and 75 % life steal on sword strikes only; gone when it ends
+player.activateBerserk(10);
+assert.ok(player.weapon.infiniteAmmo && player.weapon.fireRateMultiplier === 2);
+player.sword.update(5, 0);
+assert.ok(player.sword.swing());
+assert.ok(Math.abs(player.sword.cooldown - 1 / (2 * player.sword.strikeRate)) < 1e-9, 'twice as fast');
+player.sword.update(5, 0);
+player.health = 10;
+const furyHp = a.hp;
+player.handleSwing();
+assert.equal(player.health, 10 + 2 * 10 * (0.2 + 0.75), 'fury life steal on both hits');
+assert.equal(a.hp, furyHp - 10);
+player._setFury(false); // What the end of the fury (Player.update) and a new run (resetBuffs) call
+assert.ok(player.sword.furyMultiplier === 1 && player.sword.furyLifeSteal === 0 && !player.weapon.infiniteAmmo);
+
 // Shots met by the guard: parried back at the shooter (Mirror doubles them), blocked, or not covered
 const { Projectile } = await import('../src/entities/Projectile.js');
 const shooter = { position: new THREE.Vector3(0, 1.6, -10), isDead: false };
@@ -245,4 +260,24 @@ const tagged = (tag) => game.UPGRADES.filter(u => u.for === tag).map(u => u.id).
 assert.equal(tagged('sword'), 'attackSpeed,meleeDamage,reach');
 assert.equal(tagged('both'), 'critChance,critDamage,vampirism');
 
-console.log(`Épée : arc, garde, parade, tir chargé et ${PACTS.length} pactes OK`);
+// Shop: 3 upgrades drawn per visit among those not maxed out, 250 gold each, once
+const shopper = Object.assign(Object.create(Player.prototype), { stats: { maxHealth: 0, armor: 0, vampirism: 0, regen: 0, speed: 0, immolation: 0, magnet: 0 },
+  weapon: new Weapon(new THREE.PerspectiveCamera()), sword: new Sword(new THREE.PerspectiveCamera()), health: 100, maxHealth: 100, shield: 0, MAX_LEVEL: 10, updateHUD: noop });
+const shop = Object.assign(Object.create(game.Game.prototype), { player: shopper });
+shop.shopUpgrades = shop._drawShopUpgrades();
+assert.equal(new Set(shop.shopUpgrades.map(u => u.item.id)).size, 3);
+let offers = shop._shopOffers();
+assert.ok(['upgrade0', 'upgrade1', 'upgrade2'].every(id => offers[id].price === 250 && !offers[id].blocked));
+assert.ok(!('upgrade' in offers) && !('upgrade10' in offers), 'the old random upgrades are gone');
+const first = shop.shopUpgrades[0].item;
+offers.upgrade0.buy();
+assert.equal(shop._upgradeSource(first).stats[first.id], 1);
+offers = shop._shopOffers();
+assert.ok(offers.upgrade0.blocked && offers.upgrade0.sold && !offers.upgrade1.blocked, 'each one is bought once');
+for (const u of game.UPGRADES) shop._upgradeSource(u).stats[u.id] = 10; // Everything maxed out but two
+const [last1, last2] = game.UPGRADES.slice(-2);
+shop._upgradeSource(last1).stats[last1.id] = 3;
+shop._upgradeSource(last2).stats[last2.id] = 9;
+assert.equal(shop._drawShopUpgrades().length, 2, 'only what can still be raised');
+
+console.log(`Épée : arc, garde, parade, tir chargé et ${PACTS.length} pactes OK ; boutique OK`);

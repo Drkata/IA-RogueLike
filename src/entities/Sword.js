@@ -58,6 +58,9 @@ export class Sword {
         this.parryOpen = false;
         this.lastParryOpen = -Infinity;
         this.riposteReady = false;
+        this.swingLength = SWING_TIME;
+        this.furyMultiplier = 1.0; // Berserk fury (Player): of the strikes per second
+        this.furyLifeSteal = 0; // Berserk fury: life stolen by strikes, on top of the rest
         this.anim = { guard: 0, flare: 0, jolt: 0 };
     }
 
@@ -126,7 +129,9 @@ export class Sword {
     // Left click: starts a strike if the blade is ready. Player then resolves its hits at once.
     swing() {
         if (this.cooldown > 0 || this.guarding || this.holster > 0) return false;
-        this.cooldown = 1 / this.strikeRate;
+        const rate = this.strikeRate * this.furyMultiplier;
+        this.cooldown = 1 / rate;
+        this.swingLength = Math.min(SWING_TIME, 0.8 / rate); // Faster strikes, a quicker swing
         this.swingTime = 0;
         this.side = -this.side;
         return true;
@@ -210,9 +215,8 @@ export class Sword {
         let e = 0;
         let u = 1;
         if (this.swingTime >= 0) {
-            const time = Math.min(SWING_TIME, 0.8 / this.strikeRate);
             this.swingTime += dt;
-            const k = this.swingTime / time;
+            const k = this.swingTime / this.swingLength;
             if (k >= 1) this.swingTime = -1;
             else {
                 e = smoothstep(k, 0, 0.15) * (1 - smoothstep(k, 0.5, 1));

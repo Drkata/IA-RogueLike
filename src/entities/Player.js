@@ -20,6 +20,7 @@ const AEGIS_DELAY = 4; // s unhurt before the Aegis pact's shield refills
 const AEGIS_RATE = 10; // Shield points per second
 const STATS_REFRESH = 0.25; // s: the HUD stats ledger is costly to rebuild, so play refreshes it 4 times a second
 const SWITCH_TIME = 0.4; // s to put one weapon away and take the other in hand
+const FURY_LIFE_STEAL = 0.75; // Berserk fury: life stolen by sword strikes, on top of the rest
 const WAVE = { speed: 20, range: 8, scale: 2, size: 0.6, spread: 0.15 }; // Wave pact's blade waves (spread: rad between two)
 
 // Zero-allocation scratch vectors for the per-frame code
@@ -203,9 +204,17 @@ export class Player {
     resetBuffs() {
         this.isBerserk = false;
         this.berserkTimer = 0;
-        this.weapon.infiniteAmmo = false;
-        this.weapon.fireRateMultiplier = 1.0;
+        this._setFury(false);
         this.updateHUD();
+    }
+
+    // Berserk fury: the staff fires twice as fast without spending mana; the sword, having no mana,
+    // strikes twice as fast and its strikes steal FURY_LIFE_STEAL of their damage as life
+    _setFury(on) {
+        this.weapon.infiniteAmmo = on;
+        this.weapon.fireRateMultiplier = on ? 2.0 : 1.0;
+        this.sword.furyMultiplier = on ? 2.0 : 1.0;
+        this.sword.furyLifeSteal = on ? FURY_LIFE_STEAL : 0;
     }
 
     heal(amount) {
@@ -240,8 +249,7 @@ export class Player {
         this.isBerserk = true;
         this.berserkTimer = duration;
         this.berserkMaxDuration = duration;
-        this.weapon.infiniteAmmo = true;
-        this.weapon.fireRateMultiplier = 2.0;
+        this._setFury(true);
         this.updateHUD();
     }
 
@@ -267,8 +275,7 @@ export class Player {
             this.berserkTimer -= dt;
             if (this.berserkTimer <= 0) {
                 this.isBerserk = false;
-                this.weapon.infiniteAmmo = false;
-                this.weapon.fireRateMultiplier = 1.0;
+                this._setFury(false);
             }
         }
 
@@ -477,7 +484,7 @@ export class Player {
             if (died) stats.kills++;
             if (isCritical) stats.critCount++;
             stats.maxDamageHit = Math.max(stats.maxDamageHit, dealt);
-            const steal = this.vampirism + s.lifeSteal;
+            const steal = this.vampirism + s.lifeSteal + s.furyLifeSteal;
             if (steal > 0) this.heal(dealt * steal);
             if (enemy.ai) enemy.ai.knockback(enemy.position.x - this.position.x, enemy.position.z - this.position.z, 1.0);
             if (s.manaOnHit > 0) w.currentAmmo = Math.min(w.maxAmmo, w.currentAmmo + s.manaOnHit);

@@ -204,7 +204,8 @@ export class Weapon {
         return this.charging ? Math.min(1, this.chargeTime / CHARGE_TIME) : 0;
     }
 
-    // The charge is full: empties the clip and returns how much mana went into the shot
+    // The charge is full: empties the clip (which starts refilling at once, if there is mana in reserve)
+    // and returns how much mana went into the shot
     releaseCharge() {
         const ammo = this.currentAmmo;
         this.currentAmmo = 0;
@@ -214,6 +215,7 @@ export class Weapon {
         this.recoil = 1.0;
         this.anim.shots++;
         this.anim.spark = 1;
+        this.reload();
         return ammo;
     }
 

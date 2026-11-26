@@ -76,7 +76,6 @@ export const SVG_ICONS = {
     potion: makeIcon('health-potion', '#e0563f'),
     mana_reserve: makeIcon('ammo-box', '#7fd6c9'),
     ward: makeIcon('shield', '#7fd6c9'),
-    soul_shard: makeIcon('shatter', ARCANA),
     coin: makeIcon('crown-coin', GILT),
 
     // Touch controls

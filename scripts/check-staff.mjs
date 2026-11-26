@@ -106,8 +106,13 @@ assert.equal(weapon.chargeProgress(), 1);
 assert.equal(weapon.releaseCharge(), weapon.maxAmmo);
 assert.equal(weapon.currentAmmo, 0);
 assert.ok(!weapon.startCharge(), 'no charge with an empty clip');
+assert.ok(!weapon.isReloading, 'no reserve left: no reload');
 weapon.reserveAmmo = 100;
-weapon.reload();
+weapon.refill();
+weapon.startCharge();
+run(CHARGE_TIME + dt);
+weapon.releaseCharge();
+assert.ok(weapon.isReloading, 'the emptied clip refills on its own');
 run(0.2);
 weapon.cancelReload(); // Put away mid-reload: the reload is lost
 assert.ok(!weapon.isReloading && weapon.currentAmmo === 0);

@@ -146,7 +146,8 @@ export const PACTS = [
 const POTION = { heal: 50, price: 20 };
 const MANA = { amount: 150, price: 15 };
 const WARD = { shield: 30, price: 25 };
-const SHARD_PRICE = 250;
+const UPGRADE_PRICE = 250; // Each of the shop's SHOP_UPGRADES upgrades, once
+const SHOP_UPGRADES = 3; // Drawn at random from the upgrades not maxed out, on each visit
 const SHIELD_FULL = 100; // The shield bar is drawn on 100 points
 const BULK = 10;
 
@@ -154,9 +155,8 @@ const BULK = 10;
 const SHOP_ITEMS = [
     { icon: 'potion', name: 'Élixir de vie', desc: `Rend ${POTION.heal} points de vie, ou toute votre vie.`, offers: ['potion', 'potionFull'] },
     { icon: 'mana_reserve', name: 'Réserve de mana', desc: `+${MANA.amount} mana en réserve.`, offers: ['ammo', 'ammo10'] },
-    { icon: 'ward', name: 'Sceau de protection', desc: `Un bouclier qui absorbe ${WARD.shield} dégâts, ou le bouclier plein (${SHIELD_FULL}).`, offers: ['shield', 'shieldFull'] },
-    { icon: 'soul_shard', name: "Fragment d'âme", desc: 'Une amélioration tirée au hasard.', offers: ['upgrade', 'upgrade10'] }
-];
+    { icon: 'ward', name: 'Sceau de protection', desc: `Un bouclier qui absorbe ${WARD.shield} dégâts, ou le bouclier plein (${SHIELD_FULL}).`, offers: ['shield', 'shieldFull'] }
+]; // Then the visit's upgrades (Game.shopUpgrades)
 
 const shuffle = (array) => {
     for (let i = array.length - 1; i > 0; i--) {
@@ -820,6 +820,7 @@ export class Game {
         strip.className = 'reel-strip';
         strip.innerHTML = reelItems.map(r => `
             <span class="reel-item">
+                <span class="weapon-tag weapon-tag--${r.for}">${WEAPON_TAGS[r.for]}</span>
                 <span class="upgrade-card__sigil">${SVG_ICONS[r.id] || ''}</span>
                 <span class="upgrade-card__name">${r.label}</span>
             </span>`).join('');
@@ -891,9 +892,20 @@ export class Game {
 
     showShopMenu(shop) {
         this.currentShop = shop;
+        this.shopUpgrades = this._drawShopUpgrades();
         this.showShopFeedback('');
         this._renderShop();
         this._openMenu('shop-menu');
+    }
+
+    // The visit's upgrades: SHOP_UPGRADES drawn from those not maxed out, with their value now and after
+    _drawShopUpgrades() {
+        return shuffle(this.getAvailableUpgrades()).slice(0, SHOP_UPGRADES).map(item => {
+            const source = this._upgradeSource(item);
+            const level = source.stats[item.id];
+            const value = (l) => formatUpgradeValue(item.id, source.getStatValue(item.id, l));
+            return { item, now: value(level), next: value(level + 1), sold: false };
+        });
     }
 
     // Every offer for the player's current state: { label, price, blocked (reason it can't be bought), buy() → message }
@@ -901,9 +913,7 @@ export class Game {
         const p = this.player;
         const missingHealth = Math.max(0, p.maxHealth - p.health);
         const missingShield = Math.max(0, SHIELD_FULL - p.shield);
-        const shards = Math.min(BULK, this._remainingUpgradeLevels());
         const fullHealth = missingHealth <= 0 && 'Votre vie est déjà au maximum.';
-        const maxedOut = shards === 0 && 'Toutes vos améliorations sont déjà au maximum.';
         const addMana = (n) => () => {
             p.weapon.reserveAmmo += MANA.amount * n;
             return `+${MANA.amount * n} mana en réserve.`;
@@ -925,47 +935,47 @@ export class Game {
                 blocked: missingShield <= 0 && 'Votre bouclier est déjà plein.',
                 buy: () => { p.addShield(missingShield); return `Bouclier plein (${SHIELD_FULL} points).`; }
             },
-            upgrade: { label: 'Acheter', price: SHARD_PRICE, blocked: maxedOut, buy: () => this._buyUpgrades(1) },
-            // Fewer than 10 upgrade levels left: the bulk offer shrinks to what can still be bought
-            upgrade10: { label: `×${Math.max(2, shards)}`, price: SHARD_PRICE * Math.max(2, shards), hidden: shards < 2, blocked: maxedOut, buy: () => this._buyUpgrades(shards) }
+            // The visit's upgrades, one level each, once
+            ...Object.fromEntries((this.shopUpgrades || []).map((u, i) => [`upgrade${i}`, {
+                label: 'Acheter',
+                price: UPGRADE_PRICE,
+                sold: u.sold,
+                blocked: u.sold && 'Déjà achetée.',
+                buy: () => {
+                    this._upgradeSource(u.item).upgrade(u.item.id);
+                    u.sold = true;
+                    return `${u.item.label} (${WEAPON_TAGS[u.item.for]}) : ${u.next}.`;
+                }
+            }]))
         };
-    }
-
-    _remainingUpgradeLevels() {
-        return UPGRADES.reduce((sum, item) => {
-            const source = this._upgradeSource(item);
-            return sum + source.getMaxLevel(item.id) - source.stats[item.id];
-        }, 0);
-    }
-
-    // `count` random upgrades; returns a summary like "Dégâts +2, Portée +1."
-    _buyUpgrades(count) {
-        const gained = new Map();
-        for (let i = 0; i < count; i++) {
-            const available = this.getAvailableUpgrades();
-            const upgrade = available[Math.floor(Math.random() * available.length)];
-            this._upgradeSource(upgrade).upgrade(upgrade.id);
-            gained.set(upgrade.label, (gained.get(upgrade.label) || 0) + 1);
-        }
-        return [...gained].sort((a, b) => b[1] - a[1]).map(([label, n]) => `${label} +${n}`).join(', ') + '.';
     }
 
     _renderShop() {
         const gold = this.player.gold;
         const offers = this._shopOffers();
         document.getElementById('shop-gold-value').textContent = gold;
-        document.getElementById('shop-wares').innerHTML = SHOP_ITEMS.map(item => `
-            <li class="ware">
-                <span class="ware__icon">${SVG_ICONS[item.icon]}</span>
-                <span class="ware__text"><span class="ware__name">${item.name}</span><span class="ware__desc">${item.desc}</span></span>
-                <span class="ware__buys">${item.offers.filter(id => !offers[id].hidden).map(id => {
-                    const offer = offers[id];
-                    return `
+        const button = (id) => {
+            const offer = offers[id];
+            return `
                     <button class="btn btn--gilt ware__buy" type="button" data-item="${id}" ${offer.blocked || gold < offer.price ? 'aria-disabled="true"' : ''}>
-                        ${offer.label} <span class="price">${offer.price} ${SVG_ICONS.coin}</span>
+                        ${offer.sold ? 'Achetée' : `${offer.label} <span class="price">${offer.price} ${SVG_ICONS.coin}</span>`}
                     </button>`;
-                }).join('')}</span>
-            </li>`).join('');
+        };
+        const ware = (icon, name, desc, ids) => `
+            <li class="ware">
+                <span class="ware__icon">${icon}</span>
+                <span class="ware__text"><span class="ware__name">${name}</span><span class="ware__desc">${desc}</span></span>
+                <span class="ware__buys">${ids.filter(id => !offers[id].hidden).map(button).join('')}</span>
+            </li>`;
+        document.getElementById('shop-wares').innerHTML = [
+            ...SHOP_ITEMS.map(item => ware(SVG_ICONS[item.icon], item.name, item.desc, item.offers)),
+            ...this.shopUpgrades.map((u, i) => ware(
+                SVG_ICONS[u.item.id],
+                `${u.item.label} <span class="weapon-tag weapon-tag--${u.item.for}">${WEAPON_TAGS[u.item.for]}</span>`,
+                `Amélioration : ${u.now} → ${u.next}`,
+                [`upgrade${i}`]
+            ))
+        ].join('');
     }
 
     showShopFeedback(message, isError = false) {
