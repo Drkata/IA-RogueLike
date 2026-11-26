@@ -1,6 +1,7 @@
 import { CONSTANTS } from '../../core/Constants.js';
 import { SVG_ICONS } from '../SVGIcons.js';
-import { num, pct, unit } from '../format.js';
+import { num, pct, unit, armorText, explosionText } from '../format.js';
+import { armorDamageFactor } from '../../entities/Player.js';
 
 // Pact modifier badge: higher is always better, so > 1 (or > 0) reads as a boon
 const multBadge = (m) => (m === 1 ? '' : `<small class="stat__mod stat__mod--${m > 1 ? 'good' : 'bad'}">×${num(m)}</small>`);
@@ -28,7 +29,7 @@ export class StatsDisplay {
 
         const body = [
             row('vitality', SVG_ICONS.maxHealth, 'Vie max', Math.round(player.maxHealth) + rankBadge(p.maxHealth) + multBadge(player.pactHpMultiplier)),
-            row('vitality', SVG_ICONS.armor, 'Armure', pct(player.armor * 100) + rankBadge(p.armor) + flatBadge(player.pactArmorBonus * 100, pct)),
+            row('vitality', SVG_ICONS.armor, 'Armure', armorText(player.armor, armorDamageFactor(player.armor)) + rankBadge(p.armor) + flatBadge(player.pactArmorBonus, num)),
             row('vitality', SVG_ICONS.regen, 'Régénération', unit(player.regen + player.healthRegen, 'PV/s') + rankBadge(p.regen) + flatBadge(player.healthRegen, num)),
             row('vitality', SVG_ICONS.vampirism, 'Vol de vie', pct(player.vampirism * 100) + rankBadge(p.vampirism) + flatBadge(player.pactVampirism * 100, pct)),
             row('vitality', SVG_ICONS.speed, 'Vitesse', pct((player.speed / CONSTANTS.PLAYER_SPEED) * 100) + rankBadge(p.speed) + multBadge(player.pactSpeedMultiplier))
@@ -56,7 +57,7 @@ export class StatsDisplay {
             row('arcana', SVG_ICONS.bulletCount, 'Projectiles', w.bulletCount + rankBadge(s.bulletCount)),
             row('arcana', SVG_ICONS.piercing, 'Perforation', w.piercing + rankBadge(s.piercing)),
             row('arcana', SVG_ICONS.knockback, 'Recul', num(w.knockback) + rankBadge(s.knockback)),
-            row('arcana', SVG_ICONS.explosion, 'Explosion', pct(w.explosion * 100) + rankBadge(s.explosion)),
+            row('arcana', SVG_ICONS.explosion, 'Explosion', explosionText(w.explosion * 100) + rankBadge(s.explosion)),
             row('arcana', SVG_ICONS.ricochet, 'Ricochets', w.ricochet + rankBadge(s.ricochet)),
             row('arcana', SVG_ICONS.magnet, 'Aimant', unit(player.magnetRange, 'm') + rankBadge(p.magnet))
         ];

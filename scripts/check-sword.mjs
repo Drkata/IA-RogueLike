@@ -56,9 +56,13 @@ assert.ok(sword.inArc(origin, forward, foe(2, -2.2)), '42° off the view, in rea
 assert.ok(!sword.inArc(origin, forward, foe(3, -1)), '72° off the view');
 assert.ok(!sword.inArc(origin, forward, foe(0, -4)), 'beyond reach');
 assert.ok(!sword.inArc(origin, forward, foe(0, 2)), 'behind');
-sword.whirlwind = true;
+sword.whirlwind = 1;
 sword.recalculateStats();
 assert.ok(sword.inArc(origin, forward, foe(0, 2)), 'Whirlwind strikes behind too');
+const whirlReach = sword.reach;
+sword.whirlwind = 3;
+sword.recalculateStats();
+assert.ok(Math.abs(sword.reach - whirlReach * 1.5) < 1e-9, 'each Whirlwind taken again: +25 % reach');
 sword.reset();
 
 // Strikes: one per cooldown, not while put away or guarding
@@ -97,12 +101,18 @@ sword.setGuard(true);
 assert.equal(sword.meetShot(toward(0, 1), forward), 'parry', 'the window opens again later');
 sword.setGuard(false);
 assert.equal(sword.meetShot(toward(0, 1), forward), null, 'no guard, no block');
-sword.riposte = true;
+sword.riposte = 1;
 sword.update(PARRY_REARM, 0);
 sword.setGuard(true);
 sword.meetShot(toward(0, 1), forward);
 assert.equal(sword.takeRiposte(), RIPOSTE);
 assert.equal(sword.takeRiposte(), 1, 'a riposte is used once');
+sword.setGuard(false);
+sword.riposte = 2; // Taken twice: two strikes
+sword.update(PARRY_REARM, 0);
+sword.setGuard(true);
+sword.meetShot(toward(0, 1), forward);
+assert.deepEqual([sword.takeRiposte(), sword.takeRiposte(), sword.takeRiposte()], [RIPOSTE, RIPOSTE, 1]);
 sword.reset();
 
 // Put away: hidden; every part drawn in front of the world
@@ -311,4 +321,45 @@ assert.deepEqual(card('attackSpeed'), [[null, unit(1.25 * 1.5, 'coups/s'), unit(
 hero.stats.maxHealth = 10;
 assert.equal(card('maxHealth')[0][2], 'max');
 
-console.log(`Épée : arc, garde, parade, tir chargé et ${PACTS.length} pactes OK ; boutique OK ; cartes avec pactes et fontaines OK`);
+// Every pact stacks: taken again, its gain grows (the four that were on/off switches, the explosion past 100 %)
+const { armorDamageFactor } = await import('../src/entities/Player.js');
+const taker = () => {
+  const p = Object.assign(Object.create(Player.prototype), { stats: { maxHealth: 0, armor: 0, vampirism: 0, regen: 0, speed: 0, immolation: 0, magnet: 0 },
+    weapon: new Weapon(new THREE.PerspectiveCamera()), sword: new Sword(new THREE.PerspectiveCamera()), sessionStats: { kills: 0 } });
+  p.resetPacts();
+  return p;
+};
+const takeTwice = (id) => {
+  const p = taker();
+  const pact = PACTS.find(x => x.id === id);
+  pact.apply(p, p.weapon, p.sword);
+  const once = { cap: p.pactShieldCap, rate: p.pactShieldRate, wave: p.pactShockwaveDamage, at: p.nextShockwaveAt };
+  p.sessionStats.kills = 5;
+  pact.apply(p, p.weapon, p.sword);
+  return [once, p];
+};
+let [once, twice] = takeTwice('aegis');
+assert.deepEqual([once.cap, twice.pactShieldCap], [40, 60], 'Aegis: +20 shield');
+assert.equal(twice.pactShieldRate, once.rate * 1.5, 'Aegis: refills 50 % faster');
+[once, twice] = takeTwice('cataclysm');
+assert.deepEqual([once.wave, twice.pactShockwaveDamage], [50, 100], 'Cataclysm: +50 damage');
+assert.equal(twice.nextShockwaveAt, once.at, 'taken again, the count to the next wave goes on');
+[, twice] = takeTwice('whirlwind');
+assert.equal(twice.sword.whirlwind, 2);
+[, twice] = takeTwice('riposte');
+assert.equal(twice.sword.riposte, 2);
+// Armor in points, as in League of Legends: never stops it all, below zero adds damage
+assert.equal(armorDamageFactor(0), 1);
+assert.equal(armorDamageFactor(100), 0.5);
+assert.ok(Math.abs(armorDamageFactor(-25) - 1.2) < 1e-9);
+assert.ok(armorDamageFactor(1e6) > 0);
+const tank = taker();
+tank.stats.armor = 10;
+for (let i = 0; i < 3; i++) PACTS.find(x => x.id === 'armor').apply(tank, tank.weapon, tank.sword);
+tank.recalculateStats();
+assert.equal(tank.armor, 125, '10 levels (50) + 3 armor pacts (75)');
+assert.deepEqual(card('armor').length, 1);
+const { explosionText } = await import('../src/ui/format.js');
+assert.equal(explosionText(125), `${pct(100)}, +${pct(25)} dégâts`);
+
+console.log(`Épée : arc, garde, parade, tir chargé et ${PACTS.length} pactes OK ; boutique OK ; cartes avec pactes et fontaines OK ; pactes cumulables et armure OK`);

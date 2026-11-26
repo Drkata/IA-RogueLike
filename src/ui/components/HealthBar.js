@@ -4,8 +4,8 @@ export class HealthBar {
         this.element.id = 'health-container';
         this.element.className = 'vitals';
         this.element.innerHTML = `
-            <div class="vitals__shield" hidden><span class="vitals__shield-fill"></span></div>
-            <div class="vitals__readout"><span class="vitals__value">100</span><span class="vitals__max">/ 100</span></div>
+            <div class="vitals__shield" hidden><span class="vitals__shield-fill"></span><span class="vitals__shield-fill vitals__shield-fill--over"></span></div>
+            <div class="vitals__readout"><span class="vitals__value">100</span><span class="vitals__max">/ 100</span><span class="vitals__shield-value" title="Bouclier" hidden></span></div>
             <div class="vitals__bar"><span class="vitals__fill"></span></div>
         `;
         container.appendChild(this.element);
@@ -14,7 +14,8 @@ export class HealthBar {
         this.value = this.element.querySelector('.vitals__value');
         this.max = this.element.querySelector('.vitals__max');
         this.shieldFrame = this.element.querySelector('.vitals__shield');
-        this.shieldFill = this.element.querySelector('.vitals__shield-fill');
+        [this.shieldFill, this.shieldOver] = this.element.querySelectorAll('.vitals__shield-fill');
+        this.shieldValue = this.element.querySelector('.vitals__shield-value');
     }
 
     update(current, max, shield = 0) {
@@ -30,9 +31,12 @@ export class HealthBar {
         this.element.classList.toggle('vitals--wounded', ratio <= 0.5 && ratio > 0.25);
         this.element.classList.toggle('vitals--critical', ratio <= 0.25);
 
-        // Shield bar is scaled on 100 points
-        this.shieldFrame.hidden = shield <= 0;
+        // The shield bar holds 100 points; a brighter layer over it fills with the next 100. Its points are
+        // written beside the health (shields can go well past 100: Aegis pact, wards bought).
+        this.shieldFrame.hidden = this.shieldValue.hidden = shield <= 0;
         this.shieldFill.style.transform = `scaleX(${Math.min(1, shield / 100)})`;
+        this.shieldOver.style.transform = `scaleX(${Math.min(1, Math.max(0, shield / 100 - 1))})`;
+        this.shieldValue.textContent = `+${Math.ceil(shield)}`;
     }
 
     triggerDamageEffect() {

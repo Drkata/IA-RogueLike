@@ -245,7 +245,8 @@ export class EntityManager {
                 }
 
                 if (projectile.explosion > 0 && Math.random() < projectile.explosion) {
-                    this.createExplosion(projectile.position, projectile.damage, player);
+                    // Past a 100 % chance, the surplus adds to the explosion's damage (125 %: +25 %)
+                    this.createExplosion(projectile.position, projectile.damage * Math.max(1, projectile.explosion), player);
                 }
 
                 // Piercing: keep flying through up to `piercing` enemies; then the Storm pact's jumps
@@ -315,14 +316,14 @@ export class EntityManager {
         }
     }
 
-    // Shockwave from `position` (on the ground): every enemy within SHOCKWAVE_RANGE takes
-    // SHOCKWAVE_DAMAGE and is pushed away. Set off by a destroyed turret.
-    shockwave(position) {
+    // Shockwave from `position` (on the ground): every enemy within SHOCKWAVE_RANGE takes `damage` and is
+    // pushed away. Set off by a destroyed guardian and by the Cataclysm pact.
+    shockwave(position, damage = SHOCKWAVE_DAMAGE) {
         soundManager.play('shockwave');
         for (const entity of this.entities) {
             if (entity.entityType !== 'enemy' || entity.isDead) continue;
             if (position.distanceTo(entity.position) >= SHOCKWAVE_RANGE) continue;
-            entity.takeDamage(SHOCKWAVE_DAMAGE);
+            entity.takeDamage(damage);
             if (entity.ai) entity.ai.knockback(entity.position.x - position.x, entity.position.z - position.z, 5);
         }
 

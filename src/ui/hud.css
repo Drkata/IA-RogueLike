@@ -213,6 +213,17 @@ canvas {
     background: linear-gradient(90deg, var(--aether), var(--aether-bright));
 }
 
+/* Shield points past 100, over the full bar */
+.vitals__shield-fill--over {
+    background: linear-gradient(90deg, var(--aether-bright), #fff);
+}
+
+.vitals__shield-value {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--aether-bright);
+}
+
 .vitals--wounded .vitals__value {
     color: var(--gilt-bright);
 }

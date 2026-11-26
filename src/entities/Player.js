@@ -19,6 +19,10 @@ const MANTLE = 0.6; // m: in the air, crossing onto a ledge with the feet at mos
 const COYOTE_TIME = 0.12; // s after walking off a ledge during which a jump still counts
 const AEGIS_DELAY = 4; // s unhurt before the Aegis pact's shield refills
 const AEGIS_RATE = 10; // Shield points per second
+
+// Share of a hit's damage that armor lets through, as in League of Legends: 100 armor halves it, no amount stops
+// it all. Below zero (pacts), the damage grows instead: −25 armor, +20 %.
+export const armorDamageFactor = (armor) => (armor >= 0 ? 100 / (100 + armor) : 2 - 100 / (100 - armor));
 const STATS_REFRESH = 0.25; // s: the HUD stats ledger is costly to rebuild, so play refreshes it 4 times a second
 const SWITCH_TIME = 0.4; // s to put one weapon away and take the other in hand
 const FURY_LIFE_STEAL = 0.75; // Berserk fury: life stolen by sword strikes, on top of the rest
@@ -83,7 +87,7 @@ export class Player {
         this.maxHealth = 100;
         this.health = this.maxHealth;
         this.shield = 0;
-        this.armor = 0; // Damage reduction (0-1)
+        this.armor = 0; // Armor points (armorDamageFactor)
         this.vampirism = 0; // Life steal ratio
         this.regen = 0; // HP per second
         this.speed = CONSTANTS.PLAYER_SPEED;
@@ -112,7 +116,7 @@ export class Player {
         this.pactHpMultiplier = 1.0;
         this.fountainHp = 0; // Flat max health from fountains of youth, after the pact multiplier
         this.pactSpeedMultiplier = 1.0;
-        this.pactArmorBonus = 0;
+        this.pactArmorBonus = 0; // Armor points
         this.pactVampirism = 0;
         this.healthRegen = 0; // Flat HP/s from pacts (negative = drain)
         this.pactJumpMultiplier = 1.0;
@@ -122,6 +126,8 @@ export class Player {
         this.nextShockwaveAt = 0; // Kill count of the next one
         this.pactImmolation = 0; // Extra burning aura damage per second
         this.pactShieldCap = 0; // Aegis: the shield refills up to this after a while unhurt (0: none)
+        this.pactShieldRate = AEGIS_RATE; // Aegis: shield points refilled per second
+        this.pactShockwaveDamage = 0; // Cataclysm: damage of each shockwave
         this.sinceHurt = 0; // s since the last hit
     }
 
@@ -145,8 +151,7 @@ export class Player {
             return;
         }
 
-        // Armor reduction (max 80%)
-        const finalDamage = remainingDamage * (1 - Math.min(0.8, this.armor));
+        const finalDamage = remainingDamage * armorDamageFactor(this.armor);
         this.sessionStats.damageTaken += finalDamage;
         this.damageLog.push({ source: sourceName, id: sourceId, damage: finalDamage, timestamp: Date.now() });
         runLog.hurt(sourceName, finalDamage);
@@ -295,13 +300,13 @@ export class Player {
         // Cataclysm pact: every few kills, a shockwave from the player's feet
         if (this.pactShockwaveKills && this.sessionStats.kills >= this.nextShockwaveAt) {
             this.nextShockwaveAt = this.sessionStats.kills + this.pactShockwaveKills;
-            this.entityManager.shockwave(_wave.set(this.position.x, this.position.y - EYE_HEIGHT, this.position.z));
+            this.entityManager.shockwave(_wave.set(this.position.x, this.position.y - EYE_HEIGHT, this.position.z), this.pactShockwaveDamage);
         }
 
         // Aegis pact: after a few seconds unhurt, the shield refills up to its cap
         this.sinceHurt += dt;
         if (this.sinceHurt > AEGIS_DELAY && this.shield < this.pactShieldCap) {
-            this.shield = Math.min(this.pactShieldCap, this.shield + AEGIS_RATE * dt);
+            this.shield = Math.min(this.pactShieldCap, this.shield + this.pactShieldRate * dt);
         }
 
         // Regeneration / pact drain (the drain can kill)
@@ -710,7 +715,7 @@ export class Player {
         if (this.maxHealth > oldMax) this.health += this.maxHealth - oldMax;
         this.health = Math.min(this.health, this.maxHealth);
 
-        this.armor = value('armor') / 100;
+        this.armor = value('armor');
         this.vampirism = value('vampirism') / 100;
         this.regen = this.getStatValue('regen', this.stats.regen); // The pacts' regeneration or drain (healthRegen) is added in update()
         this.speed = CONSTANTS.PLAYER_SPEED * value('speed') / 100;
@@ -725,7 +730,7 @@ export class Player {
         const v = this.getStatValue(stat, level);
         switch (stat) {
             case 'maxHealth': return Math.max(25, v * this.pactHpMultiplier + this.fountainHp);
-            case 'armor': return v + this.pactArmorBonus * 100;
+            case 'armor': return v + this.pactArmorBonus;
             case 'vampirism': return v + this.pactVampirism * 100;
             case 'regen': return v + this.healthRegen;
             case 'speed': return v * this.pactSpeedMultiplier;
@@ -738,7 +743,7 @@ export class Player {
     getStatValue(stat, level) {
         switch (stat) {
             case 'maxHealth': return 100 + level * 25;
-            case 'armor': return level * 3.0; // +3% damage reduction per level
+            case 'armor': return level * 5; // Armor points (armorDamageFactor)
             case 'vampirism': return level * 2; // +2% life steal per level
             case 'regen': return level * 0.3; // HP per second
             case 'speed': return (1 + level * 0.08) * 100; // +8% per level

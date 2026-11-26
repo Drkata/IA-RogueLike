@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Input } from './Input.js';
 import { CONSTANTS } from './Constants.js';
-import { Player } from '../entities/Player.js';
+import { Player, armorDamageFactor } from '../entities/Player.js';
 import { LevelManager } from '../systems/LevelManager.js';
 import { mapSizeForLevel } from '../systems/MapGenerator.js';
 import { EntityManager } from '../systems/EntityManager.js';
@@ -22,7 +22,7 @@ import { SVG_ICONS } from '../ui/SVGIcons.js';
 import { DEVICE } from './Device.js';
 import { soundManager } from '../systems/SoundManager.js';
 import { runLog } from '../systems/RunLog.js';
-import { num, pct, unit, esc } from '../ui/format.js';
+import { num, pct, unit, esc, armorText, explosionText } from '../ui/format.js';
 
 const H = CONSTANTS.WALL_HEIGHT;
 const REEL_LENGTH = 20; // Random items spun before the real upgrade shows up
@@ -64,7 +64,7 @@ export const UPGRADES = [
 
 const VITALITY_STATS = new Set(['maxHealth', 'armor', 'vampirism', 'regen', 'speed']);
 const ARCANA_STATS = new Set(['bulletCount', 'piercing', 'knockback', 'explosion', 'ricochet', 'homing', 'immolation', 'magnet']);
-const PERCENT_STATS = new Set(['armor', 'vampirism', 'critChance', 'critDamage', 'speed', 'explosion']);
+const PERCENT_STATS = new Set(['vampirism', 'critChance', 'critDamage', 'speed']);
 
 const upgradeCategory = (id) => (VITALITY_STATS.has(id) ? 'vitality' : ARCANA_STATS.has(id) ? 'arcana' : 'offense');
 
@@ -72,6 +72,8 @@ const upgradeCategory = (id) => (VITALITY_STATS.has(id) ? 'vitality' : ARCANA_ST
 const formatUpgradeValue = (stat, n) => {
     if (stat === 'fireRate') return unit(1 / n, 'tirs/s');
     if (stat === 'reload') return unit(n, 's');
+    if (stat === 'armor') return armorText(n, armorDamageFactor(n));
+    if (stat === 'explosion') return explosionText(n);
     if (PERCENT_STATS.has(stat)) return pct(n);
     if (stat === 'homing') return `rang ${n}`;
     if (stat === 'immolation') return unit(n, 'dégâts/s');
@@ -91,15 +93,15 @@ export const PACTS = [
         apply: (p, w) => { p.pactHpMultiplier *= 0.75; w.pactDamageMultiplier *= 1.4; } },
     { id: 'wizard', for: 'staff', icon: 'wizard', title: 'Pacte du magicien', gain: '+50 % de cadence de tir', cost: '−20 % de dégâts du sceptre',
         apply: (p, w) => { w.pactDamageMultiplier *= 0.8; w.pactFireRateMultiplier *= 1.5; } },
-    { id: 'precision', for: 'staff', icon: 'precision', title: 'Pacte de précision', gain: '+50 % de vitesse des projectiles', cost: "−20 % d'armure",
-        apply: (p, w) => { w.pactProjectileSpeedMultiplier *= 1.5; p.pactArmorBonus -= 0.20; } },
+    { id: 'precision', for: 'staff', icon: 'precision', title: 'Pacte de précision', gain: '+50 % de vitesse des projectiles', cost: "−25 d'armure",
+        apply: (p, w) => { w.pactProjectileSpeedMultiplier *= 1.5; p.pactArmorBonus -= 25; } },
     { id: 'hunter', for: 'staff', icon: 'hunter', title: 'Pacte du chasseur', gain: '+25 % de chance et +50 % de dégâts critiques aux tirs', cost: '−15 % de cadence de tir',
         apply: (p, w) => { w.pactCritChance += 0.25; w.pactCritDamage += 0.5; w.pactFireRateMultiplier *= 0.85; } },
     { id: 'storm', for: 'staff', icon: 'storm', title: "Pacte de l'orage", gain: "Vos tirs sautent d'un ennemi touché sur 2 autres ennemis proches", cost: '−25 % de dégâts du sceptre',
         apply: (p, w) => { w.pactChain += 2; w.pactDamageMultiplier *= 0.75; } },
     { id: 'pyre', for: 'staff', icon: 'pyre', title: 'Pacte du bûcher', gain: 'Aura de feu : +10 dégâts par seconde aux ennemis à moins de 9 m', cost: '−25 % de vitesse des projectiles',
         apply: (p, w) => { p.pactImmolation += 10; w.pactProjectileSpeedMultiplier *= 0.75; } },
-    { id: 'pyromancy', for: 'staff', icon: 'pyromancy', title: 'Pacte de pyromancie', gain: '+25 % de chance que vos tirs explosent', cost: 'Rechargement deux fois plus long',
+    { id: 'pyromancy', for: 'staff', icon: 'pyromancy', title: 'Pacte de pyromancie', gain: '+25 % de chance que vos tirs explosent (au-delà de 100 %, le surplus s\'ajoute aux dégâts des explosions)', cost: 'Rechargement deux fois plus long',
         apply: (p, w) => { w.pactExplosion += 0.25; w.pactReloadMultiplier *= 2; } },
     { id: 'colossus', for: 'staff', icon: 'colossus', title: 'Pacte du colosse', gain: '+50 % de vie max', cost: '−25 % de dégâts du sceptre',
         apply: (p, w) => { p.pactHpMultiplier *= 1.5; w.pactDamageMultiplier *= 0.75; } },
@@ -112,14 +114,14 @@ export const PACTS = [
         apply: (p, w, s) => { s.pactDamageMultiplier *= 1.4; p.pactHpMultiplier *= 0.75; } },
     { id: 'duelist', for: 'sword', icon: 'duelist', title: 'Pacte du duelliste', gain: "+50 % de vitesse d'attaque", cost: "−20 % de dégâts de l'épée",
         apply: (p, w, s) => { s.pactSpeedMultiplier *= 1.5; s.pactDamageMultiplier *= 0.8; } },
-    { id: 'reach', for: 'sword', icon: 'reach_pact', title: "Pacte de l'allonge", gain: "+50 % de portée de l'épée", cost: "−20 % d'armure",
-        apply: (p, w, s) => { s.pactReachMultiplier *= 1.5; p.pactArmorBonus -= 0.20; } },
+    { id: 'reach', for: 'sword', icon: 'reach_pact', title: "Pacte de l'allonge", gain: "+50 % de portée de l'épée", cost: "−25 d'armure",
+        apply: (p, w, s) => { s.pactReachMultiplier *= 1.5; p.pactArmorBonus -= 25; } },
     { id: 'executioner', for: 'sword', icon: 'executioner', title: 'Pacte du bourreau', gain: "+25 % de chance et +50 % de dégâts critiques à l'épée", cost: "−15 % de vitesse d'attaque",
         apply: (p, w, s) => { s.pactCritChance += 0.25; s.pactCritDamage += 0.5; s.pactSpeedMultiplier *= 0.85; } },
-    { id: 'whirlwind', for: 'sword', icon: 'whirlwind', title: 'Pacte du tourbillon', gain: "L'épée frappe tout autour de vous (360°)", cost: "−25 % de dégâts de l'épée",
-        apply: (p, w, s) => { s.whirlwind = true; s.pactDamageMultiplier *= 0.75; } },
-    { id: 'riposte', for: 'sword', icon: 'riposte', title: 'Pacte de la riposte', gain: "Après une parade parfaite, votre coup d'épée suivant fait triple dégâts", cost: '−15 % de vie max',
-        apply: (p, w, s) => { s.riposte = true; p.pactHpMultiplier *= 0.85; } },
+    { id: 'whirlwind', for: 'sword', icon: 'whirlwind', title: 'Pacte du tourbillon', gain: "L'épée frappe tout autour de vous (360°). Repris : +25 % d'allonge", cost: "−25 % de dégâts de l'épée",
+        apply: (p, w, s) => { s.whirlwind++; s.pactDamageMultiplier *= 0.75; } },
+    { id: 'riposte', for: 'sword', icon: 'riposte', title: 'Pacte de la riposte', gain: "Après une parade parfaite, votre coup d'épée suivant fait triple dégâts. Repris : un coup triplé de plus", cost: '−15 % de vie max',
+        apply: (p, w, s) => { s.riposte++; p.pactHpMultiplier *= 0.85; } },
     { id: 'mirror', for: 'sword', icon: 'mirror', title: 'Pacte du miroir', gain: 'Les projectiles parés repartent avec deux fois leurs dégâts', cost: "−20 % de dégâts de l'épée",
         apply: (p, w, s) => { s.mirror *= 2; s.pactDamageMultiplier *= 0.8; } },
     { id: 'greedyBlade', for: 'sword', icon: 'greedy_blade', title: 'Pacte de la lame avide', gain: "Chaque ennemi touché à l'épée rend 5 mana à l'orbe du sceptre", cost: "−25 % de capacité de l'orbe",
@@ -129,12 +131,25 @@ export const PACTS = [
     { id: 'wave', for: 'sword', icon: 'wave', title: "Pacte de la lame d'onde", gain: "Chaque coup d'épée lance une onde tranchante jusqu'à 8 m", cost: "−30 % de vitesse d'attaque",
         apply: (p, w, s) => { s.waves += 1; s.pactSpeedMultiplier *= 0.7; } },
     // General
-    { id: 'cataclysm', for: 'general', icon: 'cataclysm', title: 'Pacte du cataclysme', gain: 'Tous les 8 ennemis tués, une onde de choc part de vous', cost: '−20 % de vie max',
-        apply: (p) => { p.pactShockwaveKills = 8; p.nextShockwaveAt = p.sessionStats.kills + 8; p.pactHpMultiplier *= 0.8; } },
-    { id: 'aegis', for: 'general', icon: 'aegis', title: "Pacte de l'égide", gain: 'Un bouclier de 40 points se recharge après 4 s sans dégâts', cost: "−50 % d'or ramassé",
-        apply: (p) => { p.pactShieldCap = Math.max(p.pactShieldCap, 40); p.pactGoldMultiplier *= 0.5; } },
-    { id: 'armor', for: 'general', icon: 'armor_pact', title: "Pacte d'armure", gain: "+20 % d'armure", cost: '−15 % de vitesse',
-        apply: (p) => { p.pactSpeedMultiplier *= 0.85; p.pactArmorBonus += 0.20; } },
+    { id: 'cataclysm', for: 'general', icon: 'cataclysm', title: 'Pacte du cataclysme', gain: 'Tous les 8 ennemis tués, une onde de choc de 50 dégâts part de vous. Repris : +50 dégâts', cost: '−20 % de vie max',
+        apply: (p) => {
+            if (!p.pactShockwaveKills) {
+                p.pactShockwaveKills = 8;
+                p.nextShockwaveAt = p.sessionStats.kills + 8;
+            }
+            p.pactShockwaveDamage += 50;
+            p.pactHpMultiplier *= 0.8;
+        } },
+    { id: 'aegis', for: 'general', icon: 'aegis', title: "Pacte de l'égide", gain: 'Un bouclier de 40 points se recharge après 4 s sans dégâts. Repris : +20 points, recharge 50 % plus rapide', cost: "−50 % d'or ramassé",
+        apply: (p) => {
+            if (p.pactShieldCap) {
+                p.pactShieldCap += 20;
+                p.pactShieldRate *= 1.5;
+            } else p.pactShieldCap = 40;
+            p.pactGoldMultiplier *= 0.5;
+        } },
+    { id: 'armor', for: 'general', icon: 'armor_pact', title: "Pacte d'armure", gain: "+25 d'armure", cost: '−15 % de vitesse',
+        apply: (p) => { p.pactSpeedMultiplier *= 0.85; p.pactArmorBonus += 25; } },
     { id: 'vampire', for: 'general', icon: 'vampire', title: 'Pacte de vampirisme', gain: '+20 % de vol de vie (sceptre et épée)', cost: 'Perd 1 PV par seconde',
         apply: (p) => { p.pactVampirism += 0.20; p.healthRegen -= 1; } },
     { id: 'speed', for: 'general', icon: 'speed_pact', title: 'Pacte de vitesse', gain: '+30 % de vitesse', cost: '−20 % de vie max',

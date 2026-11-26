@@ -14,7 +14,8 @@ export const PARRY_REARM = 0.6;
 const GUARD_FRONT = Math.cos(THREE.MathUtils.degToRad(60)); // Shots within 60° of the view meet the blade
 export const GUARD_DAMAGE = 0.3; // Share of a blocked shot's damage that still gets through
 export const GUARD_SLOW = 0.5; // Walking speed while guarding
-export const RIPOSTE = 3; // Riposte pact: damage of the strike after a parry
+export const RIPOSTE = 3; // Riposte pact: damage of the strikes after a parry
+const WHIRLWIND_REACH = 0.25; // Whirlwind pact: reach added by each take after the first
 const { damp, smoothstep, lerp } = THREE.MathUtils;
 
 const newSwordStats = () => ({ meleeDamage: 0, attackSpeed: 0, reach: 0 });
@@ -57,7 +58,7 @@ export class Sword {
         this.guardTime = 0;
         this.parryOpen = false;
         this.lastParryOpen = -Infinity;
-        this.riposteReady = false;
+        this.riposteStrikes = 0; // Riposte pact: strikes left that deal RIPOSTE times the damage
         this.swingLength = SWING_TIME;
         this.furyMultiplier = 1.0; // Berserk fury (Player): of the strikes per second
         this.furyLifeSteal = 0; // Berserk fury: life stolen by strikes, on top of the rest
@@ -71,8 +72,8 @@ export class Sword {
         this.pactReachMultiplier = 1.0;
         this.pactCritChance = 0; // Added to the shared crit upgrades
         this.pactCritDamage = 0;
-        this.whirlwind = false; // Whirlwind: strikes all around
-        this.riposte = false; // Riposte: a parry makes the next strike deal RIPOSTE times the damage
+        this.whirlwind = 0; // Whirlwind: times taken. Strikes all around, each take after the first adds reach
+        this.riposte = 0; // Riposte: times taken = strikes after a parry that deal RIPOSTE times the damage
         this.mirror = 1; // Mirror: damage multiplier of parried shots
         this.manaOnHit = 0; // Greedy blade: mana into the staff's clip per enemy struck
         this.lifeSteal = 0; // Leech: on top of the player's life steal
@@ -117,7 +118,7 @@ export class Sword {
         switch (stat) {
             case 'meleeDamage': return v * this.pactDamageMultiplier;
             case 'attackSpeed': return v * this.pactSpeedMultiplier;
-            case 'reach': return v * this.pactReachMultiplier;
+            case 'reach': return v * this.pactReachMultiplier * (1 + WHIRLWIND_REACH * Math.max(0, this.whirlwind - 1));
             default: return v;
         }
     }
@@ -168,10 +169,10 @@ export class Sword {
         return staff.getStatValue('critDamage', level) / 100 + this.pactCritDamage;
     }
 
-    // The strike after a parry, under the Riposte pact, hits harder (once)
+    // The strikes after a parry, under the Riposte pact (one per take), hit harder
     takeRiposte() {
-        if (!this.riposteReady) return 1;
-        this.riposteReady = false;
+        if (this.riposteStrikes <= 0) return 1;
+        this.riposteStrikes--;
         return RIPOSTE;
     }
 
@@ -199,7 +200,7 @@ export class Sword {
         if (this.parryOpen && this.guardTime < PARRY_WINDOW) {
             this.anim.flare = 1;
             this.anim.jolt = 1;
-            if (this.riposte) this.riposteReady = true;
+            this.riposteStrikes = this.riposte;
             return 'parry';
         }
         this.anim.jolt = 0.6;
@@ -260,9 +261,10 @@ export class Sword {
         this.slash.scale.x = s;
 
         // The rune: brighter mid-strike, flaring on a parry, throbbing while a riposte is ready
-        const pulse = 0.5 + 0.5 * Math.sin(this.clock * (this.riposteReady ? 9 : 2.2));
-        this.rune.emissiveIntensity = 0.9 + 0.3 * pulse + 1.5 * strike + 3 * a.flare + (this.riposteReady ? 1.2 * pulse : 0);
-        this.glow.material.opacity = a.flare + (this.riposteReady ? 0.3 * pulse : 0);
+        const ready = this.riposteStrikes > 0;
+        const pulse = 0.5 + 0.5 * Math.sin(this.clock * (ready ? 9 : 2.2));
+        this.rune.emissiveIntensity = 0.9 + 0.3 * pulse + 1.5 * strike + 3 * a.flare + (ready ? 1.2 * pulse : 0);
+        this.glow.material.opacity = a.flare + (ready ? 0.3 * pulse : 0);
         this.glow.scale.setScalar(0.3 + 0.5 * a.flare);
         this.glow.position.z = BLADE_MID_Z;
     }
