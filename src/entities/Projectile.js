@@ -102,12 +102,14 @@ export class Projectile {
      * @param {number} [options.scale=1]         Size of the core and its glow
      * @param {number} [options.size=0]          Player shots: hit radius added to the enemy's (big bolts, blade waves)
      * @param {object} [options.source=null]     Enemy shots: the shooter, where a parried shot goes back to
+     * @param {string} [options.weapon='staff']   Player shots: the weapon credited in the run log (RunLog.js)
      */
     constructor(position, direction, speed, damage, levelManager, {
         piercing = 0, isCritical = false, knockback = 0, explosion = 0, gravity = 0, radius = 1.0,
         sourceName = 'Unknown', sourceId = -1, maxDistance = 1000, ricochet = 0, homingLevel = 0, color = null,
-        geometry = Projectile.geometry, scale = 1, chain = 0, size = 0, source = null
+        geometry = Projectile.geometry, scale = 1, chain = 0, size = 0, source = null, weapon = 'staff'
     } = {}) {
+        this.weapon = weapon;
         this.chain = chain;
         this.size = size;
         this.source = source;
@@ -184,6 +186,7 @@ export class Projectile {
         if (shooter) this.direction.subVectors(shooter.position, this.position).normalize();
         else this.direction.negate();
         this.isPlayerProjectile = true;
+        this.weapon = 'sword'; // Sent back by a parry
         this.hitEntities = new Set();
         this.sourceName = 'Player';
         this.sourceId = -1;

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { soundManager } from './SoundManager.js';
+import { runLog } from './RunLog.js';
 import { PALETTE } from '../core/Palette.js';
 import { Projectile } from '../entities/Projectile.js';
 import { EnemyMeshBuilder } from '../entities/EnemyMesh.js';
@@ -233,6 +234,7 @@ export class EntityManager {
                 stats.shotsHit++;
                 stats.damageDealt += projectile.damage;
                 if (died) stats.kills++;
+                runLog.hit(projectile.weapon, projectile.damage, died);
                 if (projectile.isCritical) stats.critCount++;
                 stats.maxDamageHit = Math.max(stats.maxDamageHit, projectile.damage);
 
@@ -294,6 +296,7 @@ export class EntityManager {
                 const stats = player.sessionStats;
                 stats.damageDealt += finalDamage;
                 if (died) stats.kills++;
+                runLog.hit('staff', finalDamage, died); // Only staff shots explode
                 stats.maxDamageHit = Math.max(stats.maxDamageHit, finalDamage);
             }
             targetsHit++;

@@ -1,0 +1,16 @@
+# Collecte anonyme des parties d'Arcaniste (server/runs-collector.mjs), en service utilisateur :
+#   systemctl --user enable --now ~/Documents/IA-RogueLike/server/arcaniste-runs.service
+# Caddy lui transmet POST /api/runs (README.md, « Statistiques des parties »).
+[Unit]
+Description=Arcaniste : collecte anonyme des parties (POST /api/runs)
+After=network.target
+
+[Service]
+WorkingDirectory=%h/Documents/IA-RogueLike
+ExecStart=/usr/bin/node server/runs-collector.mjs
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

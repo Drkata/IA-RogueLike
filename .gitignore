@@ -32,3 +32,6 @@ previews/
 
 # Downloaded sound packs (npm run build:sfx)
 .sfx-cache/
+
+# Runs recorded by server/runs-collector.mjs (npm run stats)
+data/

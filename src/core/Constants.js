@@ -10,7 +10,6 @@ export const CONSTANTS = {
         // Enemy Count
         ENEMY_COUNT_BASE: 5,
         ENEMY_COUNT_PER_LEVEL: 2,
-        ENEMY_COUNT_SCALING_POST_10: 2, // Extra enemies per level after 10
 
         // Enemy Stats
         ENEMY_HEALTH_BASE: 10,
@@ -19,7 +18,6 @@ export const CONSTANTS = {
 
         ENEMY_DAMAGE_BASE: 5,
         ENEMY_DAMAGE_PER_LEVEL: 1.125,
-        ENEMY_DAMAGE_MULTIPLIER_POST_10: 0.10, // +10% compounding per level > 10
 
         ENEMY_SPEED_BASE: 4.0,
         ENEMY_SPEED_PER_LEVEL: 0.2,

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { soundManager } from '../systems/SoundManager.js';
+import { runLog } from '../systems/RunLog.js';
 import { TextureGenerator, seededRandom } from '../systems/TextureGenerator.js';
 import { PALETTE, SHRINE_COLORS } from '../core/Palette.js';
 import { Shrine, isSealed, shared, stoneMaterial } from './Shrine.js';
@@ -94,6 +95,7 @@ export class HealingFountain {
     use(player) {
         this.isUsed = true;
         player.fountainHp += this.maxHealthBonus;
+        runLog.event('fountain');
         player.recalculateStats(); // Like a max health upgrade, the new capacity comes filled
         soundManager.play('fountain');
         player.hudManager.showMessage(`Fontaine de jouvence : +${this.maxHealthBonus} PV max`);

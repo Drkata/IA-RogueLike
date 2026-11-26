@@ -5,6 +5,7 @@ import { GUARD_DAMAGE, GUARD_SLOW, Sword } from './Sword.js';
 import { WAVE_GEOMETRY } from './SwordMesh.js';
 import { Projectile } from './Projectile.js';
 import { soundManager } from '../systems/SoundManager.js';
+import { runLog } from '../systems/RunLog.js';
 import { PALETTE } from '../core/Palette.js';
 
 export const EYE_HEIGHT = 1.6; // Player position is the camera, 1.6 above the feet
@@ -148,6 +149,7 @@ export class Player {
         const finalDamage = remainingDamage * (1 - Math.min(0.8, this.armor));
         this.sessionStats.damageTaken += finalDamage;
         this.damageLog.push({ source: sourceName, id: sourceId, damage: finalDamage, timestamp: Date.now() });
+        runLog.hurt(sourceName, finalDamage);
 
         this.health = Math.max(0, this.health - finalDamage);
         this.updateHUD();
@@ -221,7 +223,10 @@ export class Player {
         const oldHealth = this.health;
         this.health = Math.min(this.maxHealth, this.health + amount);
         const effectiveHeal = this.health - oldHealth;
-        if (effectiveHeal > 0) this.sessionStats.healingDone += effectiveHeal;
+        if (effectiveHeal > 0) {
+            this.sessionStats.healingDone += effectiveHeal;
+            runLog.add('healed', effectiveHeal);
+        }
         this.updateHUD();
     }
 
@@ -237,10 +242,12 @@ export class Player {
 
     addGold(amount) {
         this.gold += amount;
+        runLog.add('goldIn', amount);
         this.updateHUD();
     }
 
     spendGold(amount) {
+        runLog.add('goldOut', amount);
         this.gold = Math.max(0, this.gold - amount);
         this.updateHUD();
     }
@@ -360,6 +367,7 @@ export class Player {
     // click attacks with the weapon in hand; right click is its second move: the staff's charged shot,
     // the sword's guard.
     handleWeapons(dt) {
+        runLog.add(`time.${this.activeWeapon}`, dt);
         const input = this.input;
         const toggle = input.consumeKey('KeyQ') | input.consumeKey('Wheel'); // Both read, so neither lingers
         let wanted = toggle ? (this.activeWeapon === 'staff' ? 'sword' : 'staff') : this.activeWeapon;
@@ -396,6 +404,7 @@ export class Player {
     switchWeapon(to) {
         this.activeWeapon = to;
         this.switchTimer = SWITCH_TIME;
+        runLog.add('switches');
         this.weapon.cancelCharge();
         this.weapon.cancelReload();
         this.sword.setGuard(false);
@@ -448,6 +457,8 @@ export class Player {
     fireChargedShot() {
         const w = this.weapon;
         const ammo = w.releaseCharge();
+        runLog.add('charged');
+        runLog.add('chargedMana', ammo);
         const isCritical = Math.random() < w.critChance;
         const scale = 1 + Math.min(ammo, 60) / 15;
         _dir.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
@@ -467,6 +478,7 @@ export class Player {
     handleSwing() {
         const s = this.sword;
         if (!s.swing()) return;
+        runLog.add('swings');
         soundManager.play('melee');
         const w = this.weapon;
         const critChance = s.critChance(w);
@@ -482,6 +494,7 @@ export class Player {
             const died = enemy.takeDamage(dealt, isCritical);
             stats.damageDealt += dealt;
             if (died) stats.kills++;
+            runLog.hit('sword', dealt, died);
             if (isCritical) stats.critCount++;
             stats.maxDamageHit = Math.max(stats.maxDamageHit, dealt);
             const steal = this.vampirism + s.lifeSteal + s.furyLifeSteal;
@@ -500,6 +513,7 @@ export class Player {
                 sourceName: 'Player',
                 sourceId: -1,
                 maxDistance: WAVE.range,
+                weapon: 'sword',
                 color: PALETTE.aetherBright,
                 geometry: WAVE_GEOMETRY,
                 scale: WAVE.scale,
@@ -515,12 +529,14 @@ export class Player {
             const guard = this.sword.meetShot(shot.direction, _forward);
             if (guard === 'parry') {
                 shot.reflect(this.sword.mirror);
+                runLog.add('parries');
                 soundManager.play('parry');
                 this.entityManager.createHitEffect(shot.position, true);
                 return;
             }
             if (guard === 'block') {
                 soundManager.play('block');
+                runLog.add('blocks');
                 this.takeDamage(shot.damage * GUARD_DAMAGE, shot.sourceName, shot.sourceId);
                 shot.isDead = true;
                 return;
@@ -535,6 +551,7 @@ export class Player {
         if (count <= 0) return;
 
         this.sessionStats.shotsFired += count;
+        runLog.add('shots', count);
         soundManager.play('shoot', null, this.weapon.shotRate);
 
         const w = this.weapon;

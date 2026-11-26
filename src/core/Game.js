@@ -21,6 +21,7 @@ import { MagicalShop } from '../entities/MagicalShop.js';
 import { SVG_ICONS } from '../ui/SVGIcons.js';
 import { DEVICE } from './Device.js';
 import { soundManager } from '../systems/SoundManager.js';
+import { runLog } from '../systems/RunLog.js';
 import { num, pct, unit, esc } from '../ui/format.js';
 
 const H = CONSTANTS.WALL_HEIGHT;
@@ -172,7 +173,7 @@ export class Game {
     // Regular enemies spawned at a level (special-room guardians and bosses come on top)
     static getEnemyCount(level) {
         const D = CONSTANTS.DIFFICULTY;
-        return D.ENEMY_COUNT_BASE + level * D.ENEMY_COUNT_PER_LEVEL + Math.max(0, level - 10) * D.ENEMY_COUNT_SCALING_POST_10;
+        return D.ENEMY_COUNT_BASE + level * D.ENEMY_COUNT_PER_LEVEL;
     }
 
     constructor() {
@@ -224,6 +225,7 @@ export class Game {
     }
 
     init() {
+        runLog.start(DEVICE);
         this.startNewLevel();
         this.start();
         this.isRunning = true;
@@ -236,9 +238,11 @@ export class Game {
                 if (card && !card.disabled) card.click();
             } else if (e.code === 'KeyP') {
                 // Dev cheat: skip to the boss with every upgrade on offer
+                runLog.event('cheat');
                 this.currentLevel = 9; // Becomes 10 when the menu opens
                 this.showUpgradeMenu(27, false, true);
             } else if (e.code === 'KeyU') {
+                runLog.event('cheat');
                 this.showUpgradeMenu(1); // Dev cheat: test the upgrade menu
             } else if (e.code === 'Escape') {
                 if (this._isOverlayOpen('shop-menu')) this.closeShopMenu();
@@ -373,6 +377,14 @@ export class Game {
 
         const stats = this.player.sessionStats;
         const timeSurvived = (Date.now() - stats.startTime) / 1000;
+
+        // Killed by the last hit, unless it is old: then a pact's life drain finished the player off
+        const last = damageLog.at(-1);
+        const cause = last && Date.now() - last.timestamp < 1000 ? last.source : 'Drain de vie (pacte)';
+        runLog.endLevel('death', this._runState());
+        const { startTime, ...totals } = stats;
+        runLog.event('end', { outcome: 'death', cause, ...Object.fromEntries(Object.entries(totals).map(([k, v]) => [k, Math.round(v)])) });
+        runLog.flush();
         const accuracy = stats.shotsFired > 0 ? (stats.shotsHit / stats.shotsFired) * 100 : 0;
         const critRate = stats.shotsHit > 0 ? (stats.critCount / stats.shotsHit) * 100 : 0;
 
@@ -439,6 +451,7 @@ export class Game {
         this.currentLevel = 1;
         this.upgradePoints = 0;
         this.player.reset();
+        runLog.start(DEVICE);
         this.startNewLevel();
         this._resume();
     }
@@ -462,6 +475,17 @@ export class Game {
             this.spawnEnemies(Game.getEnemyCount(this.currentLevel));
             this._spawnLevelEntities();
         }
+        runLog.beginLevel(this.currentLevel, {
+            theme: this.levelManager.themeManager.getTheme(this.currentLevel).name,
+            enemies: this.entityManager.getEnemyCount(),
+            rooms: (this.levelManager.levelData.specials || []).map(s => s.kind)
+        });
+    }
+
+    // The player's state, for the run log
+    _runState() {
+        const p = this.player;
+        return { hp: Math.round(p.health), maxHp: Math.round(p.maxHealth), gold: p.gold };
     }
 
     _applyThemeLighting() {
@@ -523,25 +547,26 @@ export class Game {
 
         // 28% mana, then 18% each: full health, shield, berserk, upgrade
         const r = Math.random();
-        let message;
+        let message, reward;
         if (r < 0.28) {
             player.weapon.reserveAmmo += 100;
             player.weapon.refill();
             player.updateHUD();
-            message = 'Mana rechargé';
+            [message, reward] = ['Mana rechargé', 'mana'];
         } else if (r < 0.46) {
             player.heal(player.maxHealth);
-            message = 'Vie entièrement restaurée';
+            [message, reward] = ['Vie entièrement restaurée', 'heal'];
         } else if (r < 0.64) {
             player.addShield(50);
-            message = 'Bouclier de 50 points';
+            [message, reward] = ['Bouclier de 50 points', 'shield'];
         } else if (r < 0.82) {
             player.activateBerserk(10);
-            message = 'Furie berserk';
+            [message, reward] = ['Furie berserk', 'berserk'];
         } else {
-            this.showChestUpgradeMenu();
-            message = 'Amélioration trouvée';
+            [message, reward] = ['Amélioration trouvée', 'upgrade'];
         }
+        runLog.event('chest', { reward, gold: goldBonus });
+        if (reward === 'upgrade') this.showChestUpgradeMenu(); // After the chest event: the pick comes next in the log
         this.hudManager.showMessage(`${message}, +${goldBonus} or`);
     }
 
@@ -608,6 +633,8 @@ export class Game {
             return;
         }
 
+        runLog.add('time', dt);
+        runLog.add('frames');
         this.player.update(dt);
         this.entityManager.update(dt, this.player);
         this.minimap.update(this.entityManager.entities);
@@ -645,6 +672,7 @@ export class Game {
         if (this.levelCompleteTimer <= 0) {
             this.hudManager.hideCountdown();
             this.levelCompleteTimerStarted = false;
+            runLog.endLevel('clear', this._runState()); // Its time includes this countdown
             this.showUpgradeMenu(this.currentLevel % 10 === 0 ? 5 : 2); // Bosses give more points
         }
     }
@@ -679,7 +707,8 @@ export class Game {
         this.isRunning = false;
         this.input.exitPointerLock();
         // Small delay so the pointer lock is released before the menu shows
-        setTimeout(() => this._openUpgradeMenu(showAll ? available : shuffle(available).slice(0, 3), points, isMidLevel), 100);
+        const from = isMidLevel ? 'drop' : 'level'; // Mid-level: an upgrade gem dropped by an enemy
+        setTimeout(() => this._openUpgradeMenu(showAll ? available : shuffle(available).slice(0, 3), points, isMidLevel, from), 100);
     }
 
     // Chest reward: pick 1 of 2 random upgrades, then resume the level
@@ -687,10 +716,12 @@ export class Game {
         const available = this.getAvailableUpgrades();
         if (available.length === 0) return;
         this.menuShown = true;
-        this._openUpgradeMenu(shuffle(available).slice(0, 2), 1, true);
+        this._openUpgradeMenu(shuffle(available).slice(0, 2), 1, true, 'chest');
     }
 
-    _openUpgradeMenu(choices, points, isMidLevel) {
+    // `from`: what offers it ('level', 'drop', 'chest'), for the run log
+    _openUpgradeMenu(choices, points, isMidLevel, from) {
+        this.offer = { lvl: runLog.level, from, points, offered: choices.map(c => c.id), picked: [] };
         this.currentUpgradeChoices = choices;
         this.upgradePoints = points;
         this.isMidLevelUpgrade = isMidLevel;
@@ -712,6 +743,8 @@ export class Game {
     }
 
     _finishUpgradeMenu() {
+        if (this.offer) runLog.event('upgrades', this.offer);
+        this.offer = null;
         this.menuShown = false;
         this.currentUpgradeChoices = null;
         this._buildNextLevel(); // Not built yet if the choice was very quick
@@ -797,6 +830,7 @@ export class Game {
             if (card.classList.contains('is-sealed')) return this.reveals.forEach(reveal => reveal());
             if (this.upgradePoints <= 0 || !source.upgrade(item.id)) return;
             soundManager.play('uiConfirm');
+            this.offer?.picked.push(item.id);
             this.upgradePoints--;
             this.renderUpgradeUI(false);
             if (this.upgradePoints === 0 || this.getAvailableUpgrades().length === 0) {
@@ -856,6 +890,7 @@ export class Game {
     showAltarMenu(altar) {
         this.currentAltar = altar;
         const [p1, p2] = shuffle([...PACTS]);
+        this.altarOffer = [p1.id, p2.id];
         document.getElementById('altar-grid-container').innerHTML = [p1, p2].map(pact => `
             <article class="pact">
                 <span class="weapon-tag weapon-tag--${pact.for}">${WEAPON_TAGS[pact.for]}</span>
@@ -872,6 +907,8 @@ export class Game {
         const pact = PACTS.find(p => p.id === pactId);
         if (!this.currentAltar || !pact) return;
 
+        runLog.event('pact', { offered: this.altarOffer, picked: pact.id });
+        this.altarOffer = null;
         pact.apply(this.player, this.player.weapon, this.player.sword);
         soundManager.play('pact');
         this.player.recalculateStats();
@@ -883,6 +920,8 @@ export class Game {
     }
 
     closeAltarMenu() {
+        if (this.altarOffer) runLog.event('pact', { offered: this.altarOffer, picked: null }); // Refused
+        this.altarOffer = null;
         if (this.currentAltar) this.currentAltar.deactivate(); // Refusing also spends the altar
         this.currentAltar = null;
         this._closeMenu('altar-menu');
@@ -893,6 +932,7 @@ export class Game {
     showShopMenu(shop) {
         this.currentShop = shop;
         this.shopUpgrades = this._drawShopUpgrades();
+        this.shopVisit = { gold: this.player.gold, offered: this.shopUpgrades.map(u => u.item.id), bought: [] };
         this.showShopFeedback('');
         this._renderShop();
         this._openMenu('shop-menu');
@@ -1003,11 +1043,14 @@ export class Game {
 
         const message = offer.buy();
         player.spendGold(offer.price);
+        this.shopVisit?.bought.push(offerId);
         this.showShopFeedback(`Acheté : ${message}`);
         this._renderShop();
     }
 
     closeShopMenu() {
+        if (this.shopVisit) runLog.event('shop', { ...this.shopVisit, left: this.player.gold });
+        this.shopVisit = null;
         this._closeMenu('shop-menu');
         if (this.currentShop) {
             this.currentShop.disable();

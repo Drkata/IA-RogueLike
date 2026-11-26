@@ -111,6 +111,15 @@ npm run build
 npm run preview
 ```
 
+### Statistiques des parties
+
+En production, le jeu enregistre chaque partie de façon anonyme (pas d'adresse IP, pas de compte, un identifiant tiré au hasard par partie) pour guider l'équilibrage : temps par niveau, améliorations proposées et choisies, pactes, boutique, armes utilisées, dégâts subis et causes de mort. Le serveur de développement n'envoie rien.
+
+* `src/systems/RunLog.js` envoie les événements à `POST /api/runs` en fin de niveau, à la mort et quand la page est masquée.
+* `server/runs-collector.mjs` (Node, sans dépendance, `127.0.0.1:5190`) les ajoute à `data/runs.jsonl` (hors du dépôt). Il tourne en service utilisateur : `systemctl --user enable --now ~/Documents/IA-RogueLike/server/arcaniste-runs.service`.
+* Caddy lui transmet la route, dans le bloc `arcaniste.botscrap.fr`, avant `root` : `reverse_proxy /api/runs 127.0.0.1:5190`.
+* `npm run stats` affiche le rapport (`-- --json` pour les agrégats) ; `npm run check:runs` vérifie la chaîne de bout en bout.
+
 ---
 
 ## 🏗️ Structure du Projet

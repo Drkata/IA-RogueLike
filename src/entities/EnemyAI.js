@@ -46,13 +46,13 @@ export class EnemyAI {
     // Scaling of a regular enemy at a given level (also shown in the level threat panel)
     static getCombatStats(level) {
         const D = CONSTANTS.DIFFICULTY;
-        let damage = D.ENEMY_DAMAGE_BASE + level * D.ENEMY_DAMAGE_PER_LEVEL;
-        if (level > 10) damage *= 1.0 + (level - 10) * D.ENEMY_DAMAGE_MULTIPLIER_POST_10;
+        const damage = D.ENEMY_DAMAGE_BASE + level * D.ENEMY_DAMAGE_PER_LEVEL;
         return {
             speed: Math.min(D.ENEMY_SPEED_CAP, D.ENEMY_SPEED_BASE + level * D.ENEMY_SPEED_PER_LEVEL),
             damage,
-            projectileSpeed: 10.0 * (1 + level * 0.15),
-            attackCooldown: Math.max(0.5, 4.0 - level * 0.10),
+            projectileSpeed: Math.min(25, 10.0 * (1 + level * 0.15)), // m/s: capped at its level-10 value so shots stay dodgeable
+            // Shots per second grow by the same step each level (0.25, +0.1 every 12 levels): 4 - 0.1 * level shot up past 25
+            attackCooldown: Math.max(0.5, 1 / (0.25 + level / 120)),
             attackRange: 12.5
         };
     }

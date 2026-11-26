@@ -14,7 +14,9 @@
     "check:sword": "node scripts/check-sword.mjs",
     "preview:visuals": "node scripts/preview-visuals.mjs previews",
     "build:sfx": "node scripts/build-sfx.mjs",
-    "deploy": "vite build && rsync -a --delete dist/ /srv/arcaniste/"
+    "deploy": "VITE_VERSION=$(git rev-parse --short HEAD) vite build && rsync -a --delete dist/ /srv/arcaniste/",
+    "stats": "node scripts/run-stats.mjs",
+    "check:runs": "node scripts/check-runs.mjs"
   },
   "devDependencies": {
     "vite": "^7.2.4"
