@@ -86,7 +86,8 @@ const formatUpgradeValue = (stat, n) => {
 
 // Altar pacts: a lasting boon for a lasting price, each worth about what it costs so the choice is
 // about the build. An altar offers 2 at random; sealing one again stacks it. `for`: the weapon it works on
-// (WEAPON_TAGS), on its card. `apply(player, staff, sword)`.
+// (WEAPON_TAGS), on its card. `apply(player, staff, sword)`. `gain` is a text, or a function of
+// (player, staff, sword) when what the pact gives depends on what the player already has (taken again).
 export const PACTS = [
     // Staff
     { id: 'blood', for: 'staff', icon: 'blood', title: 'Pacte de sang', gain: '+40 % de dégâts du sceptre', cost: '−25 % de vie max',
@@ -101,7 +102,12 @@ export const PACTS = [
         apply: (p, w) => { w.pactChain += 2; w.pactDamageMultiplier *= 0.75; } },
     { id: 'pyre', for: 'staff', icon: 'pyre', title: 'Pacte du bûcher', gain: 'Aura de feu : +10 dégâts par seconde aux ennemis à moins de 9 m', cost: '−25 % de vitesse des projectiles',
         apply: (p, w) => { p.pactImmolation += 10; w.pactProjectileSpeedMultiplier *= 0.75; } },
-    { id: 'pyromancy', for: 'staff', icon: 'pyromancy', title: 'Pacte de pyromancie', gain: '+25 % de chance que vos tirs explosent (au-delà de 100 %, le surplus s\'ajoute aux dégâts des explosions)', cost: 'Rechargement deux fois plus long',
+    { id: 'pyromancy', for: 'staff', icon: 'pyromancy', title: 'Pacte de pyromancie', gain: (p, w) => {
+            // Past a 100 % chance, the surplus adds to the explosions' damage (EntityManager)
+            if (w.explosion >= 1) return "+25 % de dégâts d'explosion (vos tirs explosent déjà à chaque coup)";
+            if (w.explosion > 0.75) return `Vos tirs explosent à chaque coup, avec +${Math.round((w.explosion - 0.75) * 100)} % de dégâts d'explosion`;
+            return '+25 % de chance que vos tirs explosent';
+        }, cost: 'Rechargement deux fois plus long',
         apply: (p, w) => { w.pactExplosion += 0.25; w.pactReloadMultiplier *= 2; } },
     { id: 'colossus', for: 'staff', icon: 'colossus', title: 'Pacte du colosse', gain: '+50 % de vie max', cost: '−25 % de dégâts du sceptre',
         apply: (p, w) => { p.pactHpMultiplier *= 1.5; w.pactDamageMultiplier *= 0.75; } },
@@ -118,9 +124,11 @@ export const PACTS = [
         apply: (p, w, s) => { s.pactReachMultiplier *= 1.5; p.pactArmorBonus -= 25; } },
     { id: 'executioner', for: 'sword', icon: 'executioner', title: 'Pacte du bourreau', gain: "+25 % de chance et +50 % de dégâts critiques à l'épée", cost: "−15 % de vitesse d'attaque",
         apply: (p, w, s) => { s.pactCritChance += 0.25; s.pactCritDamage += 0.5; s.pactSpeedMultiplier *= 0.85; } },
-    { id: 'whirlwind', for: 'sword', icon: 'whirlwind', title: 'Pacte du tourbillon', gain: "L'épée frappe tout autour de vous (360°). Repris : +25 % d'allonge", cost: "−25 % de dégâts de l'épée",
+    { id: 'whirlwind', for: 'sword', icon: 'whirlwind', title: 'Pacte du tourbillon', gain: (p, w, s) => (s.whirlwind ? "Votre tourbillon s'élargit : +25 % d'allonge" : "L'épée frappe tout autour de vous (360°)"), cost: "−25 % de dégâts de l'épée",
         apply: (p, w, s) => { s.whirlwind++; s.pactDamageMultiplier *= 0.75; } },
-    { id: 'riposte', for: 'sword', icon: 'riposte', title: 'Pacte de la riposte', gain: "Après une parade parfaite, votre coup d'épée suivant fait triple dégâts. Repris : un coup triplé de plus", cost: '−15 % de vie max',
+    { id: 'riposte', for: 'sword', icon: 'riposte', title: 'Pacte de la riposte', gain: (p, w, s) => (s.riposte
+            ? `Après une parade parfaite, vos ${s.riposte + 1} coups d'épée suivants font triple dégâts`
+            : "Après une parade parfaite, votre coup d'épée suivant fait triple dégâts"), cost: '−15 % de vie max',
         apply: (p, w, s) => { s.riposte++; p.pactHpMultiplier *= 0.85; } },
     { id: 'mirror', for: 'sword', icon: 'mirror', title: 'Pacte du miroir', gain: 'Les projectiles parés repartent avec deux fois leurs dégâts', cost: "−20 % de dégâts de l'épée",
         apply: (p, w, s) => { s.mirror *= 2; s.pactDamageMultiplier *= 0.8; } },
@@ -131,7 +139,9 @@ export const PACTS = [
     { id: 'wave', for: 'sword', icon: 'wave', title: "Pacte de la lame d'onde", gain: "Chaque coup d'épée lance une onde tranchante jusqu'à 8 m", cost: "−30 % de vitesse d'attaque",
         apply: (p, w, s) => { s.waves += 1; s.pactSpeedMultiplier *= 0.7; } },
     // General
-    { id: 'cataclysm', for: 'general', icon: 'cataclysm', title: 'Pacte du cataclysme', gain: 'Tous les 8 ennemis tués, une onde de choc de 50 dégâts part de vous. Repris : +50 dégâts', cost: '−20 % de vie max',
+    { id: 'cataclysm', for: 'general', icon: 'cataclysm', title: 'Pacte du cataclysme', gain: (p) => (p.pactShockwaveDamage
+            ? `Votre onde de choc passe de ${p.pactShockwaveDamage} à ${p.pactShockwaveDamage + 50} dégâts`
+            : 'Tous les 8 ennemis tués, une onde de choc de 50 dégâts part de vous'), cost: '−20 % de vie max',
         apply: (p) => {
             if (!p.pactShockwaveKills) {
                 p.pactShockwaveKills = 8;
@@ -140,7 +150,9 @@ export const PACTS = [
             p.pactShockwaveDamage += 50;
             p.pactHpMultiplier *= 0.8;
         } },
-    { id: 'aegis', for: 'general', icon: 'aegis', title: "Pacte de l'égide", gain: 'Un bouclier de 40 points se recharge après 4 s sans dégâts. Repris : +20 points, recharge 50 % plus rapide', cost: "−50 % d'or ramassé",
+    { id: 'aegis', for: 'general', icon: 'aegis', title: "Pacte de l'égide", gain: (p) => (p.pactShieldCap
+            ? `Votre bouclier passe de ${p.pactShieldCap} à ${p.pactShieldCap + 20} points et se recharge 50 % plus vite`
+            : 'Un bouclier de 40 points se recharge après 4 s sans dégâts'), cost: "−50 % d'or ramassé",
         apply: (p) => {
             if (p.pactShieldCap) {
                 p.pactShieldCap += 20;
@@ -932,6 +944,12 @@ export class Game {
 
     // ─── Altar ───────────────────────────────────────────────────────────────
 
+    // What `pact` gives the player as they are now (a pact taken again can say something else)
+    _pactGain(pact) {
+        const p = this.player;
+        return typeof pact.gain === 'function' ? pact.gain(p, p.weapon, p.sword) : pact.gain;
+    }
+
     showAltarMenu(altar) {
         this.currentAltar = altar;
         const [p1, p2] = shuffle([...PACTS]);
@@ -941,7 +959,7 @@ export class Game {
                 <span class="weapon-tag weapon-tag--${pact.for}">${WEAPON_TAGS[pact.for]}</span>
                 <span class="pact__sigil">${SVG_ICONS[pact.icon]}</span>
                 <h3 class="pact__title">${pact.title}</h3>
-                <p class="pact__gain">${pact.gain}</p>
+                <p class="pact__gain">${this._pactGain(pact)}</p>
                 <p class="pact__cost">${pact.cost}</p>
                 <button class="btn btn--hex" type="button" data-pact="${pact.id}">Sceller ce pacte</button>
             </article>`).join('');
@@ -953,6 +971,7 @@ export class Game {
         if (!this.currentAltar || !pact) return;
 
         runLog.event('pact', { offered: this.altarOffer, picked: pact.id });
+        const gain = this._pactGain(pact); // Before it applies: what this take gives
         this.altarOffer = null;
         pact.apply(this.player, this.player.weapon, this.player.sword);
         soundManager.play('pact');
@@ -960,7 +979,7 @@ export class Game {
         this.player.weapon.recalculateStats();
         this.player.sword.recalculateStats();
         this.player.updateHUD();
-        this.hudManager.showMessage(`${pact.title} (${WEAPON_TAGS[pact.for]}) scellé : ${pact.gain}, ${pact.cost.charAt(0).toLowerCase()}${pact.cost.slice(1)}`);
+        this.hudManager.showMessage(`${pact.title} (${WEAPON_TAGS[pact.for]}) scellé : ${gain}, ${pact.cost.charAt(0).toLowerCase()}${pact.cost.slice(1)}`);
         this.closeAltarMenu();
     }
 

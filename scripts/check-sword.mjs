@@ -348,6 +348,35 @@ assert.equal(twice.nextShockwaveAt, once.at, 'taken again, the count to the next
 assert.equal(twice.sword.whirlwind, 2);
 [, twice] = takeTwice('riposte');
 assert.equal(twice.sword.riposte, 2);
+// The altar shows what a pact gives now: a first take and a take again say different things
+const altarFor = (pl) => Object.assign(Object.create(game.Game.prototype), { player: pl });
+for (const pact of PACTS) {
+  const text = altarFor(taker())._pactGain(pact);
+  assert.ok(typeof text === 'string' && text.length > 10 && !text.includes('undefined'), `${pact.id}: gain text`);
+}
+for (const [id, first, again] of [
+  ['aegis', 'Un bouclier de 40 points', 'de 40 à 60 points'],
+  ['cataclysm', 'onde de choc de 50 dégâts', 'de 50 à 100 dégâts'],
+  ['whirlwind', 'tout autour de vous', "+25 % d'allonge"],
+  ['riposte', 'votre coup', 'vos 2 coups']
+]) {
+  const pl = taker();
+  const pact = PACTS.find(x => x.id === id);
+  assert.ok(altarFor(pl)._pactGain(pact).includes(first), `${id}: first take`);
+  pact.apply(pl, pl.weapon, pl.sword);
+  assert.ok(altarFor(pl)._pactGain(pact).includes(again), `${id}: taken again`);
+}
+const pyro = taker();
+const pyromancy = PACTS.find(x => x.id === 'pyromancy');
+const pyroText = () => altarFor(pyro)._pactGain(pyromancy);
+assert.ok(pyroText().includes('de chance'));
+for (let i = 0; i < 3; i++) pyromancy.apply(pyro, pyro.weapon, pyro.sword);
+pyro.weapon.stats.explosion = 1; // 75 % + 10 % = 85 %: this take gives 100 % and +10 % damage
+pyro.weapon.recalculateStats();
+assert.ok(pyroText().includes('+10 % de dégâts'), pyroText());
+pyromancy.apply(pyro, pyro.weapon, pyro.sword);
+pyro.weapon.recalculateStats();
+assert.ok(pyroText().includes('explosent déjà'), 'past 100 %: damage only');
 // Armor in points, as in League of Legends: never stops it all, below zero adds damage
 assert.equal(armorDamageFactor(0), 1);
 assert.equal(armorDamageFactor(100), 0.5);
