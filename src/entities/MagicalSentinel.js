@@ -4,7 +4,7 @@ import { Projectile } from './Projectile.js';
 import { soundManager } from '../systems/SoundManager.js';
 import { TextureGenerator } from '../systems/TextureGenerator.js';
 import { FloatingText } from './FloatingText.js';
-import { Pickup } from './Pickup.js';
+import { POTION_DROP_SHARE, Pickup } from './Pickup.js';
 import { PALETTE, css } from '../core/Palette.js';
 import { EnemyHealthSystem } from './EnemyHealth.js';
 
@@ -145,7 +145,7 @@ export class MagicalSentinel {
         // Chance to drop pickup
         if (Math.random() < 0.4) {
             const type = Math.random() < 0.5 ? 'health' : 'ammo';
-            this.entityManager.add(new Pickup(this.position, type, type === 'health' ? 15 : 25, this.levelManager));
+            if (type === 'ammo' || Math.random() < POTION_DROP_SHARE) this.entityManager.add(new Pickup(this.position, type, type === 'health' ? 15 : 25, this.levelManager));
         }
 
         // Gold Drop (80% chance)

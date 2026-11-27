@@ -13,6 +13,8 @@ const MAGNET_MAX_SPEED = 22;
 const _target = new THREE.Vector3();
 const _feet = new THREE.Vector3(); // Where an item lying at the player's feet floats: distances are measured from there
 const PICKUP_SOUNDS = { health: 'health', ammo: 'mana', gold: 'gold', upgrade: 'upgrade' };
+// Share of the health potions rolled by a dying enemy or turret that actually drop: healing came too easily
+export const POTION_DROP_SHARE = 0.1;
 
 const merge = (geometries) => {
     const merged = mergeGeometries(geometries.map(g => (g.index ? g.toNonIndexed() : g)));

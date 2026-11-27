@@ -1,4 +1,4 @@
-import { Pickup } from './Pickup.js';
+import { POTION_DROP_SHARE, Pickup } from './Pickup.js';
 import { EnemyMeshBuilder } from './EnemyMesh.js';
 import { EnemyHealthSystem } from './EnemyHealth.js';
 import { EnemyAI } from './EnemyAI.js';
@@ -51,7 +51,7 @@ export class Enemy {
                 this.entityManager.add(new Pickup(this.position, 'upgrade', 1, this.levelManager));
             } else {
                 const type = Math.random() < 0.5 ? 'health' : 'ammo';
-                this.entityManager.add(new Pickup(this.position, type, type === 'health' ? 20 : 30, this.levelManager));
+                if (type === 'ammo' || Math.random() < POTION_DROP_SHARE) this.entityManager.add(new Pickup(this.position, type, type === 'health' ? 20 : 30, this.levelManager));
             }
         }
 
