@@ -4,7 +4,7 @@ import { CONSTANTS } from '../core/Constants.js';
 import { PALETTE } from '../core/Palette.js';
 import { soundManager } from '../systems/SoundManager.js';
 
-const BAR_Y = 2.5; // m above the feet
+const BAR_Y = 2.6; // m above the feet: over the tallest antlers and horns
 const _barPos = new THREE.Vector3();
 const _bar = new THREE.Matrix4();
 const _fill = new THREE.Matrix4();
@@ -37,7 +37,6 @@ export class EnemyHealthSystem {
 
         this.maxHealth = EnemyHealthSystem.getMaxHealth(level);
         this.health = this.maxHealth;
-        this.isFlashing = false;
 
         // Mechanics
         this.regenEnabled = level >= CONSTANTS.DIFFICULTY.MECHANIC_REGEN_LEVEL;
@@ -85,7 +84,7 @@ export class EnemyHealthSystem {
         }
         if (this.health >= this.maxHealth && this.shieldHits === 0) return;
 
-        // As Object3D.lookAt(camera): +Z towards the camera; the body's scale carries the hit punch
+        // As Object3D.lookAt(camera): +Z towards the camera; the body's scale carries the jump's squash
         _barPos.set(0, BAR_Y, 0).applyMatrix4(body);
         _bar.lookAt(camera.position, _barPos, _up).setPosition(_barPos).scale(_scale.setScalar(this.mesh.scale.x));
         entityManager.batch(EnemyHealthSystem.bgGeo, EnemyHealthSystem.bgMat).add(_bar);
@@ -109,15 +108,7 @@ export class EnemyHealthSystem {
 
         this.health -= amount;
 
-        // Hit feedback: short scale punch (skipped while one is already running)
-        if (!this.isFlashing) {
-            this.isFlashing = true;
-            this.mesh.scale.multiplyScalar(1.1);
-            setTimeout(() => {
-                this.mesh.scale.multiplyScalar(1 / 1.1);
-                this.isFlashing = false;
-            }, 50);
-        }
+        this.enemy.anim.w = 1; // Hit feedback: a flinch and a flash (EnemyMesh.js)
 
         return this.health <= 0;
     }

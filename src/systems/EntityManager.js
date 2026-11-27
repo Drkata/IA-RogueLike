@@ -3,7 +3,6 @@ import { soundManager } from './SoundManager.js';
 import { runLog } from './RunLog.js';
 import { PALETTE } from '../core/Palette.js';
 import { Projectile } from '../entities/Projectile.js';
-import { EnemyMeshBuilder } from '../entities/EnemyMesh.js';
 import { EnemyHealthSystem } from '../entities/EnemyHealth.js';
 
 const SHOCKWAVE_RANGE = 19.5; // m
@@ -13,28 +12,34 @@ const SHOCKWAVE_DAMAGE = 50;
 const BATCH_CAPACITY = 2048;
 const _batchColor = new THREE.Color();
 
-// Every copy of one part (geometry + material) shown by many entities, drawn in a single call
+// Every copy of one part (geometry + material) shown by many entities, drawn in a single call. `animated`: each copy
+// has four numbers of its own for the shader (instanceAnim: the enemies' motion, EnemyMesh.js).
 class InstancedBatch {
-    constructor(geometry, material, colored) {
+    constructor(geometry, material, colored, animated) {
         this.mesh = new THREE.InstancedMesh(geometry, material, BATCH_CAPACITY);
         this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         // Created up front: adding it later would recompile the shader mid-game
         if (colored) this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(BATCH_CAPACITY * 3), 3).setUsage(THREE.DynamicDrawUsage);
+        if (animated) {
+            this.anim = new THREE.InstancedBufferAttribute(new Float32Array(BATCH_CAPACITY * 4), 4).setUsage(THREE.DynamicDrawUsage);
+            geometry.setAttribute('instanceAnim', this.anim);
+        }
         this.mesh.frustumCulled = false; // The copies move every frame: a fixed bounding sphere would cull them wrongly
         this.mesh.count = 0;
     }
 
-    add(matrix, color) {
+    add(matrix, color, anim) {
         const i = this.mesh.count;
         if (i >= BATCH_CAPACITY) return;
         this.mesh.setMatrixAt(i, matrix);
         if (color !== undefined) this.mesh.setColorAt(i, _batchColor.setHex(color));
+        if (anim) this.anim.setXYZW(i, anim.x, anim.y, anim.z, anim.w);
         this.mesh.count++;
     }
 
     // Uploads only the copies in use
     flush() {
-        for (const [attribute, size] of [[this.mesh.instanceMatrix, 16], [this.mesh.instanceColor, 3]]) {
+        for (const [attribute, size] of [[this.mesh.instanceMatrix, 16], [this.mesh.instanceColor, 3], [this.anim, 4]]) {
             if (!attribute) continue;
             attribute.clearUpdateRanges();
             attribute.addUpdateRange(0, this.mesh.count * size);
@@ -50,8 +55,6 @@ export class EntityManager {
 
         // Batched parts. The known ones exist from the start, so their shaders compile with the level.
         this.batches = new Map();
-        this.batch(EnemyMeshBuilder.eyeGeometry, EnemyMeshBuilder.eyeMaterials.normal);
-        this.batch(EnemyMeshBuilder.eyeGeometry, EnemyMeshBuilder.eyeMaterials.elite);
         this.batch(EnemyHealthSystem.shieldGeo, EnemyHealthSystem.shieldMat);
         this.batch(EnemyHealthSystem.bgGeo, EnemyHealthSystem.bgMat);
         this.batch(EnemyHealthSystem.fillGeo, EnemyHealthSystem.barFillMat, true);
@@ -199,12 +202,13 @@ export class EntityManager {
         this._drawBatches(player.camera);
     }
 
-    // The batch of `geometry` + `material` (created on first use; `colored`: each copy has its own colour)
-    batch(geometry, material, colored = false) {
+    // The batch of `geometry` + `material` (created on first use; `colored`: each copy has its own colour;
+    // `animated`: its own instanceAnim)
+    batch(geometry, material, colored = false, animated = false) {
         const key = geometry.uuid + material.uuid;
         let batch = this.batches.get(key);
         if (!batch) {
-            batch = new InstancedBatch(geometry, material, colored);
+            batch = new InstancedBatch(geometry, material, colored, animated);
             this.batches.set(key, batch);
             this.scene.add(batch.mesh);
         }

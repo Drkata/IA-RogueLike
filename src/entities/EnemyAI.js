@@ -27,6 +27,7 @@ export const lateDamage = (level, base, perLevel) => {
 
 const C = CONSTANTS.CELL_SIZE;
 const CENTER_HEIGHT = 0.8; // Enemy position is its centre of mass, 0.8 above the feet
+const HAND_HEIGHT = 0.55; // Above the centre: the casting hand, 1.35 m above the feet
 const REPLAN_INTERVAL = 0.8; // s, ±25% so enemies don't all plan on the same frame
 const REPLAN_PLAYER_MOVED = 4; // m: the player went this far from the planned target → plan now
 const WAYPOINT_REACHED = 0.4; // m
@@ -344,12 +345,16 @@ export class EnemyAI {
     }
 
     shoot(player, position) {
-        _shootDir.subVectors(player.position, position);
+        // From the casting hand, raised before the chest (EnemyMesh.js), towards the player
+        this.enemy.anim.z = 1;
+        _shootDir.subVectors(player.position, position).setY(0);
         if (_shootDir.lengthSq() > 0) _shootDir.normalize();
         else _shootDir.set(0, 0, -1);
-
-        // Spawn slightly in front of the enemy to avoid clipping
-        _spawnPos.copy(position).addScaledVector(_shootDir, 0.5);
+        _spawnPos.copy(position).addScaledVector(_shootDir, 0.6);
+        _spawnPos.y += HAND_HEIGHT;
+        _shootDir.subVectors(player.position, _spawnPos);
+        if (_shootDir.lengthSq() > 0) _shootDir.normalize();
+        else _shootDir.set(0, 0, -1);
 
         soundManager.play('enemyShoot', _spawnPos);
         this.entityManager.add(new Projectile(_spawnPos, _shootDir, this.projectileSpeed, this.damage, this.levelManager, {

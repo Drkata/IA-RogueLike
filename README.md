@@ -148,7 +148,7 @@ IA-RogueLike/
     │   ├── Enemy.js                    # Ennemi standard (wrapper)
     │   ├── EnemyAI.js                  # Intelligence artificielle — pathfinding A*, états, attaque
     │   ├── EnemyHealth.js              # Système de santé ennemi (barres de vie 3D)
-    │   ├── EnemyMesh.js                # Rendu 3D des ennemis (mesh procédural)
+    │   ├── EnemyMesh.js                # Ennemis : une faction par biome, animée dans le shader
     │   ├── MagicalSentinel.js          # Gardien des salles spéciales — œil flottant qui scelle la récompense
     │   ├── BossSentinel.js             # Boss colossal — 3 patterns d'attaque combinables
     │   ├── FloatingText.js             # Textes flottants animés (dégâts, critiques)

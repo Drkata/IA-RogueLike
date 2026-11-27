@@ -604,6 +604,177 @@ const FLOOR_ALTS = {
     }
 };
 
+// ─── Enemies: one atlas per biome, 4 × 4 cells of 128 px; EnemyMesh.js maps each part into its cell ──────
+
+const ENEMY_CELL = 128;
+
+// Each painter gets (rng, colours) and returns the per-pixel shader for its cell (local x, y, i = y * 128 + x)
+const ENEMY_PAINTERS = {
+    // Woven cloth with vertical folds and grime
+    cloth(rng, [a, b]) {
+        const grime = fbm(ENEMY_CELL, rng, 4, 4);
+        const fold = fbm(ENEMY_CELL, rng, 3, 3);
+        const A = rgb(a);
+        const B = rgb(b);
+        return (x, y, i, px) => {
+            const weave = ((x + y) % 4 < 2 ? 1 : 0.9) * ((x - y + 256) % 4 < 2 ? 1 : 0.94);
+            const f = 0.78 + 0.3 * Math.sin((x / ENEMY_CELL) * Math.PI * 6 + fold[i] * 4);
+            scaleInto(mixInto(px.color, A, B, grime[i]), weave * f);
+            px.height = 0.35 + 0.3 * f * weave;
+        };
+    },
+    // Tooled leather: grain and creases
+    leather(rng, [a]) {
+        const grain = fbm(ENEMY_CELL, rng, 24, 3);
+        const crease = ridged(fbm(ENEMY_CELL, rng, 4, 4));
+        const A = rgb(a);
+        return (x, y, i, px) => {
+            const c = smoothstep(0.9, 0.98, crease[i]);
+            scaleInto(copyInto(px.color, A), (0.8 + 0.35 * grain[i]) * (1 - 0.4 * c));
+            px.height = 0.5 + 0.2 * grain[i] - 0.3 * c;
+        };
+    },
+    // Bark: vertical fibres split by dark furrows
+    bark(rng, [a, b]) {
+        const fibre = fbm(ENEMY_CELL, rng, 20, 3);
+        const blotch = fbm(ENEMY_CELL, rng, 3, 4);
+        const A = rgb(a);
+        const B = rgb(b);
+        return (x, y, i, px) => {
+            const f = fibre[(Math.floor(y / 6) % ENEMY_CELL) * ENEMY_CELL + x];
+            const furrow = smoothstep(0.35, 0.2, f);
+            scaleInto(mixInto(px.color, A, B, blotch[i]), (0.75 + 0.45 * f) * (1 - 0.55 * furrow));
+            px.height = 0.3 + 0.6 * f - 0.3 * furrow;
+        };
+    },
+    // Moss and lichen
+    moss(rng, [a, b]) {
+        const big = fbm(ENEMY_CELL, rng, 5, 4);
+        const fine = fbm(ENEMY_CELL, rng, 32, 2);
+        const A = rgb(a);
+        const B = rgb(b);
+        return (x, y, i, px) => {
+            mixInto(px.color, A, B, big[i] * 0.6 + fine[i] * 0.4);
+            px.height = 0.4 + 0.4 * fine[i];
+        };
+    },
+    // Bone and antler: smooth, darker at the base, hairline cracks
+    bone(rng, [a]) {
+        const grain = fbm(ENEMY_CELL, rng, 8, 4);
+        const crack = ridged(fbm(ENEMY_CELL, rng, 5, 4));
+        const A = rgb(a);
+        return (x, y, i, px) => {
+            const c = smoothstep(0.95, 0.99, crack[i]);
+            scaleInto(copyInto(px.color, A), (0.7 + 0.3 * (y / ENEMY_CELL)) * (0.88 + 0.2 * grain[i]) * (1 - 0.35 * c));
+            px.height = 0.55 + 0.15 * grain[i] - 0.3 * c;
+        };
+    },
+    // Worked wood: fine straight grain
+    wood(rng, [a, b]) {
+        const grain = fbm(ENEMY_CELL, rng, 24, 3);
+        const A = rgb(a);
+        const B = rgb(b);
+        return (x, y, i, px) => {
+            const g = grain[(Math.floor(y / 10) % ENEMY_CELL) * ENEMY_CELL + x];
+            mixInto(px.color, A, B, g);
+            px.height = 0.4 + 0.3 * g;
+        };
+    },
+    // Riveted plate: brushed, darker edges, a rivet in each corner, scratches
+    metal(rng, [a]) {
+        const brush = fbm(ENEMY_CELL, rng, 32, 2);
+        const scratch = ridged(fbm(ENEMY_CELL, rng, 6, 4));
+        const A = rgb(a);
+        return (x, y, i, px) => {
+            const edge = Math.min(x, y, ENEMY_CELL - 1 - x, ENEMY_CELL - 1 - y);
+            const bevel = smoothstep(2, 14, edge);
+            const rivet = [16, ENEMY_CELL - 17].some(rx => [16, ENEMY_CELL - 17].some(ry => (x - rx) ** 2 + (y - ry) ** 2 < 20));
+            const s = smoothstep(0.96, 0.99, scratch[i]);
+            const b = brush[(y % ENEMY_CELL) * ENEMY_CELL + Math.floor(x / 8)];
+            scaleInto(copyInto(px.color, A), (0.55 + 0.45 * bevel) * (0.85 + 0.25 * b) * (1 + 0.35 * s) * (rivet ? 1.3 : 1));
+            px.height = 0.3 + 0.4 * bevel + (rivet ? 0.3 : 0) - 0.1 * s;
+        };
+    },
+    // Near-black: hood depths, gaps
+    dark(rng, [a]) {
+        const n = fbm(ENEMY_CELL, rng, 6, 3);
+        const A = rgb(a);
+        return (x, y, i, px) => {
+            scaleInto(copyInto(px.color, A), 0.8 + 0.4 * n[i]);
+            px.height = 0.5;
+        };
+    },
+    // Rock: cracked into plates
+    stone(rng, [a, b]) {
+        const v = voronoi(ENEMY_CELL, rng, 5, 0.9);
+        const grain = fbm(ENEMY_CELL, rng, 24, 3);
+        const A = rgb(a);
+        const B = rgb(b);
+        return (x, y, i, px) => {
+            const border = v.f2[i] - v.f1[i];
+            const crack = smoothstep(0.08, 0.02, border);
+            mixInto(px.color, A, B, hash(v.id[i] + 3) * 0.6 + grain[i] * 0.4);
+            scaleInto(px.color, 1 - 0.6 * crack);
+            px.height = 0.6 + 0.2 * grain[i] - 0.5 * crack;
+        };
+    },
+    // Crystal facets, glowing from within
+    crystal(rng, [a]) {
+        const v = voronoi(ENEMY_CELL, rng, 4, 0.8);
+        const A = rgb(a);
+        return (x, y, i, px) => {
+            const facet = 0.6 + 0.4 * hash(v.id[i] + 17);
+            const edge = smoothstep(0.02, 0.07, v.f2[i] - v.f1[i]);
+            scaleInto(copyInto(px.color, A), facet * (0.7 + 0.3 * edge));
+            px.glow[0] = A[0] * facet * 0.8;
+            px.glow[1] = A[1] * facet * 0.8;
+            px.glow[2] = A[2] * facet * 0.8;
+            px.height = 0.5 + 0.4 * edge;
+        };
+    },
+    // Charred hide split by veins of lava
+    skin(rng, [a, b]) {
+        const big = fbm(ENEMY_CELL, rng, 4, 4);
+        const grain = fbm(ENEMY_CELL, rng, 32, 2);
+        const crack = ridged(fbm(ENEMY_CELL, rng, 5, 4, 0.55));
+        const A = rgb(a);
+        const B = rgb(b);
+        const lavaDeep = rgb(0xb02400);
+        const lavaHot = rgb(0xffa040);
+        const lava = [0, 0, 0];
+        return (x, y, i, px) => {
+            const vein = smoothstep(0.955, 0.985, crack[i]) * smoothstep(0.5, 0.7, big[i]); // Sparse: a body, not a lava flow
+            mixInto(px.color, A, B, grain[i] * 0.5 + big[i] * 0.5);
+            mixInto(lava, lavaDeep, lavaHot, vein);
+            mixInto(px.color, px.color, lava, vein);
+            px.glow[0] = lava[0] * vein;
+            px.glow[1] = lava[1] * vein;
+            px.glow[2] = lava[2] * vein;
+            px.height = 0.45 + 0.3 * grain[i] - 0.35 * vein;
+        };
+    },
+    // Horn: growth rings along its length
+    horn(rng, [a, b]) {
+        const grain = fbm(ENEMY_CELL, rng, 8, 3);
+        const A = rgb(a);
+        const B = rgb(b);
+        return (x, y, i, px) => {
+            const ring = 0.5 + 0.5 * Math.sin((y / ENEMY_CELL) * Math.PI * 14 + grain[i] * 3);
+            mixInto(px.color, A, B, ring * 0.6 + grain[i] * 0.4);
+            px.height = 0.4 + 0.3 * ring;
+        };
+    }
+};
+
+// Cells of each biome's atlas, in order (cell n is at column n % 4, row n / 4 from the top). Muted bodies; what
+// glows is the crystals, the lava and the eyes (vertex glow, EnemyMesh.js).
+export const ENEMY_CELLS = {
+    forest: { bark: ['bark', 0x3f3226, 0x5e4a36], moss: ['moss', 0x2c4520, 0x55803a], antler: ['bone', 0xb3a68a], leaves: ['cloth', 0x3a4428, 0x55502c], dark: ['dark', 0x14110d], wood: ['wood', 0x4a3322, 0x5e4430], stone: ['stone', 0x5c6056, 0x7c7f70] },
+    city: { robe: ['cloth', 0x4a2a34, 0x5e3844], slate: ['cloth', 0x2e3444, 0x3e4658], mask: ['bone', 0xd8ccb0], metal: ['metal', 0x7c7e84], gilt: ['metal', 0xc8a24e], dark: ['dark', 0x120e10], leather: ['leather', 0x3e2c20], wood: ['wood', 0x3a2618, 0x4e3422] },
+    cave: { rock: ['stone', 0x3e3d4a, 0x605f72], deep: ['stone', 0x2a2933, 0x3e3d4a], crystal: ['crystal', 0x5fc8ff], amethyst: ['crystal', 0xb08cff], dark: ['dark', 0x0e0d14], metal: ['metal', 0x5a5c66] },
+    hell: { hide: ['skin', 0x2a1a16, 0x4a2c22], horn: ['horn', 0x2a2420, 0x5a4c40], iron: ['metal', 0x3e3634], dark: ['dark', 0x140a08], leather: ['leather', 0x3a1e14], bone: ['bone', 0xb8a890] }
+};
+
 // ─── Special rooms ───────────────────────────────────────────────────────────
 
 // Magic circle, used for the floor sigils of special rooms
@@ -760,6 +931,25 @@ export class TextureGenerator {
 
     static floorAltSurface(biome) {
         return (FLOOR_ALTS[biome] || FLOOR_ALTS.city)(seededRandom(3000 + biome.length * 31));
+    }
+
+    // The enemies' atlas of `biome` (ENEMY_CELLS): albedo, height, and glow when a cell glows (crystal, lava)
+    static enemyAtlas(biome) {
+        const cells = Object.values(ENEMY_CELLS[biome]);
+        const rng = seededRandom(5000 + biome.length * 31 + biome.charCodeAt(0));
+        const shaders = cells.map(([kind, ...colors]) => ENEMY_PAINTERS[kind](rng, colors));
+        const glows = cells.some(([kind]) => kind === 'crystal' || kind === 'skin');
+        const size = ENEMY_CELL * 4;
+        return paintSurface(size, glows, (x, y, i, px) => {
+            const shade = shaders[(y >> 7) * 4 + (x >> 7)];
+            if (!shade) {
+                px.color[0] = px.color[1] = px.color[2] = 0;
+                return;
+            }
+            const lx = x & (ENEMY_CELL - 1);
+            const ly = y & (ENEMY_CELL - 1);
+            shade(lx, ly, ly * ENEMY_CELL + lx, px);
+        });
     }
 
     // Weathering noise (Weathering.js), tileable, linear: R tone, G weathered patches, B second floor patches
