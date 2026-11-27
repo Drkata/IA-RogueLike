@@ -38,14 +38,14 @@ const origin = new THREE.Vector3(0, 1.6, 0);
 const foe = (x, z, radius = 0.5) => ({ position: new THREE.Vector3(x, 1, z), radius });
 
 // Stats and upgrades
-assert.equal(sword.damage, 10);
+assert.equal(sword.damage, 5);
 assert.ok(Math.abs(1 / sword.strikeRate - 0.8) < 1e-9, 'a strike every 0.8 s to start with');
 assert.equal(sword.reach, 3);
 for (const stat of ['meleeDamage', 'attackSpeed', 'reach']) {
   for (let i = 0; i < 10; i++) assert.ok(sword.upgrade(stat));
   assert.ok(!sword.upgrade(stat), `${stat} past its max level`);
 }
-assert.equal(sword.damage, 160);
+assert.equal(sword.damage, 95);
 assert.equal(sword.reach, 6);
 sword.reset();
 assert.equal(sword.getTotalLevel(), 0);
@@ -164,11 +164,11 @@ player.weapon.currentAmmo = 0;
 player.sword.waves = 1;
 player.heal = function (n) { this.health += n; };
 player.handleSwing();
-assert.equal(a.hp, 990);
-assert.equal(b.hp, 990);
+assert.equal(a.hp, 995);
+assert.equal(b.hp, 995);
 assert.equal(behind.hp, 1000);
 assert.equal(far.hp, 1000);
-assert.equal(player.health, 50 + 2 * 10 * 0.2, 'life steal on both hits');
+assert.equal(player.health, 50 + 2 * 5 * 0.2, 'life steal on both hits');
 assert.equal(player.weapon.currentAmmo, 10, '5 mana per enemy struck');
 assert.equal(added.length, 1, 'one blade wave');
 assert.ok(added[0].isPlayerProjectile && added[0].maxDistance === 8 && added[0].piercing === Infinity && added[0].size > 0);
@@ -184,8 +184,8 @@ player.sword.update(5, 0);
 player.health = 10;
 const furyHp = a.hp;
 player.handleSwing();
-assert.equal(player.health, 10 + 2 * 10 * (0.2 + 0.75), 'fury life steal on both hits');
-assert.equal(a.hp, furyHp - 10);
+assert.equal(player.health, 10 + 2 * 5 * (0.2 + 0.75), 'fury life steal on both hits');
+assert.equal(a.hp, furyHp - 5);
 player._setFury(false); // What the end of the fury (Player.update) and a new run (resetBuffs) call
 assert.ok(player.sword.furyMultiplier === 1 && player.sword.furyLifeSteal === 0 && !player.weapon.infiniteAmmo);
 
@@ -270,7 +270,7 @@ const tagged = (tag) => game.UPGRADES.filter(u => u.for === tag).map(u => u.id).
 assert.equal(tagged('sword'), 'attackSpeed,meleeDamage,reach');
 assert.equal(tagged('both'), 'critChance,critDamage,vampirism');
 
-// Shop: 3 upgrades drawn per visit among those not maxed out, 250 gold each, once
+// Shop: 3 upgrades drawn per visit among those not maxed out, 250 gold each plus 25 per one bought this run, once
 const shopper = Object.assign(Object.create(Player.prototype), { stats: { maxHealth: 0, armor: 0, vampirism: 0, regen: 0, speed: 0, immolation: 0, magnet: 0 },
   weapon: new Weapon(new THREE.PerspectiveCamera()), sword: new Sword(new THREE.PerspectiveCamera()), health: 100, maxHealth: 100, shield: 0, MAX_LEVEL: 10, updateHUD: noop });
 const shop = Object.assign(Object.create(game.Game.prototype), { player: shopper });
@@ -284,6 +284,7 @@ offers.upgrade0.buy();
 assert.equal(shop._upgradeSource(first).stats[first.id], 1);
 offers = shop._shopOffers();
 assert.ok(offers.upgrade0.blocked && offers.upgrade0.sold && !offers.upgrade1.blocked, 'each one is bought once');
+assert.ok(offers.upgrade1.price === 275 && offers.upgrade2.price === 275, 'the next ones cost 25 more');
 for (const u of game.UPGRADES) shop._upgradeSource(u).stats[u.id] = 10; // Everything maxed out but two
 const [last1, last2] = game.UPGRADES.slice(-2);
 shop._upgradeSource(last1).stats[last1.id] = 3;
@@ -307,7 +308,10 @@ assert.deepEqual(card('maxHealth'), [[null, num(100), num(125)]]);
 hero.fountainHp = 30;
 assert.deepEqual(card('maxHealth'), [[null, num(130), num(155)]], 'a fountain counts');
 seal('colossus'); // ×1.5 max health, ×0.75 staff damage
-assert.deepEqual(card('maxHealth'), [[null, num(180), num(217.5)]], 'and a pact');
+assert.deepEqual(card('maxHealth'), [[null, num(150 + 30 * 1.5 ** 0.4), num(187.5 + 30 * 1.5 ** 0.4)]], 'and a pact, softened on the fountain');
+// Calibrated on a 1-hour run: 32 fountains under six Cataclysms, two Blood pacts and a Riposte end near 450 HP
+const longRun = Player.prototype.effectiveValue.call({ getStatValue: () => 350, pactHpMultiplier: 0.8 ** 6 * 0.75 ** 2 * 0.85, fountainHp: 32 * 30 }, 'maxHealth', 10);
+assert.ok(longRun > 420 && longRun < 480, `long run max health ${longRun}`);
 assert.equal(card('damage')[0][1], num(hero.weapon.damage), 'the card shows the damage the staff deals');
 seal('resilience'); // +2 HP/s
 assert.deepEqual(card('regen'), [[null, unit(2, 'PV/s'), unit(2.3, 'PV/s')]]);

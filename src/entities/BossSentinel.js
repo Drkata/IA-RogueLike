@@ -5,15 +5,19 @@ import { FloatingText } from './FloatingText.js';
 import { PALETTE } from '../core/Palette.js';
 import { soundManager } from '../systems/SoundManager.js';
 import { TextureGenerator } from '../systems/TextureGenerator.js';
+import { CONSTANTS } from '../core/Constants.js';
+import { lateDamage } from './EnemyAI.js';
+import { EYE_HEIGHT } from './Player.js';
 
 /*
  * The colossal Sentinel: a giant stone eye in three spiked rings (see ART_DIRECTION.md « Boss »).
  *
- * It attacks one move at a time, in a fixed cycle a player can learn. Every move is announced:
- * the eye and the rings' runes take the move's colour, a sound starts, and three rising ticks
- * count down to the hit (it lands on the fourth beat). A hint is shown the first time. After its
- * big moves the boss crashes to the ground, stunned: it can then be hit with the staff and
- * takes double damage.
+ * It attacks in a random order (BAG), and from level 30 sometimes starts a second move as the first
+ * lands (combo). Every move is announced: the eye and the rings' runes take the move's colour, a
+ * sound starts, and three rising ticks count down to the hit (it lands on the fourth beat). A hint
+ * is shown the first time. After its big moves the boss crashes to the ground, stunned: it can then
+ * be hit with the sword and takes double damage. A player jumping higher than a normal jump is shot
+ * at (anti-air), and meteors leave the ground burning.
  *
  * A move is a timeline of beats, [seconds from its start, action or null]; the last beat ends it.
  */
@@ -25,10 +29,22 @@ const SHOT_Y = 1.0; // Waves and spiral shots fly waist high: a jump clears them
 const STUN_DAMAGE = 2; // Damage multiplier while stunned
 const STUNNED_SOLID_RADIUS = 3.4; // Width of the eye at the player's height when it lies on the ground
 
-const CYCLE = ['nova', 'spiral', 'stun', 'nova', 'meteors', 'stun', 'summon', 'nova'];
+// Moves drawn in random order, the bag refilled when empty: three waves for one of each other move.
+// The big ones (BIG) leave the boss stunned.
+const BAG = ['nova', 'nova', 'nova', 'spiral', 'meteors', 'summon'];
+const BIG = new Set(['spiral', 'meteors']);
+const NORMAL_JUMP = CONSTANTS.JUMP_FORCE ** 2 / (2 * CONSTANTS.GRAVITY); // 2.4 m: a jump without the Wings pact
+// High wave rows: the first over a standing head, the next 2.2 m apart so their reach (0.75 + 0.5 m) overlaps, up to
+// 6 rows of 60 orbs: five high waves in flight stay under an instanced batch's 2048 copies
+const HIGH_WAVE = { y: 3.2, gap: 2.2, reach: 0.75, rows: 6, orbs: 60 };
+const ANTI_AIR = { every: 0.5, speed: 30 }; // s between shots at a player above a normal jump, m/s
+const BURN = { time: 3, radius: 3.5, share: 0.25, every: 0.5 }; // Meteor impact: s, m, meteor damage per second, s between hurts
+// shortcut: perf cap (two spirals of 20 arms: about 1000 shots in flight); a later boss stops adding arms
+const SPIRAL_ARMS_MAX = 20;
 const COLORS = {
     idle: PALETTE.ember,
     nova: PALETTE.hexBright,
+    novaHigh: PALETTE.ember,
     spiral: PALETTE.emberBright,
     meteors: PALETTE.ember,
     summon: PALETTE.hex,
@@ -37,32 +53,38 @@ const COLORS = {
 const HINTS = {
     nova: "Vague d'énergie : sautez au 4e signal, quand elle arrive sur vous",
     spiral: 'Tourbillon : reculez et sautez par-dessus les tirs',
-    meteors: 'Pluie de météores : sortez des cercles avant qu’ils soient pleins',
-    summon: 'Le boss appelle des renforts : les portails violets'
+    novaHigh: 'Vague haute, rouge : restez au sol, ne sautez pas',
+    meteors: 'Pluie de météores : sortez des cercles avant qu’ils soient pleins, puis des flammes',
+    summon: 'Le boss appelle des renforts : les portails violets',
+    combo: 'Le boss lance deux attaques à la fois',
+    antiAir: "Trop haut dans les airs : l'œil vous tire dessus"
 };
 
 const _dir = new THREE.Vector3();
 const _spawnPos = new THREE.Vector3();
 const _color = new THREE.Color();
 const _target = new THREE.Color();
+const _aim = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
 
 export class BossSentinel {
     static idCounter = 1000; // Start high to avoid conflict with minions
 
     static getHP(level) {
-        return level * 100; // Level 10 = 1000 HP
+        return level * 200; // Level 10 = 2000 HP
     }
 
+    // Like the enemies' shots: linear up to level 30, then +3 % a level
     static getNovaDamage(level) {
-        return 10 + level;
+        return lateDamage(level, 10, 1);
     }
 
     static getSpiralDamage(level) {
-        return 7 + level;
+        return lateDamage(level, 7, 1);
     }
 
     static getMeteorDamage(level) {
-        return 20 + (level * 1.5);
+        return lateDamage(level, 20, 1.5);
     }
 
     constructor(position, levelManager, entityManager, level) {
@@ -79,11 +101,15 @@ export class BossSentinel {
         this.health = this.maxHealth;
         this.radius = EYE_RADIUS + 0.5; // Hitbox for shots and the staff
 
-        // Every 10 boss levels: faster shots, shorter warnings and rests, more of everything
+        // Every 10 boss levels: faster shots, shorter warnings and rests, more of everything. Past level 50
+        // the warning and the rest keep shortening, towards 0.5 s and 0.4 s.
         this.tier = Math.max(1, Math.floor(level / 10));
+        const late = Math.max(0, this.tier - 5);
         this.speedMult = 1 + this.tier * 0.05;
-        this.tell = Math.max(0.9, 1.5 - 0.15 * (this.tier - 1)); // Warning before a move lands
-        this.rest = Math.max(1.0, 2.0 - 0.25 * (this.tier - 1)); // Pause after a move
+        this.tell = this.tier <= 5 ? 1.5 - 0.15 * (this.tier - 1) : 0.5 + 0.4 * 0.85 ** late; // Warning before a move lands
+        this.rest = this.tier <= 5 ? 2.0 - 0.25 * (this.tier - 1) : 0.4 + 0.6 * 0.85 ** late; // Pause after a move
+        // Chance a move comes with a second one: 1 in 3 at level 30, 1 in 2 at 50, every move from 70
+        this.comboChance = level < 30 ? 0 : level < 50 ? THREE.MathUtils.lerp(1 / 3, 1 / 2, (level - 30) / 20) : Math.min(1, THREE.MathUtils.lerp(1 / 2, 1, (level - 50) / 20));
 
         this.disposables = [];
         this.mesh = this._buildMesh();
@@ -94,8 +120,13 @@ export class BossSentinel {
         this.solid = levelManager.addSolidProp(new THREE.Vector3(position.x, 0, position.z), STUNNED_SOLID_RADIUS, 0);
 
         this.player = null;
-        this.step = 0;
-        this.clock = 0;
+        this.bag = [];
+        this.stunNext = false;
+        this.clock = 0; // s into the current move
+        this.age = 0; // s since the fight began
+        this.burns = []; // { x, z, y, from, until }: burning ground left by the meteors (age times)
+        this.burnWait = 0;
+        this.antiAirWait = 0;
         // Roar on arrival (first frame of play: the arena is built behind the upgrade menu), then a grace period
         this.beats = [[0, () => soundManager.play('bossRoar')], [3, null]];
         this.charge = null; // { color, start, end }: the eye lights up towards the move's colour
@@ -249,6 +280,7 @@ export class BossSentinel {
         soundManager.play('bossRoar');
         this.mesh.visible = false;
         this.beats = [];
+        this.burns = [];
         this.solid.height = 0;
         if (this.healthContainer) this.healthContainer.hidden = true;
         this.entityManager.createExplosion(this.position, 0); // Visual only
@@ -265,33 +297,104 @@ export class BossSentinel {
         this.player = player;
 
         this.clock += dt;
+        this.age += dt;
         while (this.beats.length && this.beats[0][0] <= this.clock) {
             const action = this.beats.shift()[1];
             if (action) action();
         }
         if (!this.beats.length) this._nextMove();
+        if (!this.stunned) this._antiAir(dt);
+        this._burnGround(dt);
         this._updateBody(dt);
     }
 
+    // The next move, drawn from the bag; after a big move, the stun. From level 30 a second move sometimes
+    // starts as the first one lands: its own warning, countdown and hit.
     _nextMove() {
-        const kind = CYCLE[this.step++ % CYCLE.length];
         this.clock = 0;
         this.charge = null;
-        const beats = { nova: this._novaBeats, spiral: this._spiralBeats, meteors: this._meteorBeats, summon: this._summonBeats, stun: this._stunBeats }[kind].call(this);
+        const beatsOf = (kind) => ({ nova: this._novaBeats, spiral: this._spiralBeats, meteors: this._meteorBeats, summon: this._summonBeats, stun: this._stunBeats }[kind].call(this));
+        if (this.stunNext) {
+            this.stunNext = false;
+            this.beats = beatsOf('stun').sort((a, b) => a[0] - b[0]);
+            return;
+        }
+        const kind = this._draw();
+        let beats = beatsOf(kind);
+        this.stunNext = BIG.has(kind);
+        if (Math.random() < this.comboChance) {
+            const second = this._draw(kind);
+            beats.push([this.tell, () => this._hint('combo')]);
+            beats = beats.concat(beatsOf(second).map(([t, action]) => [t + this.tell, action]));
+            this.stunNext ||= BIG.has(second);
+        }
         this.beats = beats.sort((a, b) => a[0] - b[0]);
     }
 
+    // A move from the bag, other than `not`; a new shuffled bag when it is empty
+    _draw(not) {
+        if (!this.bag.length) this.bag = [...BAG].sort(() => 0.5 - Math.random());
+        const i = this.bag.findIndex(k => k !== not);
+        return i < 0 ? BAG.find(k => k !== not) : this.bag.splice(i, 1)[0];
+    }
+
     // The eye turns to the move's colour over the warning; the first time, a hint says what to do
-    _announce(kind) {
-        this.charge = { color: COLORS[kind], start: this.clock, end: this.clock + this.tell };
-        if (this.hinted.has(kind) || !this.player.hudManager) return;
+    _announce(kind, duration = this.tell) {
+        this.charge = { color: COLORS[kind], start: this.clock, end: this.clock + duration };
+        this._hint(kind);
+    }
+
+    _hint(kind) {
+        if (this.hinted.has(kind) || !this.player?.hudManager) return;
         this.hinted.add(kind);
         this.player.hudManager.showMessage(HINTS[kind]);
     }
 
-    // Three rising ticks, the last one 0.3 s before `at`: the hit lands on the fourth beat
+    // Three rising ticks, the last one 0.3 s before `at` (closer together when the warning is shorter
+    // than 0.9 s): the hit lands on the fourth beat
     _countdown(beats, at) {
-        [0.9, 0.6, 0.3].forEach((before, i) => beats.push([at - before, () => soundManager.play('bossTick', null, 1 + i * 0.22)]));
+        const step = Math.min(0.3, at / 3);
+        [3, 2, 1].forEach((n, i) => beats.push([at - n * step, () => soundManager.play('bossTick', null, 1 + i * 0.22)]));
+    }
+
+    // A player higher than a normal jump above the ground under them gets a fast shot aimed where they will be
+    _antiAir(dt) {
+        const p = this.player;
+        const feet = p.position.y - EYE_HEIGHT;
+        if (p.onGround || feet - this.levelManager.getFloorHeight(p.position.x, p.position.z, feet) < NORMAL_JUMP + 0.3) {
+            this.antiAirWait = 0;
+            return;
+        }
+        this.antiAirWait -= dt;
+        if (this.antiAirWait > 0) return;
+        this.antiAirWait = ANTI_AIR.every;
+        this._hint('antiAir');
+        const speed = ANTI_AIR.speed * this.speedMult;
+        const t = this.position.distanceTo(p.position) / speed;
+        _aim.copy(p.position).addScaledVector(p.velocity, t);
+        _aim.y -= 0.5 * CONSTANTS.GRAVITY * t * t;
+        this._fire(this.position, _dir.subVectors(_aim, this.position), speed, BossSentinel.getNovaDamage(this.level), 'Boss : tir anti-aérien', { color: PALETTE.emberBright, radius: 0.5 });
+    }
+
+    // Burning ground left by the meteors: alight when the meteor lands, hurts whoever stands in it
+    _burnGround(dt) {
+        if (!this.burns.length) return;
+        const p = this.player;
+        const feet = p.position.y - EYE_HEIGHT;
+        let inside = false;
+        this.burns = this.burns.filter(b => {
+            if (b.from > this.age) return true;
+            if (!b.lit) {
+                b.lit = true;
+                this.entityManager.createTelegraph(b, b.until - this.age, BURN.radius, PALETTE.ember, true);
+            }
+            if (Math.hypot(p.position.x - b.x, p.position.z - b.z) < BURN.radius && feet - b.y < 1) inside = true;
+            return b.until > this.age;
+        });
+        this.burnWait = inside ? this.burnWait - dt : 0;
+        if (!inside || this.burnWait > 0) return;
+        this.burnWait = BURN.every;
+        p.takeDamage(BossSentinel.getMeteorDamage(this.level) * BURN.share * BURN.every, 'Boss : sol brûlant', this.id);
     }
 
     _fire(origin, direction, speed, damage, sourceName, options = {}) {
@@ -306,36 +409,57 @@ export class BossSentinel {
         return proj;
     }
 
-    // Energy wave: a full ring of orbs at waist height, one more wave per 10 boss levels (up to 3)
+    // Energy waves: full rings of orbs, one more wave per 10 boss levels (up to 6), 0.6 to 1.4 s apart.
+    // Low waves (violet) fly waist high: jump them. After the first, half are high (red): rows from over
+    // the head up to the top of the player's jump, Wings pacts included, so staying down is the answer.
+    // Each wave after the first is called by a tick (lower for a high one) and the eye's colour.
     _novaBeats() {
         const at = this.tell;
-        const waves = Math.min(3, this.tier);
-        const gap = 1.1;
+        const waves = Math.min(6, this.tier);
         const beats = [
             [0, () => this._announce('nova')],
             [Math.max(0, at - 0.62), () => soundManager.play('bossCharge')] // 0.62 s: the charge swells up to the release
         ];
         this._countdown(beats, at);
+        let t = at;
         for (let w = 0; w < waves; w++) {
-            if (w > 0) beats.push([at + w * gap - 0.3, () => soundManager.play('bossTick', null, 1.44)]);
-            beats.push([at + w * gap, () => this._fireNova()]);
+            const high = w > 0 && Math.random() < 0.5;
+            if (w > 0) {
+                t += 0.6 + Math.random() * 0.8;
+                beats.push([t - 0.3, () => {
+                    soundManager.play('bossTick', null, high ? 0.9 : 1.44);
+                    this._announce(high ? 'novaHigh' : 'nova', 0.3);
+                }]);
+            }
+            beats.push([t, () => this._fireNova(high)]);
         }
-        beats.push([at + (waves - 1) * gap + this.rest, null]);
+        beats.push([t + this.rest, null]);
         return beats;
     }
 
-    _fireNova() {
+    _fireNova(high) {
         soundManager.play('bossLaser');
-        const count = 96; // Gaps narrower than the player: jumping is the answer
+        if (!high) {
+            this._ring(96, SHOT_Y, 0.5, 1, COLORS.nova); // Gaps narrower than the player: jumping is the answer
+            return;
+        }
+        const jump = (CONSTANTS.JUMP_FORCE * (this.player?.pactJumpMultiplier ?? 1)) ** 2 / (2 * CONSTANTS.GRAVITY);
+        const top = EYE_HEIGHT + jump - (HIGH_WAVE.reach + 0.5); // Last row's height to reach the eye at the top of the jump
+        const rows = Math.min(HIGH_WAVE.rows, 1 + Math.max(0, Math.ceil((top - HIGH_WAVE.y) / HIGH_WAVE.gap)));
+        for (let r = 0; r < rows; r++) this._ring(HIGH_WAVE.orbs, HIGH_WAVE.y + r * HIGH_WAVE.gap, HIGH_WAVE.reach, HIGH_WAVE.reach / 0.5, COLORS.novaHigh);
+    }
+
+    _ring(count, y, radius, scale, color) {
         for (let i = 0; i < count; i++) {
             const angle = (i / count) * Math.PI * 2;
             _dir.set(Math.sin(angle), 0, Math.cos(angle));
-            _spawnPos.set(this.position.x, SHOT_Y, this.position.z);
-            this._fire(_spawnPos, _dir, 22 * this.speedMult, BossSentinel.getNovaDamage(this.level), "Boss : vague d'énergie", { color: PALETTE.hexBright, radius: 0.5, geometry: Projectile.orbGeometry });
+            _spawnPos.set(this.position.x, y, this.position.z);
+            this._fire(_spawnPos, _dir, 22 * this.speedMult, BossSentinel.getNovaDamage(this.level), "Boss : vague d'énergie", { color, radius, scale, geometry: Projectile.orbGeometry });
         }
     }
 
-    // Spinning spiral of shots; the spin turns back every 2 s, announced by a tick
+    // 4 s of spinning spiral; the spin turns back at uneven times (1 to 2.5 s apart), each called by a tick.
+    // From level 30 a second spiral turns the other way. Every second, a salvo of 3 shots at the player.
     _spiralBeats() {
         const at = this.tell;
         const duration = 4;
@@ -351,47 +475,81 @@ export class BossSentinel {
         ];
         this._countdown(beats, at);
         for (let t = 0; t < duration; t += interval) beats.push([at + t, () => this._spiralRing()]);
-        for (let t = 2; t < duration; t += 2) {
+        for (let t = 1 + Math.random() * 1.5; t < duration; t += 1 + Math.random() * 1.5) {
             beats.push([at + t - 0.3, () => soundManager.play('bossTick', null, 1.2)], [at + t, () => { this.spinDir *= -1; }]);
         }
+        for (let t = 1; t < duration; t += 1) beats.push([at + t, () => this._aimedSalvo()]);
         return beats;
     }
 
     _spiralRing() {
-        const arms = Math.min(16, 6 + 2 * this.tier); // 8 arms on the first boss
-        for (let i = 0; i < arms; i++) {
-            const angle = this.spiralAngle + (i / arms) * Math.PI * 2;
-            _dir.set(Math.sin(angle), 0, Math.cos(angle));
-            _spawnPos.set(this.position.x, SHOT_Y, this.position.z);
-            this._fire(_spawnPos, _dir, 13 * this.speedMult, BossSentinel.getSpiralDamage(this.level), 'Boss : tourbillon', { radius: 0.6, scale: 0.8 });
+        const arms = Math.min(SPIRAL_ARMS_MAX, 6 + 2 * this.tier); // 8 arms on the first boss
+        const speed = 13 * (1 + 0.1 * this.tier); // Faster on each boss
+        for (const turn of this.level >= 30 ? [1, -1] : [1]) {
+            for (let i = 0; i < arms; i++) {
+                const angle = turn * this.spiralAngle + (i / arms) * Math.PI * 2;
+                _dir.set(Math.sin(angle), 0, Math.cos(angle));
+                _spawnPos.set(this.position.x, SHOT_Y, this.position.z);
+                this._fire(_spawnPos, _dir, speed, BossSentinel.getSpiralDamage(this.level), 'Boss : tourbillon', { radius: 0.6, scale: 0.8 });
+            }
         }
         this.spiralAngle += 0.19 * this.spinDir; // ≈ 1.2 rad/s: the arms curve visibly
     }
 
-    // Meteor rain: each meteor's landing circle fills up until it hits; one in three falls on the player
+    // Three shots fanned out at the player, from the eye
+    _aimedSalvo() {
+        if (!this.player) return;
+        for (const spread of [-0.1, 0, 0.1]) {
+            _dir.subVectors(this.player.position, this.position).applyAxisAngle(_up, spread);
+            this._fire(this.position, _dir, 18 * this.speedMult, BossSentinel.getSpiralDamage(this.level), 'Boss : tourbillon', { color: COLORS.spiral, radius: 0.6, scale: 0.8 });
+        }
+    }
+
+    // Meteor rain, in salvos of 4 every 0.8 s: each one's circle fills up until it lands, sooner on later
+    // bosses (2.2 s on the first, down to 1.4 s). A third fall on the player (half from level 30, two
+    // thirds from 50; the others of a salvo within 5 m of them), and every impact sets the ground alight.
     _meteorBeats() {
         const at = this.tell;
         const count = Math.min(50, 20 + 10 * this.tier);
-        const interval = 0.2;
+        const salvo = 4;
+        const interval = 0.8;
+        const aimedOfSix = this.level >= 50 ? 4 : this.level >= 30 ? 3 : 2;
+        const flight = Math.max(1.4, 2.4 - 0.2 * this.tier);
         const beats = [[0, () => {
             this._announce('meteors');
             soundManager.play('bossRoar');
         }]];
-        for (let i = 0; i < count; i++) beats.push([at + i * interval, () => this._launchMeteor(i % 3 === 0)]);
-        beats.push([at + count * interval + 2.2 + this.rest, null]);
+        const salvos = Math.ceil(count / salvo);
+        for (let s = 0; s < salvos; s++) {
+            beats.push([at + s * interval, () => {
+                let aimed = 0;
+                for (let i = s * salvo; i < Math.min(count, (s + 1) * salvo); i++) {
+                    this._launchMeteor(i % 6 < aimedOfSix ? aimed++ : -1, flight);
+                }
+            }]);
+        }
+        beats.push([at + (salvos - 1) * interval + flight + this.rest, null]);
         return beats;
     }
 
-    _launchMeteor(aimed) {
+    // `aimed`: -1 anywhere in the arena, 0 on the player, more within 5 m of them
+    _launchMeteor(aimed, flightTime) {
         const gravity = 20;
-        const flightTime = 2.2 / this.speedMult;
         const radius = 3.0;
         const range = 40;
-        const target = aimed
-            ? new THREE.Vector3(this.player.position.x, 0, this.player.position.z)
-            : new THREE.Vector3(this.position.x + (Math.random() - 0.5) * 2 * range, 0, this.position.z + (Math.random() - 0.5) * 2 * range);
+        const p = this.player.position;
+        const target = aimed < 0
+            ? new THREE.Vector3(this.position.x + (Math.random() - 0.5) * 2 * range, 0, this.position.z + (Math.random() - 0.5) * 2 * range)
+            : new THREE.Vector3(p.x, 0, p.z);
+        if (aimed > 0) {
+            const a = Math.random() * Math.PI * 2;
+            const d = 2 + Math.random() * 3;
+            target.x += Math.sin(a) * d;
+            target.z += Math.cos(a) * d;
+        }
         // The circle shows the real reach: hit radius + the player's 0.5 m
         this.entityManager.createTelegraph(target, flightTime, radius + 0.5);
+        this.burns.push({ x: target.x, y: target.y, z: target.z, from: this.age + flightTime, until: this.age + flightTime + BURN.time });
 
         // Ballistic launch velocity to land on target after flightTime
         _spawnPos.copy(this.position);

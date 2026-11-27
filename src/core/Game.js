@@ -175,6 +175,7 @@ const POTION = { heal: 50, price: 20 };
 const MANA = { amount: 150, price: 15 };
 const WARD = { shield: 30, price: 25 };
 const UPGRADE_PRICE = 250; // Each of the shop's SHOP_UPGRADES upgrades, once
+const UPGRADE_PRICE_STEP = 25; // Added for each upgrade bought at a shop this run, so gold stops buying everything
 const SHOP_UPGRADES = 3; // Drawn at random from the upgrades not maxed out, on each visit
 const SHIELD_FULL = 100; // The shield bar is drawn on 100 points
 const BULK = 10;
@@ -477,6 +478,7 @@ export class Game {
         this.hudManager.setBossVisible(false);
         this.currentLevel = 1;
         this.upgradePoints = 0;
+        this.shopUpgradesBought = 0;
         this.player.reset();
         runLog.start(DEVICE);
         this.startNewLevel();
@@ -1037,12 +1039,13 @@ export class Game {
             // The visit's upgrades, one level each, once
             ...Object.fromEntries((this.shopUpgrades || []).map((u, i) => [`upgrade${i}`, {
                 label: 'Acheter',
-                price: UPGRADE_PRICE,
+                price: UPGRADE_PRICE + UPGRADE_PRICE_STEP * (this.shopUpgradesBought || 0),
                 sold: u.sold,
                 blocked: u.sold && 'Déjà achetée.',
                 buy: () => {
                     this._upgradeSource(u.item).upgrade(u.item.id);
                     u.sold = true;
+                    this.shopUpgradesBought = (this.shopUpgradesBought || 0) + 1;
                     const values = this._upgradeValues(u.item).map(v => `${v.label ? `${v.label} ` : ''}${v.now}`).join(', ');
                     return `${u.item.label} (${WEAPON_TAGS[u.item.for]}) : ${values}.`;
                 }

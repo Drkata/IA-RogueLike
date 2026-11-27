@@ -37,6 +37,7 @@ runLog.start({ touch: true, phone: true });
 runLog.event('cheat');
 runLog.flush();
 assert.equal(bodies.length, 4, 'one chunk per level end, one at death, one for the cheat run');
+assert.equal(JSON.parse(bodies[3]).events[0].lvl, 0, "a new run does not start at the last run's level");
 
 // The collector, on a spare port, writing to a temporary file
 const dir = mkdtempSync(join(tmpdir(), 'runs-'));

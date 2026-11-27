@@ -17,7 +17,9 @@ export const CONSTANTS = {
         ENEMY_HEALTH_MULTIPLIER_POST_10: 0.15, // +15% compounding per level > 10
 
         ENEMY_DAMAGE_BASE: 5,
-        ENEMY_DAMAGE_PER_LEVEL: 1.125,
+        ENEMY_DAMAGE_PER_LEVEL: 1.125, // Up to ENEMY_DAMAGE_LINEAR_UNTIL
+        ENEMY_DAMAGE_LINEAR_UNTIL: 30,
+        ENEMY_DAMAGE_GROWTH_AFTER: 0.03, // Compounding per level past it: a long run ends up stopping
 
         ENEMY_SPEED_BASE: 4.0,
         ENEMY_SPEED_PER_LEVEL: 0.2,

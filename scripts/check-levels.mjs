@@ -87,6 +87,7 @@ for (let seed = 1; seed <= SEEDS; seed++) {
     const [built, levels] = specialsByTen.get(ten) || [0, 0];
     specialsByTen.set(ten, [built + ld.specials.length, levels + 1]);
     if (ld.specials.length > maxSpecialRooms(level)) fail('trop de salles spéciales', seed);
+    if (ld.specials.filter(s => s.kind === 'fountain').length > 1) fail("plus d'une fontaine", seed);
     const overlap = (a, b) => a.x - 1 <= b.x + b.w && b.x - 1 <= a.x + a.w && a.z - 1 <= b.z + b.h && b.z - 1 <= a.z + a.h;
     ld.specials.forEach((s, i) => {
         if (s.floor === 0 && overlap(s.room, ld.safeRoom)) fail('salle spéciale sur la salle de départ', seed);

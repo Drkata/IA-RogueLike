@@ -19,6 +19,9 @@ const MANTLE = 0.6; // m: in the air, crossing onto a ledge with the feet at mos
 const COYOTE_TIME = 0.12; // s after walking off a ledge during which a jump still counts
 const AEGIS_DELAY = 4; // s unhurt before the Aegis pact's shield refills
 const AEGIS_RATE = 10; // Shield points per second
+// Fountains feel the max health pacts at this power of their multiplier: every pact still costs some,
+// but six Cataclysms (×0.26) leave a fountain 58 % of its health, not 26 %
+const FOUNTAIN_PACT_POWER = 0.4;
 
 // Share of a hit's damage that armor lets through, as in League of Legends: 100 armor halves it, no amount stops
 // it all. Below zero (pacts), the damage grows instead: −25 armor, +20 %.
@@ -114,7 +117,7 @@ export class Player {
     // Permanent modifiers granted by altar pacts, and fountains
     resetPacts() {
         this.pactHpMultiplier = 1.0;
-        this.fountainHp = 0; // Flat max health from fountains of youth, after the pact multiplier
+        this.fountainHp = 0; // Max health from fountains of youth, before the pacts (FOUNTAIN_PACT_POWER)
         this.pactSpeedMultiplier = 1.0;
         this.pactArmorBonus = 0; // Armor points
         this.pactVampirism = 0;
@@ -729,7 +732,7 @@ export class Player {
     effectiveValue(stat, level) {
         const v = this.getStatValue(stat, level);
         switch (stat) {
-            case 'maxHealth': return Math.max(25, v * this.pactHpMultiplier + this.fountainHp);
+            case 'maxHealth': return Math.max(25, v * this.pactHpMultiplier + this.fountainHp * this.pactHpMultiplier ** FOUNTAIN_PACT_POWER);
             case 'armor': return v + this.pactArmorBonus;
             case 'vampirism': return v + this.pactVampirism * 100;
             case 'regen': return v + this.healthRegen;

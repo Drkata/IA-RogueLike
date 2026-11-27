@@ -4,6 +4,14 @@ import { CONSTANTS } from '../core/Constants.js';
 import { soundManager } from '../systems/SoundManager.js';
 import { STEP_HEIGHT, MAX_DROP } from '../systems/Pathfinder.js';
 
+// Damage of `base + perLevel × level` up to ENEMY_DAMAGE_LINEAR_UNTIL, then that value +3 % a level, compounded:
+// the enemies' shots and the boss's moves
+export const lateDamage = (level, base, perLevel) => {
+    const D = CONSTANTS.DIFFICULTY;
+    const linear = Math.min(level, D.ENEMY_DAMAGE_LINEAR_UNTIL);
+    return (base + linear * perLevel) * (1 + D.ENEMY_DAMAGE_GROWTH_AFTER) ** (level - linear);
+};
+
 /*
  * Enemy behaviour: come within shooting distance of the player and shoot.
  *   - The way comes from Pathfinder.findPath: walk legs pulled tight, joined by jumps. The enemy
@@ -46,7 +54,7 @@ export class EnemyAI {
     // Scaling of a regular enemy at a given level (also shown in the level threat panel)
     static getCombatStats(level) {
         const D = CONSTANTS.DIFFICULTY;
-        const damage = D.ENEMY_DAMAGE_BASE + level * D.ENEMY_DAMAGE_PER_LEVEL;
+        const damage = lateDamage(level, D.ENEMY_DAMAGE_BASE, D.ENEMY_DAMAGE_PER_LEVEL);
         return {
             speed: Math.min(D.ENEMY_SPEED_CAP, D.ENEMY_SPEED_BASE + level * D.ENEMY_SPEED_PER_LEVEL),
             damage,

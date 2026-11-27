@@ -44,16 +44,17 @@ const MIN_FLOOR1_ISLAND = 4; // Smaller wall-top islands get no ramp (nothing sp
 // the larger size their attacks are tuned for (meteors land up to 40 m from the boss).
 export const mapSizeForLevel = (level) => Math.min(95, (level % 10 === 0 ? 55 : 34) + Math.floor(level * 1.3));
 
-// Special rooms (treasure or event) per level: 2 on levels 1-10, 3 on 11-20, +1 every 10 levels
-export const maxSpecialRooms = (level) => 2 + Math.floor((level - 1) / 10);
+// Special rooms (treasure or event) per level: 2 on levels 1-10, 3 on 11-20, 4 from 21 (more snowballed the rewards)
+export const maxSpecialRooms = (level) => Math.min(4, 2 + Math.floor((level - 1) / 10));
 
-// Event content, 40% altar, 40% shop, 20% fountain, never twice in a level while another is left
+// Event content, 40% altar, 40% shop, 20% fountain, never twice in a level while another is left, one fountain at most
 const EVENT_KINDS = ['altar', 'shop', 'fountain'];
 const pickEventKind = (used) => {
     const left = EVENT_KINDS.filter(k => !used.has(k));
     for (;;) {
         const r = Math.random();
         const kind = r < 0.4 ? 'altar' : (r < 0.8 ? 'shop' : 'fountain');
+        if (kind === 'fountain' && used.has('fountain')) continue;
         if (!left.length || left.includes(kind)) return kind;
     }
 };

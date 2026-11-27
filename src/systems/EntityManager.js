@@ -9,7 +9,8 @@ import { EnemyHealthSystem } from '../entities/EnemyHealth.js';
 const SHOCKWAVE_RANGE = 19.5; // m
 const SHOCKWAVE_DAMAGE = 50;
 // shortcut: copies beyond this many in one batch are not drawn; raise it if a batch ever fills up
-const BATCH_CAPACITY = 1024;
+// (the boss's high waves and double spiral reach about 1700 shots in one batch)
+const BATCH_CAPACITY = 2048;
 const _batchColor = new THREE.Color();
 
 // Every copy of one part (geometry + material) shown by many entities, drawn in a single call
@@ -177,7 +178,11 @@ export class EntityManager {
             const data = tele.userData;
             data.life -= dt;
 
-            if (data.life > 0) {
+            if (data.life > 0 && data.burning) {
+                const left = data.life / data.maxLife;
+                data.fill.material.opacity = (0.3 + 0.12 * Math.sin(data.life * 17)) * Math.min(1, left * 3); // Flickers, dies down at the end
+                data.ring.material.opacity = 0.5 * Math.min(1, left * 3);
+            } else if (data.life > 0) {
                 const progress = 1 - data.life / data.maxLife;
                 data.fill.scale.setScalar(Math.max(0.01, data.radius * progress));
                 data.fill.material.opacity = 0.15 + 0.35 * progress;
@@ -339,8 +344,9 @@ export class EntityManager {
     }
 
     // Danger zone on the ground: a circle of `radius` m (the real reach of the hit) whose disc fills
-    // up over `duration` seconds, with a thin beam to spot it from afar
-    createTelegraph(position, duration, radius = 2.5, color = PALETTE.ember) {
+    // up over `duration` seconds, with a thin beam to spot it from afar. `burning`: a full disc that
+    // flickers for `duration` seconds instead (ground on fire), no beam.
+    createTelegraph(position, duration, radius = 2.5, color = PALETTE.ember, burning = false) {
         let tele = this._telegraphPool.pop(); // Pooled: no new material per meteor
         if (!tele) {
             const material = (opacity) => new THREE.MeshBasicMaterial({ transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide });
@@ -354,7 +360,9 @@ export class EntityManager {
         const data = tele.userData;
         for (const part of [data.ring, data.fill, data.beacon]) part.material.color.setHex(color);
         data.ring.scale.setScalar(radius);
-        data.fill.scale.setScalar(0.01);
+        data.fill.scale.setScalar(burning ? radius : 0.01);
+        data.beacon.visible = !burning;
+        data.burning = burning;
         data.radius = radius;
         data.life = data.maxLife = duration;
         tele.position.set(position.x, position.y + 0.06, position.z);

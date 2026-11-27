@@ -21,6 +21,11 @@ const { LevelManager } = await import('../src/systems/LevelManager.js');
 const { Pathfinder } = await import('../src/systems/Pathfinder.js');
 const { Enemy } = await import('../src/entities/Enemy.js');
 const { CONSTANTS } = await import('../src/core/Constants.js');
+const { EnemyAI } = await import('../src/entities/EnemyAI.js');
+
+// Shot damage: +1.125 a level up to level 30, then +3 % a level compounded
+const shot = (level) => EnemyAI.getCombatStats(level).damage;
+if (shot(30) !== 38.75 || shot(20) !== 27.5 || Math.abs(shot(60) - 38.75 * 1.03 ** 30) > 1e-9) throw new Error(`enemy damage curve: ${shot(20)}, ${shot(30)}, ${shot(60)}`);
 const C = CONSTANTS.CELL_SIZE;
 
 const LEVELS = Number(process.argv[2]) || 30;

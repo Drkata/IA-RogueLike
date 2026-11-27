@@ -26,6 +26,7 @@ class RunLog {
         this.id = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
         this.t0 = performance.now();
         this.seq = 0;
+        this.level = 0; // Not the previous run's last level
         this.tally = null;
         this.event('run', { v: VERSION, ...info });
     }

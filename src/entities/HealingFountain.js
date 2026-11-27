@@ -94,11 +94,12 @@ export class HealingFountain {
 
     use(player) {
         this.isUsed = true;
+        const before = player.maxHealth;
         player.fountainHp += this.maxHealthBonus;
         runLog.event('fountain');
         player.recalculateStats(); // Like a max health upgrade, the new capacity comes filled
         soundManager.play('fountain');
-        player.hudManager.showMessage(`Fontaine de jouvence : +${this.maxHealthBonus} PV max`);
+        player.hudManager.showMessage(`Fontaine de jouvence : +${Math.round(player.maxHealth - before)} PV max`); // Less after max health pacts
         this.curtain.visible = false; // The water stops, the pools go murky
         this.shrine.goOut();
     }
