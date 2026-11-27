@@ -7,6 +7,7 @@ import { ThemeManager } from './themes/ThemeManager.js';
 import { Pathfinder } from './Pathfinder.js';
 import { SkyColliders } from './SkyColliders.js';
 import { SHRINE_COLORS } from '../core/Palette.js';
+import { weather } from './Weathering.js';
 
 const H = CONSTANTS.WALL_HEIGHT;
 const FLOOR_TILE = 4; // Metres covered by one floor texture tile
@@ -19,8 +20,7 @@ class ThemeKit {
         this.theme = theme;
         this.materials = [];
         const biome = theme.biome;
-        const surface = (canvases, options = {}) => {
-            const { map, bumpMap, emissiveMap } = TextureGenerator.toTextures(canvases);
+        const surface = ({ map, bumpMap, emissiveMap }, options = {}) => {
             return this._keep(new THREE.MeshStandardMaterial({
                 map,
                 bumpMap,
@@ -34,7 +34,12 @@ class ThemeKit {
             }));
         };
 
-        this.walls = [0, 1, 2].map(v => surface(TextureGenerator.wallSurface(biome, v)));
+        // The ground: the floor tile and the biome's second ground, laid by Weathering.js on the floor and on every
+        // walkable top (wall tops, ramps)
+        const floor = TextureGenerator.toTextures(TextureGenerator.floorSurface(biome));
+        const alt = TextureGenerator.toTextures(TextureGenerator.floorAltSurface(biome));
+        const ground = { ...floor, altMap: alt.map, altBump: alt.bumpMap };
+        this.walls = [0, 1, 2].map(v => weather(surface(TextureGenerator.toTextures(TextureGenerator.wallSurface(biome, v))), biome, ground));
         // Special rooms: the biome's stone with a rune frieze, and a floor sigil, in the colour of their content
         const sanctum = TextureGenerator.toTextures(TextureGenerator.sanctumWallSurface(biome));
         this.sanctumWalls = {};
@@ -62,7 +67,7 @@ class ThemeKit {
         });
 
         // The floor tile is shared with the island caps; only the floor gets the per-level aoMap
-        this.floor = surface(TextureGenerator.floorSurface(biome), { roughness: 0.95 });
+        this.floor = weather(surface(floor, { roughness: 0.95 }), biome, ground, true);
         this.islandCap = this._keep(new THREE.MeshStandardMaterial({
             map: this.floor.map,
             bumpMap: this.floor.bumpMap,
@@ -91,7 +96,7 @@ class ThemeKit {
     dispose() {
         const textures = new Set();
         for (const m of this.materials) {
-            for (const t of [m.map, m.bumpMap, m.emissiveMap]) if (t) textures.add(t);
+            for (const t of [m.map, m.bumpMap, m.emissiveMap, ...(m.userData.weatherMaps || [])]) if (t) textures.add(t);
             m.dispose();
         }
         textures.forEach(t => t.dispose());

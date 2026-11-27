@@ -506,6 +506,104 @@ const FLOORS = {
     }
 };
 
+// ─── Second floors: each biome's other ground, laid in large patches over the first (Weathering.js) ──
+
+const FLOOR_ALTS = {
+    // Ruined flagstones sinking into the earth, moss in the joints and over the broken slabs
+    forest(rng) {
+        const size = FLOOR_SIZE;
+        const m = masonry(size, rng, 4, 0.8, 1.5);
+        const grain = fbm(size, rng, 48, 3);
+        const mossNoise = fbm(size, rng, 6, 5);
+        const stones = [rgb(0x50544b), rgb(0x61645a), rgb(0x737366)];
+        const earth = rgb(0x3a2c1f);
+        const mossDark = rgb(0x2c4520);
+        const mossLight = rgb(0x5f8a33);
+        const stone = [0, 0, 0];
+        const moss = [0, 0, 0];
+        return paintSurface(size, false, (x, y, i, px) => {
+            const e = m.edge[i];
+            const r = m.blockRand[m.block[i]];
+            const gone = r > 0.82; // A missing slab: bare earth
+            const bevel = smoothstep(1.5, 7, e);
+            rampInto(stone, stones[0], stones[1], stones[2], r / 0.82);
+            scaleInto(stone, (0.75 + 0.25 * bevel) * (0.82 + 0.3 * grain[i]));
+            const joint = e < 3 || gone;
+            if (joint) mixInto(stone, earth, stone, 0.2 * grain[i]);
+            const mossAmt = smoothstep(0.5, 0.68, mossNoise[i] * 0.85 + (joint ? 0.22 : 0));
+            mixInto(px.color, stone, mixInto(moss, mossDark, mossLight, grain[i]), mossAmt);
+            px.height = (joint ? 0.2 : 0.5 + 0.3 * bevel + 0.12 * grain[i]) + mossAmt * 0.15;
+        });
+    },
+
+    // Wide worn flagstones, cracked here and there
+    city(rng) {
+        const size = FLOOR_SIZE;
+        const m = masonry(size, rng, 3, 1.0, 1.9);
+        const grain = fbm(size, rng, 48, 3);
+        const wear = fbm(size, rng, 5, 4);
+        const crack = ridged(fbm(size, rng, 5, 5, 0.55));
+        const stones = [rgb(0x645d53), rgb(0x786f62), rgb(0x8a8070)];
+        const mortar = rgb(0x2e2822);
+        const stone = [0, 0, 0];
+        return paintSurface(size, false, (x, y, i, px) => {
+            const e = m.edge[i];
+            const bevel = smoothstep(1, 5, e);
+            rampInto(stone, stones[0], stones[1], stones[2], m.blockRand[m.block[i]]);
+            const cracked = smoothstep(0.97, 0.99, crack[i]) * smoothstep(0.4, 0.6, wear[i]);
+            scaleInto(stone, (0.8 + 0.2 * bevel) * (0.86 + 0.2 * grain[i]) * (1 - 0.18 * smoothstep(0.5, 0.85, wear[i])) * (1 - 0.5 * cracked));
+            if (e < 2) mixInto(px.color, mortar, stone, 0.15);
+            else copyInto(px.color, stone);
+            px.height = e < 2 ? 0.12 : 0.5 + 0.25 * bevel + 0.1 * grain[i] - cracked * 0.3;
+        });
+    },
+
+    // Silt with rounded pebbles and damp patches
+    cave(rng) {
+        const size = FLOOR_SIZE;
+        const big = fbm(size, rng, 5, 5);
+        const grain = fbm(size, rng, 64, 2);
+        const stones = voronoi(size, rng, 22, 0.9);
+        const siltA = rgb(0x3b3943);
+        const siltB = rgb(0x5d5966);
+        const pebbleA = rgb(0x4e4c58);
+        const pebbleB = rgb(0x6a6776);
+        const silt = [0, 0, 0];
+        const pebble = [0, 0, 0];
+        return paintSurface(size, false, (x, y, i, px) => {
+            mixInto(silt, siltA, siltB, grain[i] * 0.5 + big[i] * 0.5);
+            const id = stones.id[i];
+            const dome = hash(id + 5) < 0.18 ? smoothstep(0.22 + 0.2 * hash(id + 7), 0.1, stones.f1[i]) : 0; // Few, of all sizes
+            mixInto(pebble, pebbleA, pebbleB, hash(id + 11));
+            mixInto(px.color, silt, pebble, smoothstep(0, 0.15, dome));
+            scaleInto(px.color, 1 - 0.2 * smoothstep(0.6, 0.8, big[i]));
+            px.height = 0.35 + 0.15 * grain[i] + 0.1 * big[i] + dome * 0.5;
+        });
+    },
+
+    // Ash and cinders, pale drifts, the odd lump still red
+    hell(rng) {
+        const size = FLOOR_SIZE;
+        const big = fbm(size, rng, 4, 5);
+        const grain = fbm(size, rng, 64, 2);
+        const cinders = voronoi(size, rng, 26, 0.9);
+        const ashA = rgb(0x302a27);
+        const ashB = rgb(0x585049);
+        const ashPale = rgb(0x6e6660);
+        const cinder = rgb(0x1e1714);
+        const ember = rgb(0x8a3418);
+        const ash = [0, 0, 0];
+        return paintSurface(size, false, (x, y, i, px) => {
+            mixInto(ash, ashA, ashB, big[i] * 0.6 + grain[i] * 0.4);
+            mixInto(ash, ash, ashPale, smoothstep(0.62, 0.8, big[i]) * 0.6);
+            const id = cinders.id[i];
+            const lump = hash(id) < 0.3 ? smoothstep(0.35, 0.2, cinders.f1[i]) : 0;
+            mixInto(px.color, ash, hash(id + 9) < 0.08 ? ember : cinder, lump);
+            px.height = 0.3 + 0.2 * big[i] + 0.1 * grain[i] + lump * 0.4;
+        });
+    }
+};
+
 // ─── Special rooms ───────────────────────────────────────────────────────────
 
 // Magic circle, used for the floor sigils of special rooms
@@ -658,6 +756,26 @@ export class TextureGenerator {
 
     static floorSurface(biome) {
         return (FLOORS[biome] || FLOORS.city)(seededRandom(2000 + biome.length * 31));
+    }
+
+    static floorAltSurface(biome) {
+        return (FLOOR_ALTS[biome] || FLOOR_ALTS.city)(seededRandom(3000 + biome.length * 31));
+    }
+
+    // Weathering noise (Weathering.js), tileable, linear: R tone, G weathered patches, B second floor patches
+    static weatherCanvas() {
+        const size = 256;
+        const rng = seededRandom(4242);
+        const channels = [fbm(size, rng, 3, 5), fbm(size, rng, 4, 5), fbm(size, rng, 3, 4)];
+        const canvas = createCanvas(size);
+        const ctx = canvas.getContext('2d');
+        const image = ctx.createImageData(size, size);
+        for (let i = 0; i < size * size; i++) {
+            for (let c = 0; c < 3; c++) image.data[i * 4 + c] = channels[c][i] * 255;
+            image.data[i * 4 + 3] = 255;
+        }
+        ctx.putImageData(image, 0, 0);
+        return canvas;
     }
 
     // Special room walls: the biome's stone with a carved frieze of runes, 2.1 to 2.5 m high. The glow

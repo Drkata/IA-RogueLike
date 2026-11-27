@@ -119,14 +119,20 @@ Tout est dans `src/systems/TextureGenerator.js`, peint pixel par pixel à partir
   - `glow`, la carte d'émission, optionnelle : noir partout sauf ce qui brille.
 - **Échelles** :
   - mur : 512 px pour une face de 2 m ;
-  - sol : une tuile de 512 px pour 4 m, répétée ;
+  - sol : une tuile de 512 px pour 4 m, posée en coordonnées monde ; de même pour le second sol de chaque biome (`floorAltSurface`) ;
   - ciel : 2048 × 1024 en équirectangulaire, horizon à la ligne du milieu, zénith en haut.
 - **Tileable obligatoire.** Les blocs de base le sont (`fbm`, `ridged`, `voronoi`, `masonry`). Tout ce qui est dessiné par-dessus passe par `drawWrapped`.
 - **Seedé obligatoire** : `seededRandom(seed)`, jamais `Math.random` dans un générateur de texture.
 - **Albédo moyen entre 0,20 et 0,50**, mesuré par `npm run preview:visuals`. Un biome sombre s'obtient par la couleur de ses matériaux, **pas en baissant la lumière** : l'exposition reste la même partout, pour que les ennemis et les objets gardent le même rendu.
 - **Conversion** : toujours `TextureGenerator.toTexture()` ou `toTextures()`, qui posent l'espace colorimétrique, la répétition et l'anisotropie. Une `CanvasTexture` couleur sans `colorSpace = SRGBColorSpace` paraît délavée.
-- **Matériaux** : `LevelManager` construit un `ThemeKit` par thème, avec 3 variantes de mur, le mur à frise des salles spéciales (une texture, un matériau par couleur de contenu), le sol, le ciel, les 4 sceaux et les détails des îles. Il est réutilisé par tous les niveaux du thème : la génération (de l'ordre de la seconde mesurée en Node) n'a lieu qu'au changement de thème. Réglages : `roughness` 0,9 (murs) et 0,95 (sol), `metalness` 0, `bumpScale` 1, `emissiveIntensity` 1,5 (murs) et 1,4 (frise).
-- **Sol** : sa tuile est répétée par les UV, et une **carte d'ombres de contact** (`floorShadowCanvas`, utilisée comme `aoMap`) assombrit le pied des murs. Les sceaux des salles spéciales sont des décalques posés par-dessus.
+- **Matériaux** : `LevelManager` construit un `ThemeKit` par thème, avec 3 variantes de mur, le mur à frise des salles spéciales (une texture, un matériau par couleur de contenu), le sol et le second sol, le ciel, les 4 sceaux et les détails des îles. Il est réutilisé par tous les niveaux du thème : la génération (de l'ordre de la seconde mesurée en Node) n'a lieu qu'au changement de thème. Réglages : `roughness` 0,9 (murs) et 0,95 (sol), `metalness` 0, `bumpScale` 1, `emissiveIntensity` 1,5 (murs) et 1,4 (frise).
+- **Sol** : une **carte d'ombres de contact** (`floorShadowCanvas`, utilisée comme `aoMap`) assombrit le pied des murs. Les sceaux des salles spéciales sont des décalques posés par-dessus.
+- **Anti-répétition** (`src/systems/Weathering.js`, un patch de shader des murs, rampes et sol, sans draw call de plus) :
+  - **tout dessus praticable montre le sol du biome** : le sol, le dessus des murs (les plateaux), les rampes. Les faces verticales gardent leur maçonnerie ;
+  - le sol casse sa propre répétition avec une copie de lui-même tournée d'un quart, par plaques de quelques mètres, et reçoit le **second sol** du biome par plaques d'une dizaine de mètres, posé à un autre angle et une autre échelle : dalles en ruine (forêt), grandes dalles (ville), limon et galets (grotte), cendre et scories (enfer). Les plaques se fondent par le relief (la surface la plus haute l'emporte) : une dalle ou un galet reste entier. Le second sol n'a pas de lueur, et la lave ou les cristaux du premier ne passent pas à travers ;
+  - chaque mur est affiché en miroir ou non selon sa position (deux fois plus de variantes), et une crasse fonce le pied des murs du rez-de-chaussée ;
+  - partout, un ton (±16 %) et une patine propre au biome (mousse, suie, efflorescence minérale, calcination ; `TINTS`) dérivent sur des dizaines de mètres, à partir d'un bruit de 256 px (`weatherCanvas`, canaux R ton, G patine, B plaques du second sol) ;
+  - les textures lues dans une branche du shader passent leurs gradients (`textureGrad`) : sinon les mipmaps scintillent au bord des plaques.
 
 ## 7. Lumière
 

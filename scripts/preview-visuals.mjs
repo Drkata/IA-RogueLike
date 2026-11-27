@@ -94,8 +94,9 @@ for (const theme of new ThemeManager().themes) {
     const { biome, lighting } = theme;
     const walls = [0, 1, 2].map(v => T.wallSurface(biome, v));
     const floor = T.floorSurface(biome);
-    sheet(`${biome}.png`, `${biome} — mur 2×2 | mur éclairé | variante 2×2 | sol 2×2 | sol éclairé | glow ou relief`,
-        [tiled(walls[0].albedo), lit(walls[0]), tiled(walls[1].albedo), tiled(floor.albedo), lit(floor), floor.glow || walls[0].glow || walls[0].height]);
+    const alt = T.floorAltSurface(biome);
+    sheet(`${biome}.png`, `${biome} — mur 2×2 | mur éclairé | variante 2×2 | sol 2×2 | sol éclairé | glow ou relief | second sol 2×2 | second sol éclairé`,
+        [tiled(walls[0].albedo), lit(walls[0]), tiled(walls[1].albedo), tiled(floor.albedo), lit(floor), floor.glow || walls[0].glow || walls[0].height, tiled(alt.albedo), lit(alt)]);
     const sky = T.skyCanvas(biome);
     const small = createCanvas(1024, 512);
     small.getContext('2d').drawImage(sky, 0, 0, 1024, 512);
