@@ -39,14 +39,14 @@ const origin = new THREE.Vector3(0, 1.6, 0);
 const foe = (x, z, radius = 0.5) => ({ position: new THREE.Vector3(x, 1, z), radius });
 
 // Stats and upgrades
-assert.equal(sword.damage, 5);
+assert.equal(sword.damage, 7);
 assert.ok(Math.abs(1 / sword.strikeRate - 0.8) < 1e-9, 'a strike every 0.8 s to start with');
 assert.equal(sword.reach, 3);
 for (const stat of ['meleeDamage', 'attackSpeed', 'reach']) {
   for (let i = 0; i < 10; i++) assert.ok(sword.upgrade(stat));
   assert.ok(!sword.upgrade(stat), `${stat} past its max level`);
 }
-assert.equal(sword.damage, 95);
+assert.equal(sword.damage, 7 + 10 * 7.65);
 assert.equal(sword.reach, 6);
 sword.reset();
 assert.equal(sword.getTotalLevel(), 0);
@@ -186,11 +186,11 @@ player.weapon.currentAmmo = 0;
 player.sword.waves = 1;
 player.heal = function (n) { this.health += n; };
 player.handleSwing();
-assert.equal(a.hp, 995);
-assert.equal(b.hp, 995);
+assert.equal(a.hp, 993);
+assert.equal(b.hp, 993);
 assert.equal(behind.hp, 1000);
 assert.equal(far.hp, 1000);
-assert.equal(player.health, 50 + 2 * 5 * 0.2, 'life steal on both hits');
+assert.equal(player.health, 50 + 2 * 7 * 0.2, 'life steal on both hits');
 assert.equal(player.weapon.currentAmmo, 10, '5 mana per enemy struck');
 assert.equal(added.length, 1, 'one blade wave');
 assert.ok(added[0].isPlayerProjectile && added[0].maxDistance === 8 && added[0].piercing === Infinity && added[0].size > 0);
@@ -206,8 +206,8 @@ player.sword.update(5, 0);
 player.health = 10;
 const furyHp = a.hp;
 player.handleSwing();
-assert.equal(player.health, 10 + 2 * 5 * (0.2 + 0.75), 'fury life steal on both hits');
-assert.equal(a.hp, furyHp - 5);
+assert.equal(player.health, 10 + 2 * 7 * (0.2 + 0.75), 'fury life steal on both hits');
+assert.equal(a.hp, furyHp - 7);
 player._setFury(false); // What the end of the fury (Player.update) and a new run (resetBuffs) call
 assert.ok(player.sword.furyMultiplier === 1 && player.sword.furyLifeSteal === 0 && !player.weapon.infiniteAmmo);
 

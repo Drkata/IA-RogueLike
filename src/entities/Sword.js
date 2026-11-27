@@ -126,7 +126,7 @@ export class Sword {
     // Value of a stat at an upgrade level, before pacts (effectiveValue adds them)
     getStatValue(stat, level) {
         switch (stat) {
-            case 'meleeDamage': return 5 + level * 9; // Per enemy struck
+            case 'meleeDamage': return 7 + level * 7.65; // Per enemy struck (a level gave 9 before the 15 % cut)
             case 'attackSpeed': return 1.25 * (1 + level * 0.1); // Strikes per second
             case 'reach': return 3 * (1 + level * 0.1); // Metres
             default: return 0;
