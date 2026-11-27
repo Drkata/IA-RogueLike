@@ -56,7 +56,7 @@ Couleurs hors palette autorisées, et seulement là :
   - chiffres tabulaires ;
   - formatage par `src/ui/format.js`, avec espace fine insécable avant les unités et la virgule décimale.
 - **HUD** :
-  - en haut à gauche, le miroir (minimap ronde) et la chronique (niveau, ennemis, or) ;
+  - en haut à gauche, le miroir (minimap ronde, `Minimap.js`) et la chronique (niveau, ennemis, or). Le miroir est la carte des hauteurs du niveau, qui tourne autour du joueur : plus un sol est haut, plus il est clair (de l'encre vers le vélin, retenu pour que le plateau à 6 m n'éblouisse pas), et une ombre borde chaque dénivelé qu'on ne remonte pas en marchant (`PLAYER_CLIMB`). Il montre de 28 cases de rayon sur une petite carte à 44 sur une grande. Ennemis en braise, joueur en flèche d'éther ;
   - en bas à gauche, la vie ; en bas à droite, le mana, et au-dessus les deux armes (celle en main allumée, touches 1 et 2) ;
   - en bas au centre, le registre des statistiques, masqué sous 1 260 px de large ;
   - au centre, les messages et le compte à rebours ;

@@ -19,7 +19,7 @@ export function cellTopHeight(type, typeFloor1 = 0, typeFloor2 = 0) {
 }
 
 // Highest step (between cell tops) the player can take without a precise jump (jump apex is ~2.4m)
-const PLAYER_CLIMB = 1.6;
+export const PLAYER_CLIMB = 1.6;
 
 // Ramp slopes. `out` = unit step from the ramp's top exit towards the floor below it,
 // `along` = axis of the ramp's width. The low cell holds `type`, the high cell `type + 4`.
