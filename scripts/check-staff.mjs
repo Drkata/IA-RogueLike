@@ -49,6 +49,13 @@ STAFF_TIERS.forEach((tier, i) => {
 });
 weapon.reset();
 assert.equal(weapon.tier, 0);
+// Only the staff's own upgrades change its model: the crits, shared with the sword, do not
+for (let i = 0; i < 10; i++) weapon.upgrade('critChance');
+assert.equal(weapon.tier, 0, 'shared crits evolved the staff');
+for (let i = 0; i < STAFF_TIERS[1].from; i++) weapon.upgrade(i % 2 ? 'damage' : 'fireRate');
+assert.equal(weapon.tier, 1);
+weapon.reset();
+assert.equal(weapon.tier, 0);
 
 // Animations: 60 fps for a while in each situation; the pose stays finite
 const dt = 1 / 60;

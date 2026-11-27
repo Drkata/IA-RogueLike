@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { PALETTE } from '../core/Palette.js';
 import { TextureGenerator } from '../systems/TextureGenerator.js';
 
-// The player's staff: one design per tier of weapon upgrades (Weapon.getTotalLevel). Built in the
+// The player's staff: one design per tier of its own upgrades (Weapon.modelLevel). Built in the
 // pose group's frame: the staff points down -z, from the grip (z ≈ 0) to the crystal at HEAD_Z.
 export const HEAD_Z = -0.6;
 const COLLAR_Z = -0.5;
@@ -57,7 +57,7 @@ class Helix extends THREE.Curve {
 }
 
 // Tube through `points` ([x, y, z]) whose radius shrinks from r0 to r1: claws, horns
-function taperedTube(points, r0, r1, segments = 12, sides = 5) {
+export function taperedTube(points, r0, r1, segments = 12, sides = 5) {
     const curve = new THREE.CatmullRomCurve3(points.map(p => new THREE.Vector3(...p)));
     const g = new THREE.TubeGeometry(curve, segments, 1, sides, false);
     const pos = g.attributes.position;
@@ -78,7 +78,7 @@ function taperedTube(points, r0, r1, segments = 12, sides = 5) {
 // A primitive built along +y, laid along the staff (+y → -z) and centred at z
 const alongStaff = (g, z) => g.rotateX(-Math.PI / 2).translate(0, 0, z);
 // `count` copies of a part, spread evenly around the staff axis
-const around = (count, make, offset = 0) => Array.from({ length: count }, (_, i) => make().rotateZ(offset + i * Math.PI * 2 / count));
+export const around = (count, make, offset = 0) => Array.from({ length: count }, (_, i) => make().rotateZ(offset + i * Math.PI * 2 / count));
 
 function shaft() {
     const g = new THREE.CylinderGeometry(0.02, 0.016, BUTT_Z - COLLAR_Z, 7, 18, true);
@@ -107,16 +107,16 @@ function claw(kind) {
 // One horn of the crescent: from the collar's side (s = ±1) round the crystal, the tip rising above it
 const horn = (s) => taperedTube([[s * 0.02, 0, -0.49], [s * 0.07, 0.005, -0.53], [s * 0.1, 0.035, -0.6], [s * 0.092, 0.08, -0.65], [s * 0.08, 0.115, -0.67], [s * 0.088, 0.15, -0.68]], 0.014, 0.0015, 16, 6);
 
-const crystal = (size, length) => new THREE.OctahedronGeometry(size).scale(1, 1, length);
+export const crystal = (size, length) => new THREE.OctahedronGeometry(size).scale(1, 1, length);
 
 // Ring of runes: a thin torus studded with small cubes
-function runeRing(radius) {
+export function runeRing(radius) {
     const studs = around(8, () => new THREE.BoxGeometry(0.009, 0.009, 0.009).translate(radius, 0, 0));
     return [new THREE.TorusGeometry(radius, 0.0035, 5, 48), ...studs];
 }
 
 // Sun halo: a ring with rays of alternating length
-function halo(radius) {
+export function halo(radius) {
     const rays = Array.from({ length: 12 }, (_, i) => {
         const length = i % 2 ? 0.018 : 0.032;
         return new THREE.ConeGeometry(0.006, length, 4).translate(0, radius + length / 2, 0).rotateZ(i * Math.PI / 6);
@@ -124,7 +124,7 @@ function halo(radius) {
     return [new THREE.TorusGeometry(radius, 0.0035, 5, 56), ...rays];
 }
 
-function merge(geometries) {
+export function merge(geometries) {
     const parts = geometries.map(g => {
         const flat = g.index ? g.toNonIndexed() : g;
         flat.deleteAttribute('uv');
@@ -136,7 +136,7 @@ function merge(geometries) {
     return merged;
 }
 
-const material = (color, roughness, metalness = 0, glow = 0) => new THREE.MeshStandardMaterial({
+export const material = (color, roughness, metalness = 0, glow = 0) => new THREE.MeshStandardMaterial({
     color, roughness, metalness, emissive: glow ? color : 0x000000, emissiveIntensity: glow
 });
 

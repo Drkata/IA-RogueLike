@@ -26,6 +26,7 @@ soundManager.play = (name) => {
 };
 soundManager.stop = (name) => assert.ok(name in SFX, `unknown sound ${name}`);
 const { Sword, PARRY_WINDOW, PARRY_REARM, GUARD_DAMAGE, RIPOSTE } = await import('../src/entities/Sword.js');
+const { SWORD_TIERS, swordTier } = await import('../src/entities/SwordMesh.js');
 const { Weapon, CHARGE_TIME } = await import('../src/entities/Weapon.js');
 const { Player } = await import('../src/entities/Player.js');
 
@@ -119,13 +120,34 @@ sword.reset();
 sword.holster = 1;
 sword.update(dt, 0);
 assert.ok(!sword.model.visible && sword.pose.position.y < -0.6);
-let draws = 0;
-sword.mesh.traverse(o => {
-  if (!o.isMesh && !o.isSprite) return;
-  draws++;
-  assert.notEqual(o.onBeforeRender, THREE.Object3D.prototype.onBeforeRender, 'sword part drawn without its depth range');
+// Every tier, reached by the sword's own upgrades: its own design, a small draw-call budget, in front of the world.
+// Reach lengthens the blade, damage broadens it; a new model stays hidden while put away.
+const bladeSize = () => new THREE.Box3().setFromObject(sword.model.children.find(o => o.isMesh)).getSize(new THREE.Vector3()); // Steel: the first mesh
+const plain = bladeSize();
+const order = ['reach', 'meleeDamage', 'attackSpeed'];
+let picks = 0;
+SWORD_TIERS.forEach((tier, i) => {
+  assert.equal(swordTier(tier.from), i);
+  if (i) assert.equal(swordTier(tier.from - 1), i - 1);
+  while (sword.getTotalLevel() < tier.from) assert.ok(sword.upgrade(order[picks++ % 3]));
+  assert.equal(sword.tier, i);
+  assert.ok(!sword.model.visible, 'new model shown while put away');
+  let draws = 0;
+  sword.mesh.traverse(o => {
+    if (!o.isMesh && !o.isSprite) return;
+    draws++;
+    assert.notEqual(o.onBeforeRender, THREE.Object3D.prototype.onBeforeRender, 'sword part drawn without its depth range');
+    if (o.isMesh) assert.ok(o.geometry.attributes.position.count > 0);
+  });
+  assert.ok(draws <= 8, `tier ${i}: ${draws} draw calls`); // Slash crescent included
+  assert.equal(sword.pose.children.length, 1, 'old sword left behind');
+  sword.update(dt, 0);
+  for (const sp of sword.spinners) assert.ok(Number.isFinite(sp.rotation.z));
 });
-assert.ok(draws <= 7, `${draws} draw calls`);
+const grown = bladeSize();
+assert.ok(grown.z > plain.z * 1.2 && grown.x > plain.x * 1.2, 'reach and damage reshape the blade');
+sword.reset();
+assert.equal(sword.tier, 0);
 
 // ─── Player rules, on a stand-in player with the real methods ───
 const added = [];

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BLADE_MID_Z, buildSlash, buildSword } from './SwordMesh.js';
+import { buildSlash, buildSword, swordTier } from './SwordMesh.js';
 import { HandMotion, MOTION } from './HandMotion.js';
 
 // The sword: left click strikes every enemy in an arc before the player, right click holds a guard.
@@ -33,11 +33,7 @@ export class Sword {
         camera.add(this.mesh);
         this.pose = new THREE.Group();
         this.mesh.add(this.pose);
-        const { group, glow, rune } = buildSword();
-        this.model = group;
-        this.glow = glow;
-        this.rune = rune;
-        this.pose.add(group);
+        this.rebuildModel();
         this.slash = buildSlash();
         this.slash.position.set(0, -0.55, -0.9);
         this.mesh.add(this.slash);
@@ -85,6 +81,7 @@ export class Sword {
         this.resetPacts();
         this.recalculateStats();
         this.resetState();
+        this.rebuildModel();
     }
 
     getMaxLevel() {
@@ -99,7 +96,31 @@ export class Sword {
         if (!(this.stats[stat] < this.getMaxLevel(stat))) return false;
         this.stats[stat]++;
         this.recalculateStats();
+        this.rebuildModel();
         return true;
+    }
+
+    // Swaps in the model of the sword's upgrades (SwordMesh.js): the tier of their total, the blade as long as
+    // the reach level and as broad as the damage level make it
+    rebuildModel() {
+        const { meleeDamage, reach } = this.stats;
+        const tier = swordTier(this.getTotalLevel());
+        const key = `${tier}/${reach}/${meleeDamage}`;
+        if (key === this.modelKey) return;
+        this.modelKey = key;
+        const shown = this.model ? this.model.visible : false; // Kept until animate runs: the upgrade menu pauses it
+        if (this.model) {
+            this.model.traverse(obj => {
+                obj.geometry?.dispose();
+                obj.material?.dispose();
+            });
+            this.pose.remove(this.model);
+        }
+        this.tier = tier;
+        const { group, glow, rune, spinners } = buildSword(tier, reach, meleeDamage);
+        group.visible = shown;
+        Object.assign(this, { model: group, glow, rune, spinners });
+        this.pose.add(group);
     }
 
     // Value of a stat at an upgrade level, before pacts (effectiveValue adds them)
@@ -266,6 +287,6 @@ export class Sword {
         this.rune.emissiveIntensity = 0.9 + 0.3 * pulse + 1.5 * strike + 3 * a.flare + (ready ? 1.2 * pulse : 0);
         this.glow.material.opacity = a.flare + (ready ? 0.3 * pulse : 0);
         this.glow.scale.setScalar(0.3 + 0.5 * a.flare);
-        this.glow.position.z = BLADE_MID_Z;
+        for (const s of this.spinners) s.rotation.z += s.userData.spin * (1 + 2 * strike + 4 * a.flare) * dt; // Whirled by a strike or a parry
     }
 }

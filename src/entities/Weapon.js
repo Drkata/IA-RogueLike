@@ -112,12 +112,14 @@ export class Weapon {
         if (!(this.stats[stat] < this.getMaxLevel(stat))) return false;
         this.stats[stat]++;
         this.recalculateStats();
-        this.rebuildMesh(this.getTotalLevel());
+        this.rebuildMesh(this.modelLevel());
         return true;
     }
 
-    getTotalLevel() {
-        return Object.values(this.stats).reduce((a, b) => a + b, 0);
+    // Levels of the staff's own upgrades, which pick its model: the crits, shared with the sword, count for neither
+    modelLevel() {
+        const { critChance, critDamage, ...own } = this.stats;
+        return Object.values(own).reduce((a, b) => a + b, 0);
     }
 
     recalculateStats() {
@@ -453,9 +455,9 @@ export class Weapon {
         return bulletsToFire;
     }
 
-    // Swaps in the staff of the tier `totalLevel` reaches (StaffMesh.js); nothing to do within a tier
-    rebuildMesh(totalLevel) {
-        const tier = staffTier(totalLevel);
+    // Swaps in the staff of the tier `level` (modelLevel) reaches (StaffMesh.js); nothing to do within a tier
+    rebuildMesh(level) {
+        const tier = staffTier(level);
         if (tier === this.tier) return;
         this.tier = tier;
         if (this.staff) {
