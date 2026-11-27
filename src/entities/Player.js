@@ -379,11 +379,14 @@ export class Player {
     handleWeapons(dt) {
         runLog.add(`time.${this.activeWeapon}`, dt);
         const input = this.input;
-        const toggle = input.consumeKey('KeyQ') | input.consumeKey('Wheel'); // Both read, so neither lingers
-        let wanted = toggle ? (this.activeWeapon === 'staff' ? 'sword' : 'staff') : this.activeWeapon;
-        if (input.consumeKey('Digit1')) wanted = 'staff';
-        if (input.consumeKey('Digit2')) wanted = 'sword';
-        if (wanted !== this.activeWeapon && this.switchTimer <= 0) this.switchWeapon(wanted);
+        // Read only once a switch is over: a notch or a key pressed during one waits for it instead of being lost
+        if (this.switchTimer <= 0) {
+            const toggle = input.consumeKey('KeyQ') | input.consumeKey('Wheel'); // Both read, so neither lingers
+            let wanted = toggle ? (this.activeWeapon === 'staff' ? 'sword' : 'staff') : this.activeWeapon;
+            if (input.consumeKey('Digit1')) wanted = 'staff';
+            if (input.consumeKey('Digit2')) wanted = 'sword';
+            if (wanted !== this.activeWeapon) this.switchWeapon(wanted);
+        }
 
         const w = this.weapon;
         const s = this.sword;

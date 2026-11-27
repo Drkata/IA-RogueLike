@@ -1,6 +1,8 @@
 import { soundManager } from '../systems/SoundManager.js';
 import { TouchControls } from '../ui/TouchControls.js';
 
+const WHEEL_GAP = 150; // ms of wheel silence that end a burst (was 400: two deliberate notches made one switch)
+
 export class Input {
     constructor(device) {
         this.keys = {};
@@ -16,11 +18,12 @@ export class Input {
         document.addEventListener('mousemove', (e) => this.onMouseMove(e));
         document.addEventListener('mousedown', (e) => this.onMouseDown(e));
         document.addEventListener('mouseup', (e) => this.onMouseUp(e));
-        // The wheel switches weapons: one switch per scroll, however many events a trackpad sends for it
-        this.lastWheel = 0;
+        // The wheel switches weapons: one switch per notch, and one per burst of events (a trackpad's swipe and its
+        // momentum, a high-resolution wheel's sub-steps, a fast spin) that come less than WHEEL_GAP ms apart
+        this.lastWheel = -Infinity;
         document.addEventListener('wheel', (e) => {
             if (!document.pointerLockElement) return; // Menus scroll
-            if (e.timeStamp - this.lastWheel > 400) this.keys.Wheel = true;
+            if (e.timeStamp - this.lastWheel > WHEEL_GAP) this.keys.Wheel = true;
             this.lastWheel = e.timeStamp;
         }, { passive: true });
         // Clicking the game locks the pointer (first click of a run). Menus ask for it themselves when they
@@ -38,6 +41,7 @@ export class Input {
 
     onKeyDown(e) {
         if (e.code === 'Tab' && document.pointerLockElement) e.preventDefault(); // In play Tab shows the sheet; in menus it still moves the focus
+        if (e.repeat) return; // A held key's auto-repeat would re-arm consumeKey (Q held: the weapons flicker)
         this.keys[e.code] = true;
     }
 

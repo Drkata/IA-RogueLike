@@ -211,6 +211,39 @@ assert.equal(a.hp, furyHp - 5);
 player._setFury(false); // What the end of the fury (Player.update) and a new run (resetBuffs) call
 assert.ok(player.sword.furyMultiplier === 1 && player.sword.furyLifeSteal === 0 && !player.weapon.infiniteAmmo);
 
+// Weapon switching with the real Input: one switch per wheel notch, one per burst; a notch or a key pressed during a
+// switch waits for it instead of being lost; a held key's auto-repeat does not press it again
+const { Input } = await import('../src/core/Input.js');
+const listeners = {};
+const addListener = document.addEventListener;
+document.addEventListener = (type, fn) => { listeners[type] ??= fn; }; // The first: the keys (later ones wake the audio)
+const input = new Input({ touch: false });
+document.addEventListener = addListener;
+document.pointerLockElement = {};
+const wheel = (ms) => listeners.wheel({ timeStamp: ms });
+Object.assign(player, { input, switchTimer: 0, activeWeapon: 'staff', onGround: true, velocity: new THREE.Vector3() });
+const settle = () => { for (let t = 0; t < 0.5; t += dt) player.handleWeapons(dt); };
+wheel(1000);
+player.handleWeapons(dt);
+assert.equal(player.activeWeapon, 'sword');
+wheel(1200); // A second notch while the sword comes up
+player.handleWeapons(dt);
+assert.equal(player.activeWeapon, 'sword', 'no switch mid-switch');
+settle();
+assert.equal(player.activeWeapon, 'staff', 'the notch waited for the switch');
+for (let ms = 2000; ms < 2600; ms += 16) wheel(ms); // A trackpad swipe: events every frame
+settle();
+assert.equal(player.activeWeapon, 'sword', 'one switch per burst');
+listeners.keydown({ code: 'KeyQ', repeat: false, preventDefault: noop });
+settle();
+for (let i = 0; i < 5; i++) listeners.keydown({ code: 'KeyQ', repeat: true, preventDefault: noop });
+settle();
+assert.equal(player.activeWeapon, 'staff', 'Q held switches once');
+listeners.keyup({ code: 'KeyQ' });
+delete document.pointerLockElement;
+player.activeWeapon = 'sword'; // Back in hand for the guard
+player.sword.holster = 0;
+
 // Shots met by the guard: parried back at the shooter (Mirror doubles them), blocked, or not covered
 const { Projectile } = await import('../src/entities/Projectile.js');
 const shooter = { position: new THREE.Vector3(0, 1.6, -10), isDead: false };
