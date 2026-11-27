@@ -58,7 +58,8 @@ Couleurs hors palette autorisées, et seulement là :
 - **HUD** :
   - en haut à gauche, le miroir (minimap ronde, `Minimap.js`) et la chronique (niveau, ennemis, or). Le miroir est la carte des hauteurs du niveau, qui tourne autour du joueur : plus un sol est haut, plus il est clair (de l'encre vers le vélin, retenu pour que le plateau à 6 m n'éblouisse pas), et une ombre borde chaque dénivelé qu'on ne remonte pas en marchant (`PLAYER_CLIMB`). Il montre de 28 cases de rayon sur une petite carte à 44 sur une grande. Ennemis en braise, joueur en flèche d'éther ;
   - en bas à gauche, la vie ; en bas à droite, le mana, et au-dessus les deux armes (celle en main allumée, touches 1 et 2) ;
-  - en bas au centre, le registre des statistiques, masqué sous 1 260 px de large ;
+  - **les statistiques ne restent pas affichées** : c'est une fiche à la demande (`StatsDisplay.js`), au centre tant que Tab est maintenu, dans l'écran de pause (donc aussi sur tactile) et dans le menu d'amélioration. Elle se lit en quatre groupes titrés (survie, sceptre, épée, pouvoirs), avec des unités partout. Une statistique encore à sa valeur de départ sans effet (armure 0, perforation 0, vitesse 100 %…) n'y figure pas, et un groupe vide disparaît ;
+  - en bas au centre, les bonus temporaires ;
   - au centre, les messages et le compte à rebours ;
   - en haut au centre, la barre du boss.
 - **Règle de performance** : un composant du HUD ne touche le DOM que si la valeur affichée change. Il est appelé à chaque frame.
@@ -71,7 +72,7 @@ Couleurs hors palette autorisées, et seulement là :
   - **Détection** : un appareil dont le pointeur principal est un doigt (`pointer: coarse`) reçoit la classe `is-touch` sur `<html>`, et `is-phone` s'il a un petit écran (moins de 600 px de côté).
   - **Commandes** (`src/ui/TouchControls.js`, Pointer Events) : joystick analogique qui apparaît sous le pouce gauche (40 % gauche de l'écran), glisser ailleurs pour regarder, arc de boutons en bas à droite.
   - **Boutons** : Attaquer (éther, 88 px, vise aussi en glissant), Sauter, Tir chargé ou Garde, Recharger, Changer d'arme (dorure), Interagir (dorure). Ce sont des cercles d'encre translucides d'au moins 44 px, avec des icônes game-icons. Attaquer et le second bouton montent l'icône de l'arme en main (`body.weapon-sword`).
-  - **HUD** : les pouces occupant les coins du bas, la vie et le mana montent en haut à droite et le registre de statistiques est masqué. Le HUD et les menus sont compactés sur téléphone, et les marges respectent les encoches (`env(safe-area-inset-*)`).
+  - **HUD** : les pouces occupant les coins du bas, la vie et le mana montent en haut à droite ; la fiche de statistiques se lit dans l'écran de pause. Le HUD et les menus sont compactés sur téléphone, et les marges respectent les encoches (`env(safe-area-inset-*)`).
   - **Orientation** : téléphone en paysage uniquement. En portrait, un écran « Tournez votre téléphone » s'affiche et le jeu attend.
   - **Messages d'interaction** : toujours passer par `input.prompt(action)`, qui dit « Appuyez sur E » ou « Touchez le bouton d'action » selon l'appareil.
 

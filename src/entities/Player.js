@@ -26,7 +26,7 @@ const FOUNTAIN_PACT_POWER = 0.4;
 // Share of a hit's damage that armor lets through, as in League of Legends: 100 armor halves it, no amount stops
 // it all. Below zero (pacts), the damage grows instead: −25 armor, +20 %.
 export const armorDamageFactor = (armor) => (armor >= 0 ? 100 / (100 + armor) : 2 - 100 / (100 - armor));
-const STATS_REFRESH = 0.25; // s: the HUD stats ledger is costly to rebuild, so play refreshes it 4 times a second
+const STATS_REFRESH = 0.25; // s: the stats sheet is costly to rebuild, so while open play refreshes it 4 times a second
 const SWITCH_TIME = 0.4; // s to put one weapon away and take the other in hand
 const FURY_LIFE_STEAL = 0.75; // Berserk fury: life stolen by sword strikes, on top of the rest
 const WAVE = { speed: 20, range: 8, scale: 2, size: 0.6, spread: 0.15 }; // Wave pact's blade waves (spread: rad between two)
@@ -273,7 +273,9 @@ export class Player {
         this.hudManager.updateHealth(this.health, this.maxHealth, this.shield);
         this.hudManager.updateAmmo(this.weapon.currentAmmo, this.weapon.reserveAmmo);
         this.hudManager.updateWeapon(this.activeWeapon);
-        if (withStats) this.hudManager.updateStats(this);
+        const sheet = this.input.isKeyDown('Tab'); // Held: the sheet of stats, opened at once
+        if (withStats || sheet !== this.sheetOpen) this.hudManager.updateStats(this, sheet);
+        this.sheetOpen = sheet;
         this.hudManager.updateGold(this.gold);
         this.hudManager.updateBerserk(this.isBerserk, this.berserkTimer, this.berserkMaxDuration);
     }

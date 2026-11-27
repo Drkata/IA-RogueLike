@@ -117,8 +117,9 @@ export class HUDManager {
         this.gameInfo.updateGold(gold);
     }
 
-    updateStats(player) {
-        this.statsDisplay.update(player);
+    // The sheet of stats, shown while Tab is held (`open`)
+    updateStats(player, open) {
+        this.statsDisplay.update(player, open);
     }
 
     updateBerserk(active, time, max) {

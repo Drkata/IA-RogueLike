@@ -348,6 +348,7 @@ export class Game {
     }
 
     _showPause() {
+        document.getElementById('pause-ledger').innerHTML = StatsDisplay.render(this.player);
         this._openMenu('pause-screen');
         const button = document.getElementById('resume-btn');
         button.disabled = this.input.canLockPointer; // A click in Chrome's cooldown would fail: the button waits it out

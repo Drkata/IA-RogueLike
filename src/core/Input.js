@@ -37,6 +37,7 @@ export class Input {
     }
 
     onKeyDown(e) {
+        if (e.code === 'Tab' && document.pointerLockElement) e.preventDefault(); // In play Tab shows the sheet; in menus it still moves the focus
         this.keys[e.code] = true;
     }
 

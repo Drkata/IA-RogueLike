@@ -354,26 +354,27 @@ canvas {
 .weapon-tag--both { color: var(--gilt-bright); }
 .weapon-tag--general { color: var(--sage); }
 
-/* Bottom centre: stats ledger and buffs */
-.ledger--hud {
+/* Centre: the sheet of stats while Tab is held, over the view but not in the way of the mouse */
+.ledger--sheet {
     position: absolute;
+    top: 50%;
     left: 50%;
-    bottom: 16px;
-    transform: translateX(-50%);
-    display: flex;
-    gap: 16px;
-    padding: 8px 14px;
-    font-size: 12px;
+    transform: translate(-50%, -50%);
+    width: min(1000px, calc(100% - 32px));
+    padding: 16px 22px 18px;
+    font-size: 15px;
+    pointer-events: none;
     /* Darker instead of a backdrop blur, which would be recomputed over the 3D view every frame */
-    background: color-mix(in srgb, var(--ink) 75%, transparent);
+    background: color-mix(in srgb, var(--ink) 90%, transparent);
     border: 1px solid var(--rule-faint);
-    border-radius: 3px;
+    border-radius: 4px;
 }
 
+/* Bottom centre: buffs */
 .buffs {
     position: absolute;
     left: 50%;
-    bottom: 150px;
+    bottom: 110px;
     transform: translateX(-50%);
 }
 
@@ -715,12 +716,42 @@ body:has(.overlay:not([hidden])) #crosshair {
     opacity: 0.45;
 }
 
-/* Stat ledgers (HUD and upgrade menu) */
+/* Stat ledgers (sheet, pause and upgrade menus): one group per column, titled */
 .ledger__col {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+}
+
+.ledger__group {
+    margin: 0;
+    padding-bottom: 3px;
+    font-size: 0.8em;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--gilt);
+    border-bottom: 1px solid var(--rule-faint);
+}
+
+.ledger__rows {
     margin: 0;
     display: grid;
     gap: 3px;
-    align-content: start;
+}
+
+.ledger--pause {
+    width: min(1000px, 92vw); /* The pause box shrinks to its content: a share of the screen, not of it */
+    text-align: left;
+}
+
+.ledger__hint {
+    margin: 12px 0 0;
+    font-size: 0.85em;
+    color: var(--vellum-dim);
+}
+
+.is-touch .ledger__hint {
+    display: none;
 }
 
 .stat {
@@ -1032,8 +1063,8 @@ body:has(.overlay:not([hidden])) #crosshair {
 
 .ledger__cols {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-    gap: 4px 24px;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 14px 32px;
 }
 
 .ledger--threat {
@@ -1509,9 +1540,6 @@ body:has(.overlay:not([hidden])) #crosshair {
     bottom: auto;
 }
 
-.is-touch .ledger--hud {
-    display: none;
-}
 
 /* Phones: compact HUD and menus */
 .is-phone .compass {
@@ -1668,15 +1696,6 @@ body:has(.overlay:not([hidden])) #crosshair {
 }
 
 /* ─── Small screens ───────────────────────────────────────────────────────── */
-
-@media (max-width: 1260px) {
-    .ledger--hud {
-        display: none;
-    }
-    .buffs {
-        bottom: 110px;
-    }
-}
 
 @media (max-width: 760px) {
     .scrying {
